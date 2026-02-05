@@ -22,6 +22,7 @@ from omnitool.gradio.config.models import (
     get_model_config,
     is_orchestrated_model,
 )
+from omnitool.gradio.config.logging_config import setup_logging
 from omnitool.gradio.config.settings import (
     Settings,
     create_argument_parser,
@@ -55,4 +56,6 @@ __all__ = [
     "load_yaml_config",
     "load_settings",
     "get_settings",
+    # Logging
+    "setup_logging",
 ]

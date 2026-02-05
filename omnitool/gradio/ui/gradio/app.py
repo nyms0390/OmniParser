@@ -30,6 +30,7 @@ from omnitool.gradio.config import (
     get_all_model_names,
     get_model_config,
     get_settings,
+    setup_logging,
 )
 from omnitool.gradio.core import (
     SamplingOrchestrator,
@@ -74,7 +75,7 @@ class GradioApp:
             state_var = gr.State()
             
             # Settings panel
-            with gr.Group(label="Settings"):
+            with gr.Accordion(label="Settings"):
                 with gr.Row():
                     model_dropdown = gr.Dropdown(
                         choices=get_model_choices(),
@@ -95,7 +96,7 @@ class GradioApp:
                 )
             
             # Chat interface
-            with gr.Group(label="Chat"):
+            with gr.Accordion(label="Chat"):
                 chatbot = gr.Chatbot(
                     label="Conversation",
                     height=400,
@@ -110,7 +111,7 @@ class GradioApp:
                     submit_button = gr.Button("Send", scale=1)
             
             # File upload and viewer
-            with gr.Group(label="Files"):
+            with gr.Accordion(label="Files"):
                 file_upload = gr.File(
                     label="Upload Files",
                     file_count="multiple",
@@ -119,7 +120,7 @@ class GradioApp:
                 file_viewer = gr.HTML(label="File Viewer")
             
             # Status and progress
-            with gr.Group(label="Execution"):
+            with gr.Accordion(label="Execution"):
                 status_text = gr.Textbox(
                     label="Status",
                     interactive=False,
@@ -302,11 +303,12 @@ def main():
     parser = create_argument_parser()
     args = parser.parse_args()
     
+    # Setup logging (BEFORE loading settings)
+    log_file = args.log_file or "omniparser_app.log"
+    logger = setup_logging("omniparser_app", level=args.log_level, log_file=log_file)
+    
     # Load settings
     settings = get_settings(args)
-    
-    # Setup logging
-    logging.basicConfig(level=logging.INFO)
     
     # Create and launch app
     app = GradioApp(settings)

@@ -68,6 +68,21 @@ def create_argument_parser() -> argparse.ArgumentParser:
         help="Path to YAML config file (optional)",
     )
     
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Optional log file path (default: omniparser_app.log)",
+    )
+    
     return parser
 
 
