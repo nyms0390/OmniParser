@@ -1,4 +1,15 @@
-# from ultralytics import YOLO
+"""
+Image parsing and content extraction utilities.
+
+This module provides high-level functions for:
+- Image processing and annotation
+- Content extraction and labeling
+- Semantic understanding (SOM - Set of Marks)
+
+Note: This module delegates model loading to model_services.py
+and OCR operations to services.py for cleaner separation of concerns.
+"""
+
 import os
 import io
 import base64
@@ -6,33 +17,13 @@ import time
 from PIL import Image, ImageDraw, ImageFont
 import json
 import requests
-# utility function
-import os
 from openai import AzureOpenAI
 
-import json
 import sys
-import os
 import cv2
 import numpy as np
-# %matplotlib inline
 from matplotlib import pyplot as plt
-import easyocr
-from paddleocr import PaddleOCR
-reader = easyocr.Reader(['en'])
-paddle_ocr = PaddleOCR(
-    lang='en',  # other lang also available
-    use_angle_cls=False,
-    use_gpu=False,  # using cuda will conflict with pytorch in the same process
-    show_log=False,
-    max_batch_size=1024,
-    use_dilation=True,  # improves accuracy
-    det_db_score_mode='slow',  # improves accuracy
-    rec_batch_num=1024)
-import time
-import base64
 
-import os
 import ast
 import torch
 from typing import Tuple, List, Union
@@ -41,38 +32,52 @@ import re
 from torchvision.transforms import ToPILImage
 import supervision as sv
 import torchvision.transforms as T
-from util.box_annotator import BoxAnnotator 
+
+# Import services for model and OCR management
+from util.model_services import CaptionModelService, YOLOModelService, ModelCache
+from util.services import OCRServiceManager
+
+# Import pure utility functions from dedicated module
+from util.box_annotator import BoxAnnotator
+from util.pure_utilities import (
+    get_xywh, get_xyxy, get_xywh_yolo, int_box_area,
+    box_area, intersection_area, iou, is_inside,
+    remove_overlap, remove_overlap_new
+)
 
 
 def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2-opt-2.7b", device=None):
-    if not device:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    if model_name == "blip2":
-        from transformers import Blip2Processor, Blip2ForConditionalGeneration
-        processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
-        if device == 'cpu':
-            model = Blip2ForConditionalGeneration.from_pretrained(
-            model_name_or_path, device_map=None, torch_dtype=torch.float32
-        ) 
-        else:
-            model = Blip2ForConditionalGeneration.from_pretrained(
-            model_name_or_path, device_map=None, torch_dtype=torch.float16
-        ).to(device)
-    elif model_name == "florence2":
-        from transformers import AutoProcessor, AutoModelForCausalLM 
-        processor = AutoProcessor.from_pretrained("microsoft/Florence-2-base", trust_remote_code=True)
-        if device == 'cpu':
-            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float32, trust_remote_code=True)
-        else:
-            model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float16, trust_remote_code=True).to(device)
-    return {'model': model.to(device), 'processor': processor}
+    """
+    Load caption model and processor.
+    
+    This is a backward-compatible wrapper that delegates to CaptionModelService.
+    Models are cached to avoid redundant loading.
+    
+    Args:
+        model_name: 'blip2' or 'florence2'
+        model_name_or_path: Model identifier or path
+        device: Device to load on ('cuda', 'cpu', or None for auto-detect)
+        
+    Returns:
+        Dict with 'model' and 'processor' keys
+    """
+    return CaptionModelService.load(model_name, model_name_or_path, device)
 
 
 def get_yolo_model(model_path):
-    from ultralytics import YOLO
-    # Load the model.
-    model = YOLO(model_path)
-    return model
+    """
+    Load YOLO model for object detection.
+    
+    This is a backward-compatible wrapper that delegates to YOLOModelService.
+    Models are cached to avoid redundant loading.
+    
+    Args:
+        model_path: Path to YOLO model weights
+        
+    Returns:
+        Loaded YOLO model instance
+    """
+    return YOLOModelService.load(model_path)
 
 
 @torch.inference_mode()
@@ -176,137 +181,15 @@ def get_parsed_content_icon_phi3v(filtered_boxes, ocr_bbox, image_source, captio
     return generated_texts
 
 def remove_overlap(boxes, iou_threshold, ocr_bbox=None):
-    assert ocr_bbox is None or isinstance(ocr_bbox, List)
-
-    def box_area(box):
-        return (box[2] - box[0]) * (box[3] - box[1])
-
-    def intersection_area(box1, box2):
-        x1 = max(box1[0], box2[0])
-        y1 = max(box1[1], box2[1])
-        x2 = min(box1[2], box2[2])
-        y2 = min(box1[3], box2[3])
-        return max(0, x2 - x1) * max(0, y2 - y1)
-
-    def IoU(box1, box2):
-        intersection = intersection_area(box1, box2)
-        union = box_area(box1) + box_area(box2) - intersection + 1e-6
-        if box_area(box1) > 0 and box_area(box2) > 0:
-            ratio1 = intersection / box_area(box1)
-            ratio2 = intersection / box_area(box2)
-        else:
-            ratio1, ratio2 = 0, 0
-        return max(intersection / union, ratio1, ratio2)
-
-    def is_inside(box1, box2):
-        # return box1[0] >= box2[0] and box1[1] >= box2[1] and box1[2] <= box2[2] and box1[3] <= box2[3]
-        intersection = intersection_area(box1, box2)
-        ratio1 = intersection / box_area(box1)
-        return ratio1 > 0.95
-
-    boxes = boxes.tolist()
-    filtered_boxes = []
-    if ocr_bbox:
-        filtered_boxes.extend(ocr_bbox)
-    # print('ocr_bbox!!!', ocr_bbox)
-    for i, box1 in enumerate(boxes):
-        # if not any(IoU(box1, box2) > iou_threshold and box_area(box1) > box_area(box2) for j, box2 in enumerate(boxes) if i != j):
-        is_valid_box = True
-        for j, box2 in enumerate(boxes):
-            # keep the smaller box
-            if i != j and IoU(box1, box2) > iou_threshold and box_area(box1) > box_area(box2):
-                is_valid_box = False
-                break
-        if is_valid_box:
-            # add the following 2 lines to include ocr bbox
-            if ocr_bbox:
-                # only add the box if it does not overlap with any ocr bbox
-                if not any(IoU(box1, box3) > iou_threshold and not is_inside(box1, box3) for k, box3 in enumerate(ocr_bbox)):
-                    filtered_boxes.append(box1)
-            else:
-                filtered_boxes.append(box1)
-    return torch.tensor(filtered_boxes)
+    # Imported from pure_utilities, kept as reference for backward compatibility
+    from util.pure_utilities import remove_overlap as _remove_overlap
+    return _remove_overlap(boxes, iou_threshold, ocr_bbox)
 
 
 def remove_overlap_new(boxes, iou_threshold, ocr_bbox=None):
-    '''
-    ocr_bbox format: [{'type': 'text', 'bbox':[x,y], 'interactivity':False, 'content':str }, ...]
-    boxes format: [{'type': 'icon', 'bbox':[x,y], 'interactivity':True, 'content':None }, ...]
-
-    '''
-    assert ocr_bbox is None or isinstance(ocr_bbox, List)
-
-    def box_area(box):
-        return (box[2] - box[0]) * (box[3] - box[1])
-
-    def intersection_area(box1, box2):
-        x1 = max(box1[0], box2[0])
-        y1 = max(box1[1], box2[1])
-        x2 = min(box1[2], box2[2])
-        y2 = min(box1[3], box2[3])
-        return max(0, x2 - x1) * max(0, y2 - y1)
-
-    def IoU(box1, box2):
-        intersection = intersection_area(box1, box2)
-        union = box_area(box1) + box_area(box2) - intersection + 1e-6
-        if box_area(box1) > 0 and box_area(box2) > 0:
-            ratio1 = intersection / box_area(box1)
-            ratio2 = intersection / box_area(box2)
-        else:
-            ratio1, ratio2 = 0, 0
-        return max(intersection / union, ratio1, ratio2)
-
-    def is_inside(box1, box2):
-        # return box1[0] >= box2[0] and box1[1] >= box2[1] and box1[2] <= box2[2] and box1[3] <= box2[3]
-        intersection = intersection_area(box1, box2)
-        ratio1 = intersection / box_area(box1)
-        return ratio1 > 0.80
-
-    # boxes = boxes.tolist()
-    filtered_boxes = []
-    if ocr_bbox:
-        filtered_boxes.extend(ocr_bbox)
-    # print('ocr_bbox!!!', ocr_bbox)
-    for i, box1_elem in enumerate(boxes):
-        box1 = box1_elem['bbox']
-        is_valid_box = True
-        for j, box2_elem in enumerate(boxes):
-            # keep the smaller box
-            box2 = box2_elem['bbox']
-            if i != j and IoU(box1, box2) > iou_threshold and box_area(box1) > box_area(box2):
-                is_valid_box = False
-                break
-        if is_valid_box:
-            if ocr_bbox:
-                # keep yolo boxes + prioritize ocr label
-                box_added = False
-                ocr_labels = ''
-                for box3_elem in ocr_bbox:
-                    if not box_added:
-                        box3 = box3_elem['bbox']
-                        if is_inside(box3, box1): # ocr inside icon
-                            # box_added = True
-                            # delete the box3_elem from ocr_bbox
-                            try:
-                                # gather all ocr labels
-                                ocr_labels += box3_elem['content'] + ' '
-                                filtered_boxes.remove(box3_elem)
-                            except:
-                                continue
-                            # break
-                        elif is_inside(box1, box3): # icon inside ocr, don't added this icon box, no need to check other ocr bbox bc no overlap between ocr bbox, icon can only be in one ocr box
-                            box_added = True
-                            break
-                        else:
-                            continue
-                if not box_added:
-                    if ocr_labels:
-                        filtered_boxes.append({'type': 'icon', 'bbox': box1_elem['bbox'], 'interactivity': True, 'content': ocr_labels, 'source':'box_yolo_content_ocr'})
-                    else:
-                        filtered_boxes.append({'type': 'icon', 'bbox': box1_elem['bbox'], 'interactivity': True, 'content': None, 'source':'box_yolo_content_yolo'})
-            else:
-                filtered_boxes.append(box1)
-    return filtered_boxes # torch.tensor(filtered_boxes)
+    # Imported from pure_utilities, kept as reference for backward compatibility
+    from util.pure_utilities import remove_overlap_new as _remove_overlap_new
+    return _remove_overlap_new(boxes, iou_threshold, ocr_bbox)
 
 
 def load_image(image_path: str) -> Tuple[np.array, torch.Tensor]:
@@ -399,10 +282,12 @@ def predict_yolo(model, image, box_threshold, imgsz, scale_img, iou_threshold=0.
     return boxes, conf, phrases
 
 def int_box_area(box, w, h):
-    x1, y1, x2, y2 = box
-    int_box = [int(x1*w), int(y1*h), int(x2*w), int(y2*h)]
-    area = (int_box[2] - int_box[0]) * (int_box[3] - int_box[1])
-    return area
+    # Imported from pure_utilities, kept for backward compatibility reference
+    # Implementation: (int(x1*w), int(y1*h), int(x2*w), int(y2*h))
+    # Then returns area = (x2 - x1) * (y2 - y1)
+    from util.pure_utilities import int_box_area as _int_box_area
+    return _int_box_area(box, w, h)
+
 
 def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_TRESHOLD=0.01, output_coord_in_ratio=False, ocr_bbox=None, text_scale=0.4, text_padding=5, draw_bbox_config=None, caption_model_processor=None, ocr_text=[], use_local_semantics=True, iou_threshold=0.9,prompt=None, scale_img=False, imgsz=None, batch_size=128):
     """Process either an image path or Image object
@@ -487,42 +372,57 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
 
 
 def get_xywh(input):
-    x, y, w, h = input[0][0], input[0][1], input[2][0] - input[0][0], input[2][1] - input[0][1]
-    x, y, w, h = int(x), int(y), int(w), int(h)
-    return x, y, w, h
+    # Imported from pure_utilities, kept as reference for backward compatibility
+    from util.pure_utilities import get_xywh as _get_xywh
+    return _get_xywh(input)
 
 def get_xyxy(input):
-    x, y, xp, yp = input[0][0], input[0][1], input[2][0], input[2][1]
-    x, y, xp, yp = int(x), int(y), int(xp), int(yp)
-    return x, y, xp, yp
+    # Imported from pure_utilities, kept as reference for backward compatibility
+    from util.pure_utilities import get_xyxy as _get_xyxy
+    return _get_xyxy(input)
 
 def get_xywh_yolo(input):
-    x, y, w, h = input[0], input[1], input[2] - input[0], input[3] - input[1]
-    x, y, w, h = int(x), int(y), int(w), int(h)
-    return x, y, w, h
+    # Imported from pure_utilities, kept as reference for backward compatibility
+    from util.pure_utilities import get_xywh_yolo as _get_xywh_yolo
+    return _get_xywh_yolo(input)
 
 def check_ocr_box(image_source: Union[str, Image.Image], display_img = True, output_bb_format='xywh', goal_filtering=None, easyocr_args=None, use_paddleocr=False):
+    """
+    Detect text boxes using OCR.
+    
+    This function uses OCRServiceManager to handle text detection,
+    avoiding global state and enabling better resource management.
+    
+    Args:
+        image_source: Image path or PIL Image
+        display_img: If True, display detected boxes with matplotlib
+        output_bb_format: 'xywh' or 'xyxy' bounding box format
+        goal_filtering: Filtering goal (reserved for future use)
+        easyocr_args: Arguments to pass to EasyOCR reader
+        use_paddleocr: If True, use PaddleOCR. Otherwise use EasyOCR.
+        
+    Returns:
+        Tuple of ((text_list, bboxes), goal_filtering)
+    """
+    # Load and prepare image
     if isinstance(image_source, str):
         image_source = Image.open(image_source)
     if image_source.mode == 'RGBA':
-        # Convert RGBA to RGB to avoid alpha channel issues
         image_source = image_source.convert('RGB')
     image_np = np.array(image_source)
     w, h = image_source.size
+    
+    # Get OCR service and perform recognition
+    ocr_service = OCRServiceManager.get_service(use_paddleocr=use_paddleocr)
+    
     if use_paddleocr:
-        if easyocr_args is None:
-            text_threshold = 0.5
-        else:
-            text_threshold = easyocr_args['text_threshold']
-        result = paddle_ocr.ocr(image_np, cls=False)[0]
-        coord = [item[0] for item in result if item[1][1] > text_threshold]
-        text = [item[1][0] for item in result if item[1][1] > text_threshold]
-    else:  # EasyOCR
-        if easyocr_args is None:
-            easyocr_args = {}
-        result = reader.readtext(image_np, **easyocr_args)
-        coord = [item[0] for item in result]
-        text = [item[1] for item in result]
+        text_threshold = 0.5 if easyocr_args is None else easyocr_args.get('text_threshold', 0.5)
+        coord, text = ocr_service.recognize(image_np, text_threshold=text_threshold)
+    else:
+        ocr_kwargs = easyocr_args if easyocr_args else {}
+        coord, text = ocr_service.recognize(image_np, **ocr_kwargs)
+    
+    # Display or format results
     if display_img:
         opencv_img = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
         bb = []
@@ -530,11 +430,13 @@ def check_ocr_box(image_source: Union[str, Image.Image], display_img = True, out
             x, y, a, b = get_xywh(item)
             bb.append((x, y, a, b))
             cv2.rectangle(opencv_img, (x, y), (x+a, y+b), (0, 255, 0), 2)
-        #  matplotlib expects RGB
         plt.imshow(cv2.cvtColor(opencv_img, cv2.COLOR_BGR2RGB))
     else:
         if output_bb_format == 'xywh':
             bb = [get_xywh(item) for item in coord]
         elif output_bb_format == 'xyxy':
             bb = [get_xyxy(item) for item in coord]
+        else:
+            bb = coord
+    
     return (text, bb), goal_filtering

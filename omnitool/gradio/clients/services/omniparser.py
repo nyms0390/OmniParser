@@ -85,7 +85,7 @@ class OmniParserClient:
         """
         try:
             data = {
-                "screenshot_base64": screenshot_base64,
+                "base64_image": screenshot_base64,
             }
             
             if parse_options:

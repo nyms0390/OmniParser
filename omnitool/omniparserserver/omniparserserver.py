@@ -40,7 +40,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--som_model_path",
         type=str,
-        default="../../weights/icon_detect/model.pt",
+        default="weights/icon_detect/model.pt",
         help="Path to the SOM (Set-of-Marks) model",
     )
     parser.add_argument(
@@ -52,7 +52,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--caption_model_path",
         type=str,
-        default="../../weights/icon_caption_florence",
+        default="weights/icon_caption_florence",
         help="Path to the caption model weights",
     )
     parser.add_argument(
@@ -196,7 +196,7 @@ if __name__ == "__main__":
     """Run the OmniParser API server."""
     logger.info(f"Starting OmniParser API server on {args.host}:{args.port}")
     uvicorn.run(
-        "omniparserserver:app",
+        "omnitool.omniparserserver.omniparserserver:app",
         host=args.host,
         port=args.port,
         reload=True,

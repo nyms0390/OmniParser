@@ -1,32 +1,178 @@
-from util.utils import get_som_labeled_img, get_caption_model_processor, get_yolo_model, check_ocr_box
-import torch
-from PIL import Image
-import io
+"""
+OmniParser: Comprehensive screen parsing with semantic object detection.
+
+This module provides the main Omniparser class which orchestrates:
+1. Model loading (YOLO, caption models)
+2. Image parsing (YOLO detection, OCR)
+3. Semantic labeling (SOM - Set of Marks)
+
+The Omniparser class serves as the main entry point and adapter,
+delegating actual processing to the modular pipeline and services.
+"""
+
 import base64
-from typing import Dict
-class Omniparser(object):
+import io
+import logging
+from typing import Dict, List, Tuple, Optional
+from PIL import Image
+import torch
+
+from util.model_services import YOLOModelService, CaptionModelService
+from util.services import OCRServiceManager
+from util.pipeline import OmniParserPipeline
+
+logger = logging.getLogger(__name__)
+
+
+class Omniparser:
+    """
+    Main orchestrator for semantic object detection on screenshots.
+    
+    Coordinates model loading, OCR, object detection, and semantic labeling.
+    Designed for efficient inference with resource-aware initialization.
+    """
+    
     def __init__(self, config: Dict):
+        """
+        Initialize Omniparser with configuration.
+        
+        Args:
+            config: Configuration dict with keys:
+                - som_model_path: Path to YOLO model weights
+                - caption_model_name: 'blip2' or 'florence2'
+                - caption_model_path: Path or identifier for caption model
+                - BOX_TRESHOLD: Confidence threshold for YOLO (default 0.01)
+                - iou_threshold: IoU threshold for overlap removal (default 0.9)
+                - scale_img: Whether to scale image before YOLO (default False)
+                - batch_size: Batch size for caption generation (default 128)
+                - prompt: Optional prompt for Florence2 model
+        """
         self.config = config
+        
+        # Detect device
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-        self.som_model = get_yolo_model(model_path=config['som_model_path'])
-        self.caption_model_processor = get_caption_model_processor(model_name=config['caption_model_name'], model_name_or_path=config['caption_model_path'], device=device)
-        print('Omniparser initialized!!!')
-
-    def parse(self, image_base64: str):
+        logger.info(f"Using device: {device}")
+        
+        # Load models with services
+        logger.info("Loading SOM model (YOLO)")
+        self.som_model = YOLOModelService.load(config['som_model_path'])
+        
+        logger.info(f"Loading caption model: {config['caption_model_name']}")
+        self.caption_model_processor = CaptionModelService.load(
+            model_name=config['caption_model_name'],
+            model_name_or_path=config.get('caption_model_path'),
+            device=device
+        )
+        
+        # Initialize pipeline
+        self.pipeline = OmniParserPipeline(
+            som_model=self.som_model,
+            caption_model_processor=self.caption_model_processor,
+            config=config
+        )
+        
+        logger.info('Omniparser initialized successfully')
+    
+    def parse(self, image_base64: str,
+              use_local_semantics: bool = True,
+              use_paddleocr: bool = False) -> Tuple[str, List[Dict]]:
+        """
+        Parse screenshot with SOM detection.
+        
+        Args:
+            image_base64: Base64-encoded screenshot
+            use_local_semantics: If True, generate captions for objects
+            use_paddleocr: If True, use PaddleOCR instead of EasyOCR
+            
+        Returns:
+            Tuple of (annotated_image_b64, parsed_content_list)
+            where parsed_content_list is list of detected objects with metadata
+        """
+        logger.info("Starting image parsing")
+        
+        # Decode image
         image_bytes = base64.b64decode(image_base64)
         image = Image.open(io.BytesIO(image_bytes))
-        print('image size:', image.size)
+        logger.debug(f"Image size: {image.size}")
         
+        # Calculate overlay scaling
         box_overlay_ratio = max(image.size) / 3200
-        draw_bbox_config = {
-            'text_scale': 0.8 * box_overlay_ratio,
-            'text_thickness': max(int(2 * box_overlay_ratio), 1),
-            'text_padding': max(int(3 * box_overlay_ratio), 1),
-            'thickness': max(int(3 * box_overlay_ratio), 1),
+        logger.debug(f"Overlay ratio: {box_overlay_ratio:.3f}")
+        
+        # Step 1: OCR text detection
+        logger.info("Detecting text with OCR")
+        (text, ocr_bbox), _ = self._detect_text(
+            image, 
+            use_paddleocr=use_paddleocr
+        )
+        logger.debug(f"Found {len(text)} text regions")
+        
+        # Step 2: Process through pipeline
+        logger.info("Processing through SOM pipeline")
+        annotated_img, label_coordinates, parsed_content_list = self.pipeline.process(
+            image=image,
+            ocr_text=text,
+            ocr_bbox=ocr_bbox,
+            box_overlay_ratio=box_overlay_ratio,
+            use_local_semantics=use_local_semantics
+        )
+        
+        logger.info(f"Parsing complete: {len(parsed_content_list)} objects detected")
+        return annotated_img, parsed_content_list
+    
+    def _detect_text(self, 
+                    image: Image.Image,
+                    use_paddleocr: bool = False) -> Tuple[Tuple[List[str], List[Tuple]], None]:
+        """
+        Detect text in image using OCR service.
+        
+        Returns text and bounding boxes in xyxy format.
+        """
+        ocr_service = OCRServiceManager.get_service(use_paddleocr=use_paddleocr)
+        
+        # Prepare image
+        image_rgb = image.convert('RGB')
+        image_np = __import__('numpy').asarray(image_rgb)
+        w, h = image_rgb.size
+        
+        # Recognize text
+        if use_paddleocr:
+            coord, text = ocr_service.recognize(
+                image_np,
+                text_threshold=0.5
+            )
+        else:
+            coord, text = ocr_service.recognize(
+                image_np,
+                text_threshold=0.8
+            )
+        
+        # Convert to xyxy format
+        from util.pure_utilities import get_xyxy
+        ocr_bbox = [get_xyxy(item) for item in coord]
+        
+        return (text, ocr_bbox), None
+    
+    @staticmethod
+    def get_model_cache_info() -> Dict:
+        """
+        Get information about cached models.
+        
+        Returns:
+            Dict with cache statistics
+        """
+        from util.model_services import ModelCache
+        return {
+            'cached_models': len(ModelCache._models),
+            'model_keys': list(ModelCache._models.keys())
         }
-
-        (text, ocr_bbox), _ = check_ocr_box(image, display_img=False, output_bb_format='xyxy', easyocr_args={'text_threshold': 0.8}, use_paddleocr=False)
-        dino_labled_img, label_coordinates, parsed_content_list = get_som_labeled_img(image, self.som_model, BOX_TRESHOLD = self.config['BOX_TRESHOLD'], output_coord_in_ratio=True, ocr_bbox=ocr_bbox,draw_bbox_config=draw_bbox_config, caption_model_processor=self.caption_model_processor, ocr_text=text,use_local_semantics=True, iou_threshold=0.7, scale_img=False, batch_size=128)
-
-        return dino_labled_img, parsed_content_list
+    
+    @staticmethod
+    def clear_cache() -> None:
+        """Clear all cached models and OCR readers."""
+        from util.model_services import ModelCache
+        from util.services import OCRServiceManager
+        
+        ModelCache.clear()
+        OCRServiceManager.clear_cache()
+        logger.info("Model and OCR cache cleared")
