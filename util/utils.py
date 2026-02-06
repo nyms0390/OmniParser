@@ -35,7 +35,7 @@ import torchvision.transforms as T
 
 # Import services for model and OCR management
 from util.model_services import CaptionModelService, YOLOModelService, ModelCache
-from util.services import OCRServiceManager
+from util.services import get_ocr_service
 
 # Import pure utility functions from dedicated module
 from util.box_annotator import BoxAnnotator
@@ -386,20 +386,21 @@ def get_xywh_yolo(input):
     from util.pure_utilities import get_xywh_yolo as _get_xywh_yolo
     return _get_xywh_yolo(input)
 
-def check_ocr_box(image_source: Union[str, Image.Image], display_img = True, output_bb_format='xywh', goal_filtering=None, easyocr_args=None, use_paddleocr=False):
+def check_ocr_box(image_source: Union[str, Image.Image], display_img = True, output_bb_format='xywh', goal_filtering=None, easyocr_args=None, ocr_backend='easyocr', use_gpu=False):
     """
     Detect text boxes using OCR.
     
-    This function uses OCRServiceManager to handle text detection,
-    avoiding global state and enabling better resource management.
+    This function uses the get_ocr_service factory to handle text detection,
+    enabling flexible backend selection and GPU support.
     
     Args:
         image_source: Image path or PIL Image
         display_img: If True, display detected boxes with matplotlib
         output_bb_format: 'xywh' or 'xyxy' bounding box format
         goal_filtering: Filtering goal (reserved for future use)
-        easyocr_args: Arguments to pass to EasyOCR reader
-        use_paddleocr: If True, use PaddleOCR. Otherwise use EasyOCR.
+        easyocr_args: Arguments to pass to EasyOCR reader (used for backward compatibility)
+        ocr_backend: OCR backend to use ('easyocr' or 'paddleocr')
+        use_gpu: Whether to use GPU for OCR (if supported by backend)
         
     Returns:
         Tuple of ((text_list, bboxes), goal_filtering)
@@ -412,15 +413,16 @@ def check_ocr_box(image_source: Union[str, Image.Image], display_img = True, out
     image_np = np.array(image_source)
     w, h = image_source.size
     
-    # Get OCR service and perform recognition
-    ocr_service = OCRServiceManager.get_service(use_paddleocr=use_paddleocr)
+    # Get OCR service with specified backend and GPU setting
+    # Pass easyocr_args as backend_config for backward compatibility
+    ocr_service = get_ocr_service(
+        backend=ocr_backend,
+        use_gpu=use_gpu,
+        **(easyocr_args if easyocr_args else {})
+    )
     
-    if use_paddleocr:
-        text_threshold = 0.5 if easyocr_args is None else easyocr_args.get('text_threshold', 0.5)
-        coord, text = ocr_service.recognize(image_np, text_threshold=text_threshold)
-    else:
-        ocr_kwargs = easyocr_args if easyocr_args else {}
-        coord, text = ocr_service.recognize(image_np, **ocr_kwargs)
+    # Perform text recognition
+    coord, text = ocr_service.recognize(image_np)
     
     # Display or format results
     if display_img:

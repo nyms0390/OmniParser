@@ -44,7 +44,7 @@ def omniparser_parse(image, image_path):
     }
     BOX_TRESHOLD = 0.05
 
-    ocr_bbox_rslt, is_goal_filtered = check_ocr_box(image_path, display_img = False, output_bb_format='xyxy', goal_filtering=None, easyocr_args={'paragraph': False, 'text_threshold':0.5, 'canvas_size':max(image.size), 'decoder':'beamsearch', 'beamWidth':10, 'batch_size':256}, use_paddleocr=False)
+    ocr_bbox_rslt, is_goal_filtered = check_ocr_box(image_path, display_img = False, output_bb_format='xyxy', goal_filtering=None, easyocr_args={'paragraph': False, 'text_threshold':0.5, 'canvas_size':max(image.size), 'decoder':'beamsearch', 'beamWidth':10, 'batch_size':256}, ocr_backend='easyocr', use_gpu=False)
     text, ocr_bbox = ocr_bbox_rslt
 
     dino_labled_img, label_coordinates, parsed_content_list = get_som_labeled_img(image_path, som_model, BOX_TRESHOLD = BOX_TRESHOLD, output_coord_in_ratio=True, ocr_bbox=ocr_bbox,draw_bbox_config=draw_bbox_config, caption_model_processor=caption_model_processor, ocr_text=text,use_local_semantics=True, iou_threshold=0.7, scale_img=False, batch_size=128)

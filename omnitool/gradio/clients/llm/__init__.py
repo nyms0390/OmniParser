@@ -4,7 +4,7 @@ LLM clients module initialization and factory.
 
 from typing import Optional
 
-from omnitool.gradio.clients.base import BaseLLMClient
+from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import APIProvider, get_model_config
 
 from .anthropic import AnthropicClient

@@ -206,6 +206,62 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
 }
 
 
+# OCR Backend Configuration Registry
+# Extensible configuration for different OCR backends
+OCR_CONFIG: Dict[str, Dict[str, Any]] = {
+    "easyocr": {
+        "backend_class": "EasyOCRBackend",
+        "language": "en",
+        "use_gpu": None,  # None = auto-detect, True/False = explicit
+        "backend_config": {
+            # EasyOCR-specific parameters passed to reader.readtext()
+            # Common options: detail (0=simple, 1=detailed), paragraph (bool)
+        },
+    },
+    "paddleocr": {
+        "backend_class": "PaddleOCRBackend",
+        "language": "en",
+        "use_gpu": None,  # None = auto-detect, True/False = explicit
+        "backend_config": {
+            # PaddleOCR-specific initialization parameters
+            "text_threshold": 0.5,        # Confidence threshold for text detection
+            "max_batch_size": 1024,       # Batch size for detection
+            "use_dilation": True,         # Improves accuracy
+            "det_db_score_mode": "slow",  # Improves accuracy (slow/fast)
+            "rec_batch_num": 1024,        # Recognition batch number
+            # For GPU version via API: set use_gpu=True and provide api_url in backend_config
+            # "api_url": "http://localhost:8000/ocr"  # GPU API server endpoint
+        },
+    },
+}
+
+
+def get_ocr_config(backend: str) -> Dict[str, Any]:
+    """Get configuration for a specific OCR backend.
+    
+    Args:
+        backend: Backend name (e.g., 'easyocr', 'paddleocr')
+        
+    Returns:
+        OCR backend configuration dictionary
+        
+    Raises:
+        ValueError: If backend not found in OCR_CONFIG
+    """
+    backend_lower = backend.lower()
+    if backend_lower not in OCR_CONFIG:
+        raise ValueError(
+            f"Unknown OCR backend: {backend}. "
+            f"Available backends: {list(OCR_CONFIG.keys())}"
+        )
+    return OCR_CONFIG[backend_lower]
+
+
+def get_all_ocr_backends() -> list[str]:
+    """Get list of all available OCR backends."""
+    return list(OCR_CONFIG.keys())
+
+
 def get_model_config(model_name: str) -> Dict[str, Any]:
     """Get configuration for a specific model.
     

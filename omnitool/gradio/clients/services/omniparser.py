@@ -3,27 +3,32 @@ OmniParser service client for screenshot capture and parsing.
 """
 
 import base64
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-import requests
+from .base import BaseServiceClient
+
+logger = logging.getLogger(__name__)
 
 
-class OmniParserClient:
+class OmniParserClient(BaseServiceClient):
     """HTTP client for OmniParser server.
     
     Handles screenshot capture and parsing via HTTP API.
     """
     
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:8000", timeout: int = 60):
         """Initialize OmniParser client.
         
         Args:
             base_url: Base URL of OmniParser server (default: localhost:8000)
+            timeout: Request timeout in seconds (default: 60)
         """
-        self.base_url = base_url.rstrip('/')
-        self.parse_endpoint = f"{self.base_url}/parse/"
-        self.screenshot_endpoint = f"{self.base_url}/screenshot"
+        super().__init__(base_url, timeout)
+        self.parse_endpoint = "parse"
+        self.screenshot_endpoint = "screenshot"
+        logger.info(f"Initialized OmniParser client at {base_url}")
     
     def get_screenshot(
         self,
@@ -50,17 +55,15 @@ class OmniParserClient:
                 params['width'] = resize_to[0]
                 params['height'] = resize_to[1]
             
-            response = requests.get(
+            return self._make_request(
+                "GET",
                 self.screenshot_endpoint,
-                params=params,
-                timeout=30
+                params=params
             )
-            response.raise_for_status()
-            
-            return response.json()
         
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Failed to get screenshot from {self.base_url}: {str(e)}")
+        except Exception as e:
+            logger.error(f"Failed to get screenshot: {str(e)}")
+            raise
     
     def parse_screenshot(
         self,
@@ -91,14 +94,11 @@ class OmniParserClient:
             if parse_options:
                 data.update(parse_options)
             
-            response = requests.post(
+            result = self._make_request(
+                "POST",
                 self.parse_endpoint,
-                json=data,
-                timeout=60
+                json_data=data
             )
-            response.raise_for_status()
-            
-            result = response.json()
             
             # Add screen_info if not present
             if "screen_info" not in result:
@@ -106,8 +106,9 @@ class OmniParserClient:
             
             return result
         
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Failed to parse screenshot: {str(e)}")
+        except Exception as e:
+            logger.error(f"Failed to parse screenshot: {str(e)}")
+            raise
     
     def capture_and_parse(
         self,
@@ -161,7 +162,9 @@ class OmniParserClient:
             with open(output_path, 'wb') as f:
                 f.write(screenshot_bytes)
             
+            logger.debug(f"Saved screenshot to {output_path}")
             return True
         
         except Exception as e:
-            raise Exception(f"Failed to save screenshot: {str(e)}")
+            logger.error(f"Failed to save screenshot: {str(e)}")
+            raise

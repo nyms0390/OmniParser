@@ -5,7 +5,7 @@ Locked to R1 model per user requirements.
 
 from typing import Any, Dict, List, Tuple
 
-from omnitool.gradio.clients.base import BaseLLMClient
+from omnitool.gradio.clients.llm.base import BaseLLMClient
 
 
 class GroqClient(BaseLLMClient):

@@ -5,7 +5,7 @@ Supports multiple provider backends: Anthropic API, AWS Bedrock, Google Vertex A
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from omnitool.gradio.clients.base import BaseLLMClient
+from omnitool.gradio.clients.llm.base import BaseLLMClient
 
 
 class AnthropicClient(BaseLLMClient):

@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from omnitool.gradio.clients.base import BaseLLMClient
+from omnitool.gradio.clients.llm.base import BaseLLMClient
 
 
 class OpenAIClient(BaseLLMClient):

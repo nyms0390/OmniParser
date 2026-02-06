@@ -18,7 +18,7 @@ from PIL import Image
 import torch
 
 from util.model_services import YOLOModelService, CaptionModelService
-from util.services import OCRServiceManager
+from util.services import get_ocr_service, OCRServiceManager
 from util.pipeline import OmniParserPipeline
 
 logger = logging.getLogger(__name__)
@@ -75,14 +75,16 @@ class Omniparser:
     
     def parse(self, image_base64: str,
               use_local_semantics: bool = True,
-              use_paddleocr: bool = False) -> Tuple[str, List[Dict]]:
+              ocr_backend: str = 'easyocr',
+              use_gpu: bool = False) -> Tuple[str, List[Dict]]:
         """
         Parse screenshot with SOM detection.
         
         Args:
             image_base64: Base64-encoded screenshot
             use_local_semantics: If True, generate captions for objects
-            use_paddleocr: If True, use PaddleOCR instead of EasyOCR
+            ocr_backend: OCR backend to use ('easyocr' or 'paddleocr')
+            use_gpu: Whether to use GPU for OCR (if supported by backend)
             
         Returns:
             Tuple of (annotated_image_b64, parsed_content_list)
@@ -103,7 +105,8 @@ class Omniparser:
         logger.info("Detecting text with OCR")
         (text, ocr_bbox), _ = self._detect_text(
             image, 
-            use_paddleocr=use_paddleocr
+            ocr_backend=ocr_backend,
+            use_gpu=use_gpu
         )
         logger.debug(f"Found {len(text)} text regions")
         
@@ -122,13 +125,19 @@ class Omniparser:
     
     def _detect_text(self, 
                     image: Image.Image,
-                    use_paddleocr: bool = False) -> Tuple[Tuple[List[str], List[Tuple]], None]:
+                    ocr_backend: str = 'easyocr',
+                    use_gpu: bool = False) -> Tuple[Tuple[List[str], List[Tuple]], None]:
         """
         Detect text in image using OCR service.
         
         Returns text and bounding boxes in xyxy format.
         """
-        ocr_service = OCRServiceManager.get_service(use_paddleocr=use_paddleocr)
+        # Get OCR service with specified backend and GPU setting
+        ocr_service = get_ocr_service(
+            backend=ocr_backend,
+            use_gpu=use_gpu,
+            text_threshold=0.5 if ocr_backend.lower() == 'paddleocr' else None
+        )
         
         # Prepare image
         image_rgb = image.convert('RGB')
@@ -136,16 +145,7 @@ class Omniparser:
         w, h = image_rgb.size
         
         # Recognize text
-        if use_paddleocr:
-            coord, text = ocr_service.recognize(
-                image_np,
-                text_threshold=0.5
-            )
-        else:
-            coord, text = ocr_service.recognize(
-                image_np,
-                text_threshold=0.8
-            )
+        coord, text = ocr_service.recognize(image_np)
         
         # Convert to xyxy format
         from util.pure_utilities import get_xyxy
