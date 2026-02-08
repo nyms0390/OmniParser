@@ -3,8 +3,33 @@ The app contains:
 - a new UI for the OmniParser AI Agent.
 - 
 python app_new.py --windows_host_url localhost:8006 --omniparser_server_url localhost:8000
-"""
 
+.. deprecated:: 0.2.0
+    This module is deprecated. Use :mod:`omnitool.gradio.ui.gradio.app` instead.
+    
+    This is an alternative UI implementation that has been superseded by the refactored
+    architecture in the new :class:`GradioApp` which provides better code organization,
+    type safety, and maintainability.
+    
+    Example of migration::
+    
+        from omnitool.gradio.ui.gradio.app import GradioApp
+        from omnitool.gradio.config import get_settings
+        
+        settings = get_settings()
+        app = GradioApp(settings)
+        interface = app.build_interface()
+        interface.launch()
+    
+    See :doc:`MIGRATION_GUIDE` for comprehensive migration instructions.
+    
+    **Removal Timeline**:
+    - v0.2.0: Deprecated with warnings
+    - v0.3.0: Limited bug fixes only
+    - v1.0.0: Removed completely
+
+"""
+import warnings
 import os
 import io
 import shutil
@@ -16,6 +41,14 @@ from pathlib import Path
 from typing import cast, List, Optional
 import argparse
 import gradio as gr
+
+warnings.warn(
+    "The 'omnitool.gradio_legacy.app_new' module is deprecated. "
+    "Use 'omnitool.gradio.ui.gradio.app' instead. "
+    "See MIGRATION_GUIDE.md for migration details.",
+    DeprecationWarning,
+    stacklevel=2
+)
 from anthropic import APIResponse
 from anthropic.types import TextBlock
 from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaToolUseBlock

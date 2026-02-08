@@ -1,6 +1,31 @@
+"""Legacy Anthropic agent implementation - DEPRECATED.
+
+.. deprecated:: 0.2.0
+    This module is deprecated. Use :mod:`omnitool.gradio.core.agents` instead.
+
+This is the original Anthropic agent implementation with direct API integration.
+It remains functional but is superseded by the refactored agent factory pattern.
+
+See MIGRATION_GUIDE.md for migration details.
+
+Recommended Alternative::
+
+    from omnitool.gradio.core.agents import AnthropicAgent
+    agent = AnthropicAgent(model_name, state=state, ...)
 """
-Agentic sampling loop that calls the Anthropic API and local implenmentation of anthropic-defined computer use tools.
-"""
+
+import warnings
+
+warnings.warn(
+    (
+        "The 'omnitool.gradio_legacy.agent.anthropic_agent' module is deprecated. "
+        "Use 'omnitool.gradio.core.agents.AnthropicAgent' instead. "
+        "See MIGRATION_GUIDE.md for migration details."
+    ),
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import asyncio
 import platform
 from collections.abc import Callable
@@ -31,12 +56,10 @@ from io import BytesIO
 import gradio as gr
 from typing import Dict
 
-BETA_FLAG = "computer-use-2024-10-22"
+# Import from refactored config (single source of truth)
+from omnitool.gradio.config.enums import APIProvider
 
-class APIProvider(StrEnum):
-    ANTHROPIC = "anthropic"
-    BEDROCK = "bedrock"
-    VERTEX = "vertex"
+BETA_FLAG = "computer-use-2024-10-22"
 
 SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
 * You are utilizing a Windows system with internet access.

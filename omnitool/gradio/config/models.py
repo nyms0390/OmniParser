@@ -223,14 +223,13 @@ OCR_CONFIG: Dict[str, Dict[str, Any]] = {
         "language": "en",
         "use_gpu": None,  # None = auto-detect, True/False = explicit
         "backend_config": {
-            # PaddleOCR-specific initialization parameters
-            "text_threshold": 0.5,        # Confidence threshold for text detection
-            "max_batch_size": 1024,       # Batch size for detection
-            "use_dilation": True,         # Improves accuracy
-            "det_db_score_mode": "slow",  # Improves accuracy (slow/fast)
-            "rec_batch_num": 1024,        # Recognition batch number
+            # PaddleOCR 3.x initialization parameters
+            # Note: 2.x parameters like use_angle_cls, use_dilation, det_db_score_mode are not supported in 3.x
+            "text_threshold": 0.5,                    # Confidence threshold for text detection
+            "text_recognition_batch_size": 1024,      # Batch size for text recognition (formerly rec_batch_num in 2.x)
+            "text_detection_batch_size": 1024,        # Batch size for text detection (formerly max_batch_size in 2.x)
             # For GPU version via API: set use_gpu=True and provide api_url in backend_config
-            # "api_url": "http://localhost:8000/ocr"  # GPU API server endpoint
+            # "api_url": "http://localhost:8001"  # GPU API server endpoint (port 8001 default for OCR API)
         },
     },
 }

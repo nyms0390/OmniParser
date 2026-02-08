@@ -165,27 +165,27 @@ def check_server_health(base_url: str) -> bool:
         if response.status_code == 200:
             health_data = response.json()
             if health_data.get("status") == "healthy":
-                logger.info(f"✅ Server health check passed: {health_data}")
+                logger.info(f"[OK] Server health check passed: {health_data}")
                 return True
             else:
-                logger.warning(f"⚠️ Server returned non-healthy status: {health_data}")
+                logger.warning(f"[WARNING] Server returned non-healthy status: {health_data}")
                 return False
         else:
-            logger.warning(f"⚠️ Server health check failed with status {response.status_code}")
+            logger.warning(f"[WARNING] Server health check failed with status {response.status_code}")
             return False
             
     except requests.exceptions.ConnectionError as e:
-        logger.error(f"❌ Cannot connect to OmniParser server at {base_url}")
+        logger.error(f"[ERROR] Cannot connect to OmniParser server at {base_url}")
         logger.error(f"   Error: {str(e)}")
         logger.error(f"   Make sure server is running: python -m omniparserserver")
         return False
         
     except requests.exceptions.Timeout:
-        logger.error(f"❌ Server health check timed out at {base_url}")
+        logger.error(f"[ERROR] Server health check timed out at {base_url}")
         return False
         
     except Exception as e:
-        logger.error(f"❌ Unexpected error during health check: {str(e)}")
+        logger.error(f"[ERROR] Unexpected error during health check: {str(e)}")
         return False
 
 

@@ -1,7 +1,48 @@
 """
 Agentic sampling loop that calls the Anthropic API and local implenmentation of anthropic-defined computer use tools.
+
+.. deprecated:: 0.2.0
+    This module is deprecated. Use :mod:`omnitool.gradio.core.orchestrator` instead.
+    
+    The sampling loop functionality has been refactored into the :class:`SamplingOrchestrator` class
+    which provides a cleaner, more maintainable interface with better separation of concerns.
+    
+    Example of migration::
+    
+        from omnitool.gradio.core.orchestrator import SamplingOrchestrator
+        from omnitool.gradio.core.agents.factory import create_agent
+        from omnitool.gradio.services import AppState
+        
+        state = AppState(...)
+        agent = create_agent(model_name="claude-3-5-sonnet-20241022", state=state, ...)
+        orchestrator = SamplingOrchestrator(
+            model_name="claude-3-5-sonnet-20241022",
+            state=state,
+            tools_collection=tools,
+        )
+        
+        for result in orchestrator.sampling_loop():
+            # Process result
+            pass
+    
+    See :doc:`MIGRATION_GUIDE` for comprehensive migration instructions.
+    
+    **Removal Timeline**:
+    - v0.2.0: Deprecated with warnings
+    - v0.3.0: Limited bug fixes only
+    - v1.0.0: Removed completely
+
 """
+import warnings
 from collections.abc import Callable
+
+warnings.warn(
+    "The 'omnitool.gradio_legacy.loop' module is deprecated. "
+    "Use 'omnitool.gradio.core.orchestrator' instead. "
+    "See MIGRATION_GUIDE.md for migration details.",
+    DeprecationWarning,
+    stacklevel=2
+)
 from enum import StrEnum
 
 from anthropic import APIResponse
@@ -21,13 +62,10 @@ from agent.vlm_agent import VLMAgent
 from agent.vlm_agent_with_orchestrator import VLMOrchestratedAgent
 from executor.anthropic_executor import AnthropicExecutor
 
-BETA_FLAG = "computer-use-2024-10-22"
+# Import from refactored config (single source of truth)
+from omnitool.gradio.config.enums import APIProvider
 
-class APIProvider(StrEnum):
-    ANTHROPIC = "anthropic"
-    BEDROCK = "bedrock"
-    VERTEX = "vertex"
-    OPENAI = "openai"
+BETA_FLAG = "computer-use-2024-10-22"
 
 
 PROVIDER_TO_DEFAULT_MODEL_NAME: dict[APIProvider, str] = {

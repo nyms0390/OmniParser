@@ -1,6 +1,35 @@
+"""Legacy Gradio application - DEPRECATED.
+
+.. deprecated:: 0.2.0
+    This module is deprecated. Use :mod:`omnitool.gradio.ui.gradio.app` instead.
+
+This is the original monolithic Gradio application. It remains functional for
+backward compatibility but should not be used for new development.
+
+See MIGRATION_GUIDE.md for details on upgrading to the refactored version.
+
+Usage::
+
+    python app.py --windows_host_url localhost:8006 --omniparser_server_url localhost:8000
+
+Recommended Alternative::
+
+    from omnitool.gradio.ui.gradio.app import GradioApp
+    app = GradioApp(settings)
+    app.build_interface()
 """
-python app.py --windows_host_url localhost:8006 --omniparser_server_url localhost:8000
-"""
+
+import warnings
+
+warnings.warn(
+    (
+        "The 'omnitool.gradio_legacy.app' module is deprecated. "
+        "Use 'omnitool.gradio.ui.gradio.app' instead. "
+        "See MIGRATION_GUIDE.md for migration details."
+    ),
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import os
 from datetime import datetime
@@ -40,11 +69,8 @@ def parse_arguments():
     return parser.parse_args()
 args = parse_arguments()
 
-
-class Sender(StrEnum):
-    USER = "user"
-    BOT = "assistant"
-    TOOL = "tool"
+# Import from refactored config (single source of truth)
+from omnitool.gradio.config.enums import Sender
 
 
 def setup_state(state):

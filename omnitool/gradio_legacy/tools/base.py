@@ -1,3 +1,30 @@
+"""Legacy tool base classes - DEPRECATED.
+
+.. deprecated:: 0.2.0
+    This module is deprecated. Use :mod:`omnitool.gradio.core.tools` instead.
+
+This module defines the base tool interface for the legacy implementation.
+Use the refactored tool system for new development.
+
+See MIGRATION_GUIDE.md for migration details.
+
+Recommended Alternative::
+
+    from omnitool.gradio.core.tools import BaseTool, ToolResult
+"""
+
+import warnings
+
+warnings.warn(
+    (
+        "The 'omnitool.gradio_legacy.tools.base' module is deprecated. "
+        "Use 'omnitool.gradio.core.tools' instead. "
+        "See MIGRATION_GUIDE.md for migration details."
+    ),
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, fields, replace
 from typing import Any

@@ -1,3 +1,27 @@
+"""Computer tool for GUI interaction.
+
+.. deprecated:: 0.2.0
+    This module is deprecated. Use :mod:`omnitool.gradio.core.tools` instead.
+    
+    Tool implementations have been refactored with improved code organization and extensibility.
+    
+    Example of migration::
+    
+        from omnitool.gradio.core.tools import ComputerTool
+        from omnitool.gradio.core.tools.collection import get_available_tools
+        
+        tools = get_available_tools()
+        computer_tool = next(t for t in tools if t.name == "computer")
+    
+    See :doc:`MIGRATION_GUIDE` for comprehensive migration instructions.
+    
+    **Removal Timeline**:
+    - v0.2.0: Deprecated with warnings
+    - v0.3.0: Limited bug fixes only
+    - v1.0.0: Removed completely
+
+"""
+import warnings
 import base64
 import time
 from enum import StrEnum
@@ -11,6 +35,14 @@ from .base import BaseAnthropicTool, ToolError, ToolResult
 from .screen_capture import get_screenshot
 import requests
 import re
+
+warnings.warn(
+    "The 'omnitool.gradio_legacy.tools.computer' module is deprecated. "
+    "Use 'omnitool.gradio.core.tools' instead. "
+    "See MIGRATION_GUIDE.md for migration details.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 OUTPUT_DIR = "./tmp/outputs"
 

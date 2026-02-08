@@ -1,10 +1,50 @@
+"""
+VLM Agent implementation.
+
+.. deprecated:: 0.2.0
+    This module is deprecated. Use :mod:`omnitool.gradio.core.agents` instead.
+    
+    The VLM agent has been refactored into the :class:`VLMAgent` in the new architecture
+    with improved code organization, better type hints, and enhanced maintainability.
+    
+    Example of migration::
+    
+        from omnitool.gradio.core.agents import VLMAgent
+        from omnitool.gradio.core.agents.factory import create_agent
+        from omnitool.gradio.services import AppState
+        
+        state = AppState(...)
+        agent = create_agent(
+            model_name="gpt-4o",
+            state=state,
+            tools_collection=tools,
+            save_folder=Path("./run"),
+        )
+    
+    See :doc:`MIGRATION_GUIDE` for comprehensive migration instructions.
+    
+    **Removal Timeline**:
+    - v0.2.0: Deprecated with warnings
+    - v0.3.0: Limited bug fixes only
+    - v1.0.0: Removed completely
+
+"""
+import warnings
 import json
 from collections.abc import Callable
-from typing import cast, Callable
+from typing import cast
 import uuid
 from PIL import Image, ImageDraw
 import base64
 from io import BytesIO
+
+warnings.warn(
+    "The 'omnitool.gradio_legacy.agent.vlm_agent' module is deprecated. "
+    "Use 'omnitool.gradio.core.agents' instead. "
+    "See MIGRATION_GUIDE.md for migration details.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 from anthropic import APIResponse
 from anthropic.types import ToolResultBlockParam

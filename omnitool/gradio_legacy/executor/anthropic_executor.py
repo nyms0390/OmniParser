@@ -1,6 +1,40 @@
+"""
+Anthropic executor for tool execution.
+
+.. deprecated:: 0.2.0
+    This module is deprecated. Use :mod:`omnitool.gradio.core.executors` instead.
+    
+    Tool execution has been refactored into the :class:`ToolExecutor` class
+    which provides a cleaner, more extensible interface for executing tools with better error handling.
+    
+    Example of migration::
+    
+        from omnitool.gradio.core.executors import ToolExecutor
+        from omnitool.gradio.core.tools import ToolCollection
+        
+        executor = ToolExecutor(tools=ToolCollection())
+        result = executor.execute(tool_name="computer", tool_input={...})
+    
+    See :doc:`MIGRATION_GUIDE` for comprehensive migration instructions.
+    
+    **Removal Timeline**:
+    - v0.2.0: Deprecated with warnings
+    - v0.3.0: Limited bug fixes only
+    - v1.0.0: Removed completely
+
+"""
+import warnings
 import asyncio
 from typing import Any, Dict, cast
 from collections.abc import Callable
+
+warnings.warn(
+    "The 'omnitool.gradio_legacy.executor.anthropic_executor' module is deprecated. "
+    "Use 'omnitool.gradio.core.executors' instead. "
+    "See MIGRATION_GUIDE.md for migration details.",
+    DeprecationWarning,
+    stacklevel=2
+)
 from anthropic.types.beta import (
     BetaContentBlock,
     BetaContentBlockParam,

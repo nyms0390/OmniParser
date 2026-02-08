@@ -128,9 +128,11 @@ class EasyOCRBackend(BaseOCRBackend):
 
 class PaddleOCRBackend(BaseOCRBackend):
     """
-    PaddleOCR backend implementation.
+    PaddleOCR 3.x backend implementation.
     
-    High-performance OCR with optimized accuracy settings.
+    High-performance OCR with GPU support via local or API-based deployment.
+    Migrated from PaddleOCR 2.x to 3.x with updated API handling.
+    
     GPU version runs via API server to avoid library conflicts.
     """
     
@@ -141,10 +143,10 @@ class PaddleOCRBackend(BaseOCRBackend):
     
     def recognize(self, image: np.ndarray, **kwargs) -> Tuple[List[Tuple], List[str]]:
         """
-        Recognize text using PaddleOCR.
+        Recognize text using PaddleOCR 3.x.
         
         Args:
-            image: Image as numpy array (RGB format)
+            image: Image as numpy array (RGB or BGR format)
             **kwargs: Additional arguments, supports 'text_threshold' for confidence filtering
             
         Returns:
@@ -163,12 +165,28 @@ class PaddleOCRBackend(BaseOCRBackend):
             image_base64 = base64.b64encode(buffer).decode('utf-8')
             coord, text = ocr.recognize(image_base64, text_threshold=text_threshold)
         else:
-            # Local OCR processing
-            result = ocr.ocr(image, cls=False)[0]
+            # Local OCR processing with PaddleOCR 3.x
+            # PaddleOCR 3.x returns: {'res': {'rec_polys': ndarray, 'rec_texts': ndarray, 'rec_scores': ndarray, ...}}
+            result = ocr.ocr(image)
             
-            # Extract coordinates and text with threshold filtering
-            coord = [item[0] for item in result if item[1][1] > text_threshold]
-            text = [item[1][0] for item in result if item[1][1] > text_threshold]
+            coord = []
+            text = []
+            
+            if result and 'res' in result:
+                res = result['res']
+                rec_polys = res.get('rec_polys', [])
+                rec_texts = res.get('rec_texts', [])
+                rec_scores = res.get('rec_scores', np.array([]))
+                
+                # Iterate through detected text regions
+                for i, (poly, txt) in enumerate(zip(rec_polys, rec_texts)):
+                    # Get confidence score for this detection
+                    score = rec_scores[i] if i < len(rec_scores) else 0.0
+                    
+                    # Filter by confidence threshold
+                    if float(score) > text_threshold:
+                        coord.append(poly)
+                        text.append(str(txt))
         
         return coord, text
     
@@ -194,27 +212,46 @@ class PaddleOCRBackend(BaseOCRBackend):
         return self._ocr
     
     def _init_local_paddleocr(self, use_gpu: bool):
-        """Initialize local PaddleOCR instance."""
+        """Initialize local PaddleOCR 3.x instance."""
         try:
             from paddleocr import PaddleOCR
-            logger.info(f"Initializing local PaddleOCR with GPU={use_gpu}")
+            logger.info(f"Initializing PaddleOCR 3.x with GPU={use_gpu}")
             
-            # Build initialization parameters
+            # Build initialization parameters for PaddleOCR 3.x
+            # Note: Several 2.x parameters have been removed or renamed in 3.x
             init_params = {
                 'lang': self.language,
-                'use_angle_cls': False,
                 'use_gpu': use_gpu,
                 'show_log': False,
             }
             
-            # Merge with backend-specific config (excluding text_threshold and api_url which are special)
+            # Map backend_config parameters to PaddleOCR 3.x API
+            # Handle renamed parameters from 2.x to 3.x
+            param_mapping = {
+                'rec_batch_num': 'text_recognition_batch_size',  # 2.x -> 3.x renamed
+                'max_batch_size': 'text_detection_batch_size',   # 2.x -> 3.x renamed
+                'text_threshold': None,  # Runtime parameter, skip
+                'api_url': None,  # Special parameter, skip
+                # 2.x parameters no longer supported in 3.x - will be filtered
+                'use_angle_cls': None,  # Removed in 3.x
+                'use_dilation': None,  # Removed in 3.x
+                'det_db_score_mode': None,  # Removed in 3.x
+            }
+            
+            # Add backend-specific parameters, applying mappings and filtering
             for key, value in self.backend_config.items():
-                if key not in ('text_threshold', 'api_url'):
+                if key in param_mapping:
+                    mapped_key = param_mapping[key]
+                    if mapped_key:  # Only add if not None (i.e., not filtered out)
+                        init_params[mapped_key] = value
+                elif key not in ('text_threshold', 'api_url'):
+                    # Keep any other unknown parameters (may be new 3.x features)
                     init_params[key] = value
             
+            logger.debug(f"PaddleOCR 3.x initialization params: {init_params}")
             return PaddleOCR(**init_params)
         except ImportError:
-            logger.error("PaddleOCR not installed. Install with: pip install paddleocr")
+            logger.error("PaddleOCR 3.x not installed. Install with: pip install paddleocr>=3.0")
             raise
     
     def _is_gpu_api(self) -> bool:

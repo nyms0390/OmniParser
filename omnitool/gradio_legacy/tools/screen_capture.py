@@ -1,9 +1,39 @@
+"""Screen capture utility.
+
+.. deprecated:: 0.2.0
+    This module is deprecated. Use :mod:`omnitool.gradio.core.tools` instead.
+    
+    Screen capture functionality has been refactored with improved abstraction and error handling.
+    
+    Example of migration::
+    
+        from omnitool.gradio.core.tools.screen_capture import get_screenshot
+        
+        screenshot, path = get_screenshot(resize=False)
+    
+    See :doc:`MIGRATION_GUIDE` for comprehensive migration instructions.
+    
+    **Removal Timeline**:
+    - v0.2.0: Deprecated with warnings
+    - v0.3.0: Limited bug fixes only
+    - v1.0.0: Removed completely
+
+"""
+import warnings
 from pathlib import Path
 from uuid import uuid4
 import requests
 from PIL import Image
 from .base import BaseAnthropicTool, ToolError
 from io import BytesIO
+
+warnings.warn(
+    "The 'omnitool.gradio_legacy.tools.screen_capture' module is deprecated. "
+    "Use 'omnitool.gradio.core.tools' instead. "
+    "See MIGRATION_GUIDE.md for migration details.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 OUTPUT_DIR = "./tmp/outputs"
 

@@ -18,7 +18,7 @@ def convert_pil_image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode()
 
 
-from models.utils import get_som_labeled_img, check_ocr_box, get_caption_model_processor, get_yolo_model
+from util.utils import get_som_labeled_img, check_ocr_box, get_caption_model_processor, get_yolo_model
 import torch
 from ultralytics import YOLO
 from PIL import Image
@@ -79,7 +79,7 @@ Example 2: Task instruction: Search on google. \n{"Analysis": "Based on the scre
 
 from azure.identity import AzureCliCredential, DefaultAzureCredential, get_bearer_token_provider
 from openai import AzureOpenAI
-from models.utils import get_pred_phi3v, extract_dict_from_text, get_phi3v_model_dict
+from util.utils import get_pred_phi3v, extract_dict_from_text, get_phi3v_model_dict
 
 class GPT4XModel():
     def __init__(self, model_name="gpt-4o-2024-05-13", use_managed_identity=False):

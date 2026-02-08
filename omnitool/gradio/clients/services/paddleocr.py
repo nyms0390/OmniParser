@@ -11,10 +11,17 @@ logger = logging.getLogger(__name__)
 
 
 class PaddleOCRClient(BaseServiceClient):
-    """GPU PaddleOCR API client.
+    """GPU PaddleOCR 3.x API client.
     
-    Communicates with a remote PaddleOCR server that provides GPU-accelerated
+    Communicates with a remote PaddleOCR 3.x server that provides GPU-accelerated
     text recognition. Used when use_gpu=True and api_url is provided.
+    
+    Expected API Response Format:
+    {
+        "coordinates": [[x1, y1], [x2, y2], ...],  # Bounding box points for each text region
+        "text": ["text1", "text2", ...],           # Recognized text strings
+        "confidence": [0.95, 0.87, ...]            # Optional confidence scores
+    }
     """
     
     def __init__(self, base_url: str = "http://localhost:8001", timeout: int = 60):

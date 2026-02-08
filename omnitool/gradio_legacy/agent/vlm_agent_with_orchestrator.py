@@ -1,6 +1,42 @@
+"""
+VLM Agent with integrated orchestration.
+
+.. deprecated:: 0.2.0
+    This module is deprecated. Use :mod:`omnitool.gradio.core.orchestrator` instead.
+    
+    The orchestration logic has been refactored into the :class:`SamplingOrchestrator` class
+    which provides a cleaner interface for managing the agent loop with proper state management.
+    
+    Example of migration::
+    
+        from omnitool.gradio.core.orchestrator import SamplingOrchestrator
+        from omnitool.gradio.core.agents.factory import create_agent
+        from omnitool.gradio.services import AppState
+        
+        state = AppState(...)
+        agent = create_agent(model_name="gpt-4o", state=state, ...)
+        orchestrator = SamplingOrchestrator(
+            model_name="gpt-4o",
+            state=state,
+            tools_collection=tools,
+        )
+        
+        for result in orchestrator.sampling_loop():
+            # Process step result
+            pass
+    
+    See :doc:`MIGRATION_GUIDE` for comprehensive migration instructions.
+    
+    **Removal Timeline**:
+    - v0.2.0: Deprecated with warnings
+    - v0.3.0: Limited bug fixes only
+    - v1.0.0: Removed completely
+
+"""
+import warnings
 import json
 from collections.abc import Callable
-from typing import cast, Callable
+from typing import cast
 import uuid
 from PIL import Image, ImageDraw
 import base64
@@ -8,6 +44,14 @@ from io import BytesIO
 import copy
 from pathlib import Path
 from datetime import datetime
+
+warnings.warn(
+    "The 'omnitool.gradio_legacy.agent.vlm_agent_with_orchestrator' module is deprecated. "
+    "Use 'omnitool.gradio.core.orchestrator' instead. "
+    "See MIGRATION_GUIDE.md for migration details.",
+    DeprecationWarning,
+    stacklevel=2
+)
 from anthropic import APIResponse
 from anthropic.types import ToolResultBlockParam
 from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaToolUseBlock, BetaMessageParam, BetaUsage

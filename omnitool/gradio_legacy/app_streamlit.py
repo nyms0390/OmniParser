@@ -1,8 +1,31 @@
 """
 Streamlit implementation of the OmniTool frontend.
 Usage: streamlit run app_streamlit.py -- --windows_host_url localhost:8006 --omniparser_server_url localhost:8000
-"""
 
+.. deprecated:: 0.2.0
+    This module is deprecated. Use :mod:`omnitool.gradio.ui.streamlit` instead.
+    
+    Streamlit support has been reorganized in the refactored architecture under
+    :mod:`omnitool.gradio.ui.streamlit` with improved code structure and configuration management.
+    
+    Example of migration::
+    
+        from omnitool.gradio.ui.streamlit import StreamlitApp
+        from omnitool.gradio.config import get_settings
+        
+        settings = get_settings()
+        app = StreamlitApp(settings)
+        app.run()
+    
+    See :doc:`MIGRATION_GUIDE` for comprehensive migration instructions.
+    
+    **Removal Timeline**:
+    - v0.2.0: Deprecated with warnings
+    - v0.3.0: Limited bug fixes only
+    - v1.0.0: Removed completely
+
+"""
+import warnings
 import os
 import io
 import shutil
@@ -14,6 +37,14 @@ from pathlib import Path
 from typing import cast
 from enum import StrEnum
 import streamlit as st
+
+warnings.warn(
+    "The 'omnitool.gradio_legacy.app_streamlit' module is deprecated. "
+    "Use 'omnitool.gradio.ui.streamlit' instead. "
+    "See MIGRATION_GUIDE.md for migration details.",
+    DeprecationWarning,
+    stacklevel=2
+)
 from anthropic import APIResponse
 from anthropic.types import TextBlock
 from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaToolUseBlock

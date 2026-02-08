@@ -1,5 +1,28 @@
-"""Collection classes for managing multiple tools."""
+"""Collection classes for managing multiple tools.
 
+.. deprecated:: 0.2.0
+    This module is deprecated. Use :mod:`omnitool.gradio.core.tools.collection` instead.
+    
+    The tool collection interface has been refactored with improved type safety and extensibility.
+    
+    Example of migration::
+    
+        from omnitool.gradio.core.tools import ToolCollection
+        from omnitool.gradio.core.tools.collection import get_available_tools
+        
+        tools = ToolCollection()
+        for tool in get_available_tools():
+            tools.add(tool)
+    
+    See :doc:`MIGRATION_GUIDE` for comprehensive migration instructions.
+    
+    **Removal Timeline**:
+    - v0.2.0: Deprecated with warnings
+    - v0.3.0: Limited bug fixes only
+    - v1.0.0: Removed completely
+
+"""
+import warnings
 from typing import Any
 
 from anthropic.types.beta import BetaToolUnionParam
@@ -9,6 +32,14 @@ from .base import (
     ToolError,
     ToolFailure,
     ToolResult,
+)
+
+warnings.warn(
+    "The 'omnitool.gradio_legacy.tools.collection' module is deprecated. "
+    "Use 'omnitool.gradio.core.tools.collection' instead. "
+    "See MIGRATION_GUIDE.md for migration details.",
+    DeprecationWarning,
+    stacklevel=2
 )
 
 
