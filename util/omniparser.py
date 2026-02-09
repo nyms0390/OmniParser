@@ -55,7 +55,7 @@ class Omniparser:
         
         # Load models with services
         logger.info("Loading SOM model (YOLO)")
-        self.som_model = YOLOModelService.load(config['som_model_path'])
+        self.som_model = YOLOModelService.load(config['som_model_path'], device=device)
         
         logger.info(f"Loading caption model: {config['caption_model_name']}")
         self.caption_model_processor = CaptionModelService.load(

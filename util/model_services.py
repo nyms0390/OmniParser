@@ -181,22 +181,26 @@ class YOLOModelService:
     """
     
     @staticmethod
-    def load(model_path: str) -> Any:
+    def load(model_path: str, device: Optional[str] = None) -> Any:
         """
         Load YOLO model.
         
         Args:
             model_path: Path to YOLO model weights
+            device: Device to load model on ('cuda' or 'cpu'). Auto-detects if None.
             
         Returns:
             Loaded YOLO model
         """
-        cache_key = f"yolo_{model_path}"
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        cache_key = f"yolo_{model_path}_{device}"
         if ModelCache.has(cache_key):
-            logger.debug(f"Using cached YOLO model: {model_path}")
+            logger.debug(f"Using cached YOLO model: {model_path} on {device}")
             return ModelCache.get(cache_key)
         
-        logger.info(f"Loading YOLO model: {model_path}")
+        logger.info(f"Loading YOLO model: {model_path} on {device}")
         
         try:
             from ultralytics import YOLO
@@ -205,5 +209,6 @@ class YOLOModelService:
             raise
         
         model = YOLO(model_path)
+        model.to(device)
         ModelCache.set(cache_key, model)
         return model

@@ -142,9 +142,19 @@ class ParseRequest(BaseModel):
 
     Attributes:
         base64_image: Base64-encoded image data (PNG, JPEG, etc.).
+        box_threshold: Confidence threshold for box detection. Optional.
+        iou_threshold: IOU threshold for filtering overlapping boxes. Optional.
+        ocr_backend: OCR backend to use ('paddleocr' or 'easyocr'). Optional.
+        use_gpu: Whether to use GPU for OCR processing. Optional.
+        imgsz: Image size for detection model. Optional.
     """
 
     base64_image: str
+    box_threshold: Optional[float] = None
+    iou_threshold: Optional[float] = None
+    ocr_backend: Optional[str] = None
+    use_gpu: Optional[bool] = None
+    imgsz: Optional[int] = None
 
 
 class ParseResponse(BaseModel):
@@ -181,7 +191,9 @@ async def parse(parse_request: ParseRequest) -> ParseResponse:
     the OmniParser model. Returns annotated image and parsed content list.
 
     Args:
-        parse_request: Request containing base64-encoded image.
+        parse_request: Request containing base64-encoded image and optional
+            parsing parameters (box_threshold, iou_threshold, ocr_backend, 
+            use_gpu, imgsz).
 
     Returns:
         ParseResponse: Annotated image and parsed UI elements.
@@ -193,8 +205,17 @@ async def parse(parse_request: ParseRequest) -> ParseResponse:
     start = time.time()
 
     try:
+        # Extract all non-None parameters from request
+        parse_kwargs = parse_request.model_dump(exclude_none=True)
+        parse_kwargs.pop("base64_image", None)  # Remove image from kwargs
+        
+        # Log all parameters being used
+        if parse_kwargs:
+            logger.info(f"Parse parameters: {parse_kwargs}")
+        
         labeled_img, parsed_content = omniparser.parse(
-            parse_request.base64_image
+            parse_request.base64_image,
+            **parse_kwargs
         )
         latency = time.time() - start
         logger.info(f"Image parsing completed in {latency:.2f}s")

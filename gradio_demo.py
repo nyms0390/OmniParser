@@ -90,7 +90,8 @@ def create_process_function(
         image_input: Image.Image,
         box_threshold: float,
         iou_threshold: float,
-        use_paddleocr: bool,
+        ocr_backend: str,
+        use_gpu: bool,
         imgsz: int,
     ) -> Tuple[Image.Image, str]:
         """
@@ -100,7 +101,8 @@ def create_process_function(
             image_input: PIL Image to process
             box_threshold: Confidence threshold for box detection
             iou_threshold: IOU threshold for filtering overlapping boxes
-            use_paddleocr: Whether to use PaddleOCR (UI control only, server-side parameter)
+            ocr_backend: OCR backend to use ('paddleocr' or 'easyocr')
+            use_gpu: Whether to use GPU for OCR processing
             imgsz: Image size for detection model (UI control only, server-side parameter)
             
         Returns:
@@ -108,6 +110,7 @@ def create_process_function(
         """
         try:
             logger.info("Processing image via OmniParser API...")
+            logger.info(f"Parameters - box_threshold: {box_threshold}, iou_threshold: {iou_threshold}, ocr_backend: {ocr_backend}, use_gpu: {use_gpu}, imgsz: {imgsz}")
             
             # Convert PIL image to base64
             img_bytes = io.BytesIO()
@@ -115,9 +118,18 @@ def create_process_function(
             img_bytes.seek(0)
             base64_image = base64.b64encode(img_bytes.getvalue()).decode("utf-8")
             
+            # Prepare parse options with all UI parameters
+            parse_options = {
+                "box_threshold": box_threshold,
+                "iou_threshold": iou_threshold,
+                "ocr_backend": ocr_backend,
+                "use_gpu": use_gpu,
+                "imgsz": imgsz,
+            }
+            
             # Call API
-            logger.info(f"Calling API: {omniparser_client.base_url}/parse/")
-            response = omniparser_client.parse_screenshot(base64_image)
+            logger.info(f"Calling API: {omniparser_client.base_url}/parse/ with options: {parse_options}")
+            response = omniparser_client.parse_screenshot(base64_image, parse_options=parse_options)
             
             # Extract and decode response
             labeled_img_b64 = response["labeled_screenshot_base64"]
@@ -239,9 +251,6 @@ def main() -> None:
                     step=0.01,
                     value=0.1,
                 )
-                use_paddleocr_component = gr.Checkbox(
-                    label="Use PaddleOCR", value=True
-                )
                 imgsz_component = gr.Slider(
                     label="Icon Detect Image Size",
                     minimum=640,
@@ -249,6 +258,16 @@ def main() -> None:
                     step=32,
                     value=640,
                 )
+                # OCR Backend and Use GPU in the same row
+                with gr.Row():
+                    ocr_backend_component = gr.Dropdown(
+                        choices=["paddleocr", "easyocr"],
+                        value="paddleocr",
+                        label="OCR Backend",
+                    )
+                    use_gpu_component = gr.Checkbox(
+                        label="Use GPU", value=True
+                    )
                 submit_button_component = gr.Button(
                     value="Submit", variant="primary"
                 )
@@ -267,7 +286,8 @@ def main() -> None:
                 image_input_component,
                 box_threshold_component,
                 iou_threshold_component,
-                use_paddleocr_component,
+                ocr_backend_component,
+                use_gpu_component,
                 imgsz_component,
             ],
             outputs=[image_output_component, text_output_component],

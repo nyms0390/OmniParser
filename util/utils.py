@@ -64,7 +64,7 @@ def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2
     return CaptionModelService.load(model_name, model_name_or_path, device)
 
 
-def get_yolo_model(model_path):
+def get_yolo_model(model_path, device=None):
     """
     Load YOLO model for object detection.
     
@@ -73,11 +73,12 @@ def get_yolo_model(model_path):
     
     Args:
         model_path: Path to YOLO model weights
+        device: Device to load on ('cuda', 'cpu', or None for auto-detect)
         
     Returns:
         Loaded YOLO model instance
     """
-    return YOLOModelService.load(model_path)
+    return YOLOModelService.load(model_path, device)
 
 
 @torch.inference_mode()
