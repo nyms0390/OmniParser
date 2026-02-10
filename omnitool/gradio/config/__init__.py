@@ -18,9 +18,12 @@ from omnitool.gradio.config.constants import (
 from omnitool.gradio.config.models import (
     APIProvider,
     MODEL_CONFIG,
+    OCR_CONFIG,
     get_all_model_names,
     get_model_config,
     is_orchestrated_model,
+    get_ocr_config,
+    get_all_ocr_backends,
 )
 from omnitool.gradio.config.logging_config import setup_logging
 from omnitool.gradio.config.settings import (
@@ -50,6 +53,10 @@ __all__ = [
     "get_model_config",
     "get_all_model_names",
     "is_orchestrated_model",
+    # OCR
+    "OCR_CONFIG",
+    "get_ocr_config",
+    "get_all_ocr_backends",
     # Settings
     "Settings",
     "create_argument_parser",

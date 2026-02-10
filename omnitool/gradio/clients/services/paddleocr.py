@@ -4,6 +4,7 @@ PaddleOCR GPU API client for remote text recognition.
 
 from typing import List, Tuple, Optional, Any, Dict
 import logging
+import requests
 
 from .base import BaseServiceClient
 
@@ -37,49 +38,35 @@ class PaddleOCRClient(BaseServiceClient):
     
     def recognize(
         self,
-        image_base64: str,
+        image: bytes,
         text_threshold: float = 0.5,
         **kwargs
-    ) -> Tuple[List[Tuple], List[str]]:
+    ) -> Dict[str, Any]:
         """Recognize text in image via remote API.
         
         Args:
-            image_base64: Base64-encoded image
+            image: Image as PNG bytes
             text_threshold: Confidence threshold for text detection (0.0-1.0)
             **kwargs: Additional parameters (e.g., language)
             
         Returns:
-            Tuple of (coordinates, text_list)
-            - coordinates: List of bounding box coordinates
-            - text_list: List of recognized text strings
+            Dictionary containing OCR results, including coordinates, text, and confidence scores.
             
         Raises:
             Exception: If API call fails
         """
         try:
-            payload = {
-                "image": image_base64,
-                "text_threshold": text_threshold,
-            }
-            
-            # Include any additional parameters
-            payload.update(kwargs)
-            
-            logger.debug(f"Calling PaddleOCR API with threshold={text_threshold}")
+
+            files = {'file': ('image.png', image, 'image/png')}
             
             result = self._make_request(
                 "POST",
                 self.ocr_endpoint,
-                json_data=payload
+                json_data=None,
+                files=files,
             )
             
-            # Extract coordinates and text from response
-            coordinates = result.get('coordinates', [])
-            text = result.get('text', [])
-            
-            logger.debug(f"OCR API returned {len(text)} text regions")
-            
-            return coordinates, text
+            return result
         
         except Exception as e:
             logger.error(f"PaddleOCR API recognition failed: {str(e)}")

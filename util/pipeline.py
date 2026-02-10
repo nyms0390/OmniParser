@@ -58,7 +58,10 @@ class OmniParserPipeline:
                 ocr_text: List[str],
                 ocr_bbox: List[Tuple],
                 box_overlay_ratio: float = 1.0,
-                use_local_semantics: bool = True) -> Tuple[str, Dict, List[Dict]]:
+                use_local_semantics: bool = True,
+                box_threshold: Optional[float] = None,
+                iou_threshold: Optional[float] = None,
+                imgsz: Optional[int] = None) -> Tuple[str, Dict, List[Dict]]:
         """
         Process image through complete SOM pipeline.
         
@@ -68,6 +71,9 @@ class OmniParserPipeline:
             ocr_bbox: List of OCR bounding boxes in normalized coordinates
             box_overlay_ratio: Scale factor for bounding box overlay
             use_local_semantics: If True, generate captions for detected objects
+            box_threshold: Confidence threshold for YOLO detection (optional, uses config default if None)
+            iou_threshold: IoU threshold for overlap removal (optional, uses config default if None)
+            imgsz: Image size for detection model (optional, auto-detects if None)
             
         Returns:
             Tuple of (annotated_image_b64, label_coordinates, parsed_content_list)
@@ -81,7 +87,7 @@ class OmniParserPipeline:
         
         # Step 2: Detect objects with YOLO
         logger.debug("Step 1: Object detection with YOLO")
-        xyxy = self._detect_objects(image_rgb, w, h)
+        xyxy = self._detect_objects(image_rgb, w, h, box_threshold, imgsz)
         
         # Step 3: Normalize coordinates
         logger.debug("Step 2: Normalize coordinates")
@@ -95,7 +101,7 @@ class OmniParserPipeline:
         
         # Step 5: Merge overlapping boxes
         logger.debug("Step 4: Merge overlapping boxes")
-        filtered_boxes_elem = self._merge_overlaps(xyxy_elem, ocr_bbox_elem)
+        filtered_boxes_elem = self._merge_overlaps(xyxy_elem, ocr_bbox_elem, iou_threshold)
         
         # Step 6: Generate semantic labels
         if use_local_semantics:
@@ -136,13 +142,31 @@ class OmniParserPipeline:
         logger.info(f"Pipeline complete: {len(filtered_boxes_elem)} objects detected")
         return encoded_image, label_coordinates, filtered_boxes_elem
     
-    def _detect_objects(self, image: Image.Image, w: int, h: int) -> torch.Tensor:
-        """Detect objects using YOLO model."""
+    def _detect_objects(self, image: Image.Image, w: int, h: int, 
+                        box_threshold: Optional[float] = None,
+                        imgsz: Optional[int] = None) -> torch.Tensor:
+        """Detect objects using YOLO model.
+        
+        Args:
+            image: PIL Image to detect objects in
+            w: Image width
+            h: Image height
+            box_threshold: Confidence threshold (optional, uses config default if None)
+            imgsz: Image size for YOLO (optional, auto-detects if None)
+            
+        Returns:
+            Tensor of detected bounding boxes in xyxy format
+        """
+        # Use provided threshold or fall back to config default
+        threshold = box_threshold if box_threshold is not None else self.config.get('BOX_TRESHOLD', 0.01)
+        # Use provided imgsz or auto-detect from image
+        img_size = (imgsz, imgsz) if imgsz else (h, w)
+        
         xyxy, conf, phrases = predict_yolo(
             model=self.som_model,
             image=image,
-            box_threshold=self.config.get('BOX_TRESHOLD', 0.01),
-            imgsz=(h, w),
+            box_threshold=threshold,
+            imgsz=img_size,
             scale_img=self.config.get('scale_img', False),
             iou_threshold=0.1
         )
@@ -194,12 +218,23 @@ class OmniParserPipeline:
     
     def _merge_overlaps(self, 
                        xyxy_elem: List[Dict],
-                       ocr_bbox_elem: List[Dict]) -> List[Dict]:
-        """Merge overlapping boxes, prioritizing smaller ones and OCR content."""
-        iou_threshold = self.config.get('iou_threshold', 0.9)
+                       ocr_bbox_elem: List[Dict],
+                       iou_threshold: Optional[float] = None) -> List[Dict]:
+        """Merge overlapping boxes, prioritizing smaller ones and OCR content.
+        
+        Args:
+            xyxy_elem: List of YOLO detected boxes
+            ocr_bbox_elem: List of OCR detected text boxes
+            iou_threshold: IoU threshold for overlap removal (optional, uses config default if None)
+            
+        Returns:
+            List of merged box elements
+        """
+        # Use provided threshold or fall back to config default
+        threshold = iou_threshold if iou_threshold is not None else self.config.get('iou_threshold', 0.9)
         filtered_boxes = remove_overlap_new(
             boxes=xyxy_elem,
-            iou_threshold=iou_threshold,
+            iou_threshold=threshold,
             ocr_bbox=ocr_bbox_elem
         )
         

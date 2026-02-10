@@ -158,35 +158,35 @@ class PaddleOCRBackend(BaseOCRBackend):
         text_threshold = kwargs.get('text_threshold', 
                                    self.backend_config.get('text_threshold', 0.5))
         
-        # If using GPU API, send base64 encoded image
+        # If using GPU API, send PNG bytes directly
         if self._is_gpu_api():
-            import base64
-            _, buffer = __import__('cv2').imencode('.png', image)
-            image_base64 = base64.b64encode(buffer).decode('utf-8')
-            coord, text = ocr.recognize(image_base64, text_threshold=text_threshold)
+            import cv2
+            _, buffer = cv2.imencode('.png', image)
+            image_bytes = buffer.tobytes()
+            result = ocr.recognize(image_bytes, text_threshold=text_threshold)
         else:
             # Local OCR processing with PaddleOCR 3.x
             # PaddleOCR 3.x returns: {'res': {'rec_polys': ndarray, 'rec_texts': ndarray, 'rec_scores': ndarray, ...}}
             result = ocr.ocr(image)
             
-            coord = []
-            text = []
+        coord = []
+        text = []
+        
+        if result and 'res' in result:
+            res = result['res']
+            rec_polys = res.get('rec_polys', [])
+            rec_texts = res.get('rec_texts', [])
+            rec_scores = res.get('rec_scores', np.array([]))
             
-            if result and 'res' in result:
-                res = result['res']
-                rec_polys = res.get('rec_polys', [])
-                rec_texts = res.get('rec_texts', [])
-                rec_scores = res.get('rec_scores', np.array([]))
+            # Iterate through detected text regions
+            for i, (poly, txt) in enumerate(zip(rec_polys, rec_texts)):
+                # Get confidence score for this detection
+                score = rec_scores[i] if i < len(rec_scores) else 0.0
                 
-                # Iterate through detected text regions
-                for i, (poly, txt) in enumerate(zip(rec_polys, rec_texts)):
-                    # Get confidence score for this detection
-                    score = rec_scores[i] if i < len(rec_scores) else 0.0
-                    
-                    # Filter by confidence threshold
-                    if float(score) > text_threshold:
-                        coord.append(poly)
-                        text.append(str(txt))
+                # Filter by confidence threshold
+                if float(score) > text_threshold:
+                    coord.append(poly)
+                    text.append(str(txt))
         
         return coord, text
     

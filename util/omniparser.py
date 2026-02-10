@@ -76,7 +76,10 @@ class Omniparser:
     def parse(self, image_base64: str,
               use_local_semantics: bool = True,
               ocr_backend: str = 'easyocr',
-              use_gpu: bool = False) -> Tuple[str, List[Dict]]:
+              use_gpu: bool = False,
+              box_threshold: Optional[float] = None,
+              iou_threshold: Optional[float] = None,
+              imgsz: Optional[int] = None) -> Tuple[str, List[Dict]]:
         """
         Parse screenshot with SOM detection.
         
@@ -85,6 +88,9 @@ class Omniparser:
             use_local_semantics: If True, generate captions for objects
             ocr_backend: OCR backend to use ('easyocr' or 'paddleocr')
             use_gpu: Whether to use GPU for OCR (if supported by backend)
+            box_threshold: Confidence threshold for YOLO detection (optional)
+            iou_threshold: IoU threshold for overlap removal (optional)
+            imgsz: Image size for detection model (optional)
             
         Returns:
             Tuple of (annotated_image_b64, parsed_content_list)
@@ -117,7 +123,10 @@ class Omniparser:
             ocr_text=text,
             ocr_bbox=ocr_bbox,
             box_overlay_ratio=box_overlay_ratio,
-            use_local_semantics=use_local_semantics
+            use_local_semantics=use_local_semantics,
+            box_threshold=box_threshold,
+            iou_threshold=iou_threshold,
+            imgsz=imgsz
         )
         
         logger.info(f"Parsing complete: {len(parsed_content_list)} objects detected")

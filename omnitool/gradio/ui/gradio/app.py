@@ -99,16 +99,16 @@ class GradioApp:
             with gr.Accordion(label="Chat"):
                 chatbot = gr.Chatbot(
                     label="Conversation",
-                    height=400,
                 )
                 
                 with gr.Row():
-                    message_input = gr.Textbox(
-                        placeholder="Enter your request...",
-                        show_label=False,
-                        scale=4,
-                    )
-                    submit_button = gr.Button("Send", scale=1)
+                    with gr.Column(scale=4):
+                        message_input = gr.Textbox(
+                            placeholder="Enter your request...",
+                            show_label=False,
+                        )
+                    with gr.Column(scale=1):
+                        submit_button = gr.Button("Send")
             
             # File upload and viewer
             with gr.Accordion(label="Files"):
@@ -126,13 +126,7 @@ class GradioApp:
                     interactive=False,
                     lines=3,
                 )
-                progress_bar = gr.Slider(
-                    minimum=0,
-                    maximum=100,
-                    value=0,
-                    label="Progress",
-                    interactive=False,
-                )
+                progress_bar = gr.Progress()
             
             # Wire up interactions
             submit_button.click(
@@ -148,7 +142,6 @@ class GradioApp:
                     chatbot,
                     message_input,
                     status_text,
-                    progress_bar,
                     state_var,
                 ],
             )
@@ -171,7 +164,7 @@ class GradioApp:
             Updated provider choices
         """
         providers = get_provider_options_for_model(model_name)
-        return gr.Dropdown.update(
+        return gr.update(
             choices=providers,
             value=providers[0] if providers else "",
         )
@@ -194,7 +187,7 @@ class GradioApp:
             chatbot_history: Chat history
             
         Returns:
-            Updated chatbot, input, status, progress, state
+            Updated chatbot, input, status, state
         """
         # Initialize state if needed
         if state is None or not isinstance(state, AppState):
@@ -211,7 +204,7 @@ class GradioApp:
         
         if not is_valid:
             updated_history.append((None, f"Error: {error_msg}"))
-            return updated_history, "", error_msg, 0, state
+            return updated_history, "", error_msg, state
         
         # Create orchestrator
         try:
@@ -237,12 +230,12 @@ class GradioApp:
             # Update history with assistant response
             updated_history.append((None, "Execution complete"))
             
-            return updated_history, "", status, 100, state
+            return updated_history, "", status, state
         
         except Exception as e:
             error_msg = f"Execution failed: {str(e)}"
             updated_history.append((None, error_msg))
-            return updated_history, "", error_msg, 0, state
+            return updated_history, "", error_msg, state
     
     def on_file_upload(self, state, files) -> Tuple:
         """Handle file upload.
