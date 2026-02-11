@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import yaml
-
 
 @dataclass
 class Settings:
@@ -21,9 +19,12 @@ class Settings:
     groq_api_key: str = ""
     dashscope_api_key: str = ""
     
+    # Azure endpoint
+    azure_endpoint: str = ""
+    
     # Service URLs
     omniparser_url: str = "http://localhost:8000"
-    windows_host_url: str = "http://localhost:8006"
+    windows_host_url: str = "http://localhost:5000"
     
     # Google Cloud settings (for Vertex AI)
     cloud_ml_region: str = "us-central1"
@@ -57,8 +58,8 @@ def create_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--windows_host_url",
         type=str,
-        default="http://localhost:8006",
-        help="Windows host VNC URL",
+        default="http://localhost:5000",
+        help="Windows host URL",
     )
     
     parser.add_argument(
@@ -99,6 +100,8 @@ def load_yaml_config(config_path: str) -> Dict[str, Any]:
         FileNotFoundError: If config file doesn't exist
         yaml.YAMLError: If YAML parsing fails
     """
+    import yaml
+    
     config_file = Path(config_path)
     if not config_file.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
@@ -126,9 +129,10 @@ def load_settings(args: Optional[argparse.Namespace] = None, config_file_path: O
     settings.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "")
     settings.groq_api_key = os.getenv("GROQ_API_KEY", "")
     settings.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY", "")
+    settings.azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
     settings.cloud_ml_region = os.getenv("CLOUD_ML_REGION", "us-central1")
     settings.omniparser_url = os.getenv("OMNIPARSER_URL", "http://localhost:8000")
-    settings.windows_host_url = os.getenv("WINDOWS_HOST_URL", "http://localhost:8006")
+    settings.windows_host_url = os.getenv("WINDOWS_HOST_URL", "http://localhost:5000")
     settings.run_folder = os.getenv("RUN_FOLDER", "./runs")
     
     # Step 2: Load from YAML config file (if provided)
@@ -147,6 +151,8 @@ def load_settings(args: Optional[argparse.Namespace] = None, config_file_path: O
                 settings.groq_api_key = yaml_config["groq_api_key"]
             if "dashscope_api_key" in yaml_config:
                 settings.dashscope_api_key = yaml_config["dashscope_api_key"]
+            if "azure_endpoint" in yaml_config:
+                settings.azure_endpoint = yaml_config["azure_endpoint"]
             if "omniparser_url" in yaml_config:
                 settings.omniparser_url = yaml_config["omniparser_url"]
             if "windows_host_url" in yaml_config:

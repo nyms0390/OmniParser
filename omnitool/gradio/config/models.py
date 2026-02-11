@@ -5,26 +5,18 @@ Model configuration registry mapping model names to agent types, LLM clients, an
 from enum import StrEnum
 from typing import Any, Dict
 
-
-class APIProvider(StrEnum):
-    """Extended APIProvider enum including all supported providers."""
-    ANTHROPIC = "anthropic"
-    BEDROCK = "bedrock"
-    VERTEX = "vertex"
-    OPENAI = "openai"
-    GROQ = "groq"
-    DASHSCOPE = "dashscope"
+from omnitool.gradio.config.enums import APIProvider
 
 
 # Pricing format: {token_type: "total"|"separate", cost_per_1m: float or dict}
 # For separate token types (Anthropic), cost_per_1m is dict: {input: float, output: float}
 MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
-    # GPT-4o Standard (OpenAI)
+    # GPT-4o Standard (OpenAI and Azure)
     "omniparser + gpt-4o": {
         "internal_name": "gpt-4o-2024-11-20",
         "agent_type": "VLMAgent",
         "llm_client": "openai",
-        "provider": APIProvider.OPENAI,
+        "provider": [APIProvider.OPENAI, APIProvider.AZURE],
         "provider_base_url": "https://api.openai.com/v1",
         "pricing": {
             "token_type": "total",
@@ -40,7 +32,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "internal_name": "o1",
         "agent_type": "VLMAgent",
         "llm_client": "openai",
-        "provider": APIProvider.OPENAI,
+        "provider": [APIProvider.OPENAI],
         "provider_base_url": "https://api.openai.com/v1",
         "pricing": {
             "token_type": "total",
@@ -56,7 +48,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "internal_name": "o3-mini",
         "agent_type": "VLMAgent",
         "llm_client": "openai",
-        "provider": APIProvider.OPENAI,
+        "provider": [APIProvider.OPENAI],
         "provider_base_url": "https://api.openai.com/v1",
         "pricing": {
             "token_type": "total",
@@ -72,7 +64,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "internal_name": "qwen2.5-vl-72b-instruct",
         "agent_type": "VLMAgent",
         "llm_client": "openai",  # Uses OpenAI-compatible API
-        "provider": APIProvider.DASHSCOPE,
+        "provider": [APIProvider.DASHSCOPE],
         "provider_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "pricing": {
             "token_type": "total",
@@ -88,7 +80,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "internal_name": "deepseek-r1-distill-llama-70b",
         "agent_type": "VLMAgent",
         "llm_client": "groq",
-        "provider": APIProvider.GROQ,
+        "provider": [APIProvider.GROQ],
         "provider_base_url": None,  # Groq manages its own base URL
         "pricing": {
             "token_type": "total",
@@ -99,12 +91,12 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "supports_images": False,  # R1 doesn't support images
         "orchestrated_variant": "omniparser + R1-orchestrated",
     },
-    # GPT-4o Orchestrated (OpenAI)
+    # GPT-4o Orchestrated (OpenAI and Azure)
     "omniparser + gpt-4o-orchestrated": {
         "internal_name": "gpt-4o-2024-11-20",
         "agent_type": "VLMAgent",  # Same agent, orchestration in core.orchestrator
         "llm_client": "openai",
-        "provider": APIProvider.OPENAI,
+        "provider": [APIProvider.OPENAI, APIProvider.AZURE],
         "provider_base_url": "https://api.openai.com/v1",
         "pricing": {
             "token_type": "total",
@@ -120,7 +112,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "internal_name": "o1",
         "agent_type": "VLMAgent",
         "llm_client": "openai",
-        "provider": APIProvider.OPENAI,
+        "provider": [APIProvider.OPENAI],
         "provider_base_url": "https://api.openai.com/v1",
         "pricing": {
             "token_type": "total",
@@ -136,7 +128,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "internal_name": "o3-mini",
         "agent_type": "VLMAgent",
         "llm_client": "openai",
-        "provider": APIProvider.OPENAI,
+        "provider": [APIProvider.OPENAI],
         "provider_base_url": "https://api.openai.com/v1",
         "pricing": {
             "token_type": "total",
@@ -152,7 +144,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "internal_name": "qwen2.5-vl-72b-instruct",
         "agent_type": "VLMAgent",
         "llm_client": "openai",
-        "provider": APIProvider.DASHSCOPE,
+        "provider": [APIProvider.DASHSCOPE],
         "provider_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "pricing": {
             "token_type": "total",
@@ -168,7 +160,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "internal_name": "deepseek-r1-distill-llama-70b",
         "agent_type": "VLMAgent",
         "llm_client": "groq",
-        "provider": APIProvider.GROQ,
+        "provider": [APIProvider.GROQ],
         "provider_base_url": None,
         "pricing": {
             "token_type": "total",
@@ -179,12 +171,12 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "supports_images": False,
         "orchestrated_variant": None,
     },
-    # Claude 3.5 Sonnet (Anthropic)
+    # Claude 3.5 Sonnet (Anthropic, Bedrock, Vertex)
     "claude-3-5-sonnet-20241022": {
         "internal_name": "claude-3-5-sonnet-20241022",
         "agent_type": "AnthropicAgent",
         "llm_client": "anthropic",
-        "provider": APIProvider.ANTHROPIC,  # Default; can be overridden to bedrock or vertex
+        "provider": [APIProvider.ANTHROPIC, APIProvider.BEDROCK, APIProvider.VERTEX],
         "provider_base_url": None,  # Anthropic SDK manages base URL
         "pricing": {
             "token_type": "separate",
@@ -197,11 +189,6 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "temperature": 0.0,
         "supports_images": True,
         "orchestrated_variant": None,
-        "anthropic_providers": [
-            APIProvider.ANTHROPIC,
-            APIProvider.BEDROCK,
-            APIProvider.VERTEX,
-        ],
     },
 }
 

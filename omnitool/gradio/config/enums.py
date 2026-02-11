@@ -14,6 +14,8 @@ class APIProvider(StrEnum):
     GROQ = "groq"
     QWEN = "qwen"
     DEEPSEEK = "deepseek"
+    DASHSCOPE = "dashscope"
+    AZURE = "azure"
 
 
 class Sender(StrEnum):

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 
 from omnitool.gradio.clients.services.omniparser import OmniParserClient
+from omnitool.gradio.clients.services.windows_host import WindowsHostClient
 from omnitool.gradio.services import AppState
 
 from .agents import BaseAgent, create_agent
@@ -36,8 +37,11 @@ class SamplingOrchestrator:
         state: AppState,
         tools_collection,
         omniparser_client: OmniParserClient,
+        windows_host_client: WindowsHostClient,
         max_steps: int = 20,
         output_callback = None,
+        provider: Optional[str] = None,
+        azure_endpoint: Optional[str] = None,
     ):
         """Initialize orchestrator.
         
@@ -45,16 +49,22 @@ class SamplingOrchestrator:
             model_name: Model to use
             state: Application state
             tools_collection: Available tools
-            omniparser_client: OmniParser service client
+            omniparser_client: OmniParser service client for parsing
+            windows_host_client: Windows host client for screenshot capture
             max_steps: Maximum steps before terminating
             output_callback: Optional callback for UI updates
+            provider: LLM provider to use (e.g., 'openai', 'azure', 'anthropic')
+            azure_endpoint: Azure OpenAI endpoint (required if provider is 'azure')
         """
         self.model_name = model_name
         self.state = state
         self.tools_collection = tools_collection
         self.omniparser_client = omniparser_client
+        self.windows_host_client = windows_host_client
         self.max_steps = max_steps
         self.output_callback = output_callback
+        self.provider = provider
+        self.azure_endpoint = azure_endpoint
         
         # Create agent
         save_folder = state.session.run_folder / "execution"
@@ -64,6 +74,8 @@ class SamplingOrchestrator:
             state=state,
             tools_collection=tools_collection,
             save_folder=save_folder,
+            provider=provider,
+            azure_endpoint=azure_endpoint,
         )
         
         # Initialize executor
@@ -185,12 +197,30 @@ class SamplingOrchestrator:
         
         Returns:
             Parsed screen data from OmniParser
+            
+        Raises:
+            Exception: If capture or parsing fails
         """
         try:
-            result = self.omniparser_client.capture_and_parse()
+            # CAPTURE: Get screenshot from Windows host
+            logger.debug("Requesting screenshot from Windows host...")
+            screenshot_data = self.windows_host_client.get_screenshot()
+            screenshot_b64 = screenshot_data.get('screenshot_base64', '')
+            
+            if not screenshot_b64:
+                raise ValueError("No screenshot data received from Windows host")
+            
+            logger.debug(f"Screenshot captured successfully (size: {len(screenshot_b64)} bytes)")
+            
+            # PARSE: Parse screenshot with OmniParser
+            logger.debug("Parsing screenshot with OmniParser...")
+            result = self.omniparser_client.parse_screenshot(screenshot_b64)
+            
+            logger.debug("Screenshot parsed successfully")
             return result
+        
         except Exception as e:
-            logger.error(f"Screen capture failed: {str(e)}")
+            logger.error(f"Screen capture/parse failed: {str(e)}")
             raise
     
     def _save_trajectory_step(

@@ -2,7 +2,7 @@
 Clients module initialization.
 """
 
-from omnitool.gradio.clients.base import BaseLLMClient
+from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.clients.llm import (
     AnthropicClient,
     GroqClient,
@@ -11,6 +11,7 @@ from omnitool.gradio.clients.llm import (
     get_llm_client_for_model,
 )
 from omnitool.gradio.clients.services.omniparser import OmniParserClient
+from omnitool.gradio.clients.services.windows_host import WindowsHostClient
 
 __all__ = [
     "BaseLLMClient",
@@ -18,6 +19,7 @@ __all__ = [
     "GroqClient",
     "AnthropicClient",
     "OmniParserClient",
+    "WindowsHostClient",
     "get_llm_client",
     "get_llm_client_for_model",
 ]

@@ -7,7 +7,7 @@ from typing import Optional
 
 from omnitool.gradio.clients import BaseLLMClient, get_llm_client, get_llm_client_for_model
 from omnitool.gradio.config import MODEL_CONFIG, get_model_config
-from omnitool.gradio.services import AppState, get_api_key
+from omnitool.gradio.services import AppState, get_api_key, AuthProvider
 
 from .anthropic import AnthropicAgent
 from .base import BaseAgent
@@ -20,6 +20,8 @@ def create_agent(
     tools_collection,  # ToolCollection type
     save_folder: Path,
     provider_override: Optional[str] = None,
+    provider: Optional[str] = None,
+    azure_endpoint: Optional[str] = None,
 ) -> BaseAgent:
     """Factory function to create appropriate agent for given model.
     
@@ -29,6 +31,8 @@ def create_agent(
         tools_collection: Available tools
         save_folder: Output folder for agent
         provider_override: Override provider (for Anthropic variants like bedrock/vertex)
+        provider: LLM provider to use (e.g., 'openai', 'azure', 'anthropic')
+        azure_endpoint: Azure OpenAI endpoint (required if provider is 'azure')
         
     Returns:
         Initialized agent
@@ -40,11 +44,26 @@ def create_agent(
     config = get_model_config(model_name)
     agent_type = config.get('agent_type')
     llm_client_name = config.get('llm_client')
-    provider = provider_override or config.get('provider')
+    
+    # Use provider parameter if provided (from UI), otherwise fall back to override or config
+    if provider is None:
+        provider = provider_override or config.get('provider')
+    
+    # Handle provider as list (from config) - take first element or the selected one
+    if isinstance(provider, list):
+        provider = provider[0]  # Default to first available provider
     
     # Get API key from environment
-    api_key = get_api_key(provider)
-    if not api_key:
+    # Convert provider string to AuthProvider enum
+    try:
+        auth_provider = AuthProvider(provider)
+        api_key = get_api_key(auth_provider)
+    except ValueError:
+        # Unknown provider, try as-is
+        api_key = ""
+    
+    if not api_key and provider != 'azure':
+        # Azure uses DefaultAzureCredential, not API key
         raise ValueError(
             f"API key not found in environment for provider: {provider}. "
             f"Set environment variable for: {model_name}"
@@ -57,6 +76,7 @@ def create_agent(
         model_name,
         config,
         api_key,
+        azure_endpoint=azure_endpoint,
     )
     
     # Create and return appropriate agent
@@ -88,6 +108,7 @@ def _create_llm_client(
     model_name: str,
     config: dict,
     api_key: str,
+    azure_endpoint: Optional[str] = None,
 ) -> BaseLLMClient:
     """Create LLM client for model.
     
@@ -97,6 +118,7 @@ def _create_llm_client(
         model_name: Display model name
         config: Model configuration
         api_key: API key from environment
+        azure_endpoint: Azure OpenAI endpoint (required if provider is 'azure')
         
     Returns:
         Initialized LLM client
@@ -105,13 +127,19 @@ def _create_llm_client(
     base_url = config.get('provider_base_url')
     
     # Create client based on provider/type
-    if llm_client_name == 'openai' or provider in ['openai', 'dashscope']:
-        return get_llm_client(
-            provider=provider,
-            model=internal_name,
-            api_key=api_key,
-            base_url=base_url,
-        )
+    if llm_client_name == 'openai' or provider in ['openai', 'dashscope', 'azure']:
+        # For Azure, pass the endpoint
+        kwargs = {
+            'provider': provider,
+            'model': internal_name,
+            'api_key': api_key,
+        }
+        if base_url:
+            kwargs['base_url'] = base_url
+        if provider == 'azure' and azure_endpoint:
+            kwargs['azure_endpoint'] = azure_endpoint
+            
+        return get_llm_client(**kwargs)
     
     elif llm_client_name == 'groq':
         return get_llm_client(

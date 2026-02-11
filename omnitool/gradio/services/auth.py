@@ -16,6 +16,7 @@ class AuthProvider(StrEnum):
     DASHSCOPE = "dashscope"
     BEDROCK = "bedrock"
     VERTEX = "vertex"
+    AZURE = "azure"
 
 
 class AuthValidator:
@@ -142,12 +143,41 @@ class AuthValidator:
         return True, ""
     
     @staticmethod
-    def validate_api_key(provider: AuthProvider, api_key: Optional[str] = None) -> Tuple[bool, str]:
+    def validate_azure(azure_endpoint: Optional[str] = None) -> Tuple[bool, str]:
+        """Validate Azure OpenAI credentials.
+        
+        Azure OpenAI uses DefaultAzureCredential which requires:
+        - Azure CLI login, or
+        - Environment variables (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET), or
+        - Managed identity in Azure
+        
+        Also requires AZURE_OPENAI_ENDPOINT to be set.
+        
+        Args:
+            azure_endpoint: Azure endpoint URL (if None, loaded from env)
+            
+        Returns:
+            (is_valid, error_message)
+        """
+        # Check if endpoint is provided or in environment
+        endpoint = azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT", "")
+        if not endpoint:
+            return False, "AZURE_OPENAI_ENDPOINT environment variable not set"
+        
+        # Validate endpoint format
+        if not endpoint.startswith("https://"):
+            return False, "Azure endpoint must be a valid HTTPS URL"
+        
+        return True, ""
+    
+    @staticmethod
+    def validate_api_key(provider: AuthProvider, api_key: Optional[str] = None, azure_endpoint: Optional[str] = None) -> Tuple[bool, str]:
         """Validate API key for a provider.
         
         Args:
             provider: The provider to validate
             api_key: API key to validate (if None, loads from environment)
+            azure_endpoint: Azure endpoint (for Azure provider)
             
         Returns:
             (is_valid, error_message)
@@ -169,6 +199,8 @@ class AuthValidator:
             return AuthValidator.validate_bedrock()
         elif provider == AuthProvider.VERTEX:
             return AuthValidator.validate_vertex()
+        elif provider == AuthProvider.AZURE:
+            return AuthValidator.validate_azure(azure_endpoint)
         else:
             return False, f"Unknown provider: {provider}"
 
@@ -179,6 +211,6 @@ def get_api_key(provider: AuthProvider) -> str:
     return AuthValidator.get_api_key(provider)
 
 
-def validate_api_key(provider: AuthProvider, api_key: Optional[str] = None) -> Tuple[bool, str]:
+def validate_api_key(provider: AuthProvider, api_key: Optional[str] = None, azure_endpoint: Optional[str] = None) -> Tuple[bool, str]:
     """Validate API key for provider."""
-    return AuthValidator.validate_api_key(provider, api_key)
+    return AuthValidator.validate_api_key(provider, api_key, azure_endpoint)

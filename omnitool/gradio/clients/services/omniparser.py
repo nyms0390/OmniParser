@@ -1,11 +1,9 @@
 """
-OmniParser service client for screenshot capture and parsing.
+OmniParser service client for screenshot parsing.
 """
 
-import base64
 import logging
-from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from .base import BaseServiceClient
 
@@ -15,7 +13,7 @@ logger = logging.getLogger(__name__)
 class OmniParserClient(BaseServiceClient):
     """HTTP client for OmniParser server.
     
-    Handles screenshot capture and parsing via HTTP API.
+    Handles screenshot parsing via HTTP API.
     """
     
     def __init__(self, base_url: str = "http://localhost:8000", timeout: int = 60):
@@ -27,43 +25,7 @@ class OmniParserClient(BaseServiceClient):
         """
         super().__init__(base_url, timeout)
         self.parse_endpoint = "parse"
-        self.screenshot_endpoint = "screenshot"
         logger.info(f"Initialized OmniParser client at {base_url}")
-    
-    def get_screenshot(
-        self,
-        resize_to: Optional[Tuple[int, int]] = None,
-    ) -> Dict[str, Any]:
-        """Capture screenshot from Windows host.
-        
-        Args:
-            resize_to: Optional tuple (width, height) to resize screenshot
-            
-        Returns:
-            Dictionary with:
-                - screenshot_base64: Base64 encoded screenshot
-                - width: Screenshot width
-                - height: Screenshot height
-                - timestamp: Capture timestamp
-                
-        Raises:
-            Exception: If screenshot capture fails
-        """
-        try:
-            params = {}
-            if resize_to:
-                params['width'] = resize_to[0]
-                params['height'] = resize_to[1]
-            
-            return self._make_request(
-                "GET",
-                self.screenshot_endpoint,
-                params=params
-            )
-        
-        except Exception as e:
-            logger.error(f"Failed to get screenshot: {str(e)}")
-            raise
     
     def parse_screenshot(
         self,
@@ -108,63 +70,4 @@ class OmniParserClient(BaseServiceClient):
         
         except Exception as e:
             logger.error(f"Failed to parse screenshot: {str(e)}")
-            raise
-    
-    def capture_and_parse(
-        self,
-        resize_to: Optional[Tuple[int, int]] = None,
-        parse_options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Capture and parse screenshot in one call.
-        
-        Args:
-            resize_to: Optional resize dimensions
-            parse_options: Optional parsing options
-            
-        Returns:
-            Parsed screenshot result
-            
-        Raises:
-            Exception: If capture or parsing fails
-        """
-        # Capture screenshot
-        screenshot_data = self.get_screenshot(resize_to=resize_to)
-        screenshot_b64 = screenshot_data.get('screenshot_base64', '')
-        
-        # Parse screenshot
-        return self.parse_screenshot(screenshot_b64, parse_options)
-    
-    def save_screenshot(
-        self,
-        screenshot_base64: str,
-        output_path: Path,
-    ) -> bool:
-        """Save screenshot to file.
-        
-        Args:
-            screenshot_base64: Base64 encoded screenshot
-            output_path: Path to save screenshot
-            
-        Returns:
-            True if successful
-            
-        Raises:
-            Exception: If save fails
-        """
-        try:
-            # Decode base64
-            screenshot_bytes = base64.b64decode(screenshot_base64)
-            
-            # Ensure parent directory exists
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Write file
-            with open(output_path, 'wb') as f:
-                f.write(screenshot_bytes)
-            
-            logger.debug(f"Saved screenshot to {output_path}")
-            return True
-        
-        except Exception as e:
-            logger.error(f"Failed to save screenshot: {str(e)}")
             raise

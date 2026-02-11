@@ -13,6 +13,7 @@ Environment variables (or set via --config-file):
     ANTHROPIC_API_KEY: Anthropic API key
     GROQ_API_KEY: Groq API key
     DASHSCOPE_API_KEY: DashScope API key
+    AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
     OMNIPARSER_URL: OmniParser server URL (default: http://localhost:8000)
     WINDOWS_HOST_URL: Windows host URL (default: http://localhost:8006)
 """
@@ -23,7 +24,7 @@ from typing import Optional, Tuple
 
 import gradio as gr
 
-from omnitool.gradio.clients import OmniParserClient
+from omnitool.gradio.clients import OmniParserClient, WindowsHostClient
 from omnitool.gradio.config import (
     APIProvider,
     create_argument_parser,
@@ -61,8 +62,15 @@ class GradioApp:
         self.settings = settings
         self.state = None  # Will be created in Gradio
         self.omniparser_client = OmniParserClient(settings.omniparser_url)
-        self.tools = ToolCollection()  # Initialize with available tools
+        self.windows_host_client = WindowsHostClient(settings.windows_host_url)
+        self.tools = ToolCollection(windows_host_client=self.windows_host_client)
         self.orchestrator = None
+        
+        # Validate Windows host availability on startup
+        if self.windows_host_client.probe():
+            logger.info(f"Windows host service is available at {settings.windows_host_url}")
+        else:
+            logger.warning(f"Windows host service at {settings.windows_host_url} may be unavailable")
     
     def build_interface(self):
         """Build Gradio interface."""
@@ -193,29 +201,40 @@ class GradioApp:
         if state is None or not isinstance(state, AppState):
             state = AppState(run_folder=Path(self.settings.run_folder))
         
+        history = list(chatbot_history) if chatbot_history else []
+
         # Add user message
         state.chat.add_message("user", message)
-        updated_history = chatbot_history + [(message, None)]
+        history.append({"role": "user", "content": message})
         
         # Validate API key
-        config = get_model_config(model_name)
-        api_provider = config.get('provider')
-        is_valid, error_msg = validate_api_key(api_provider)
+        is_valid, error_msg = validate_api_key(
+            provider,
+            azure_endpoint=self.settings.azure_endpoint if provider == "azure" else None
+        )
         
         if not is_valid:
-            updated_history.append((None, f"Error: {error_msg}"))
-            return updated_history, "", error_msg, state
+            history.append({"role": "assistant", "content": f"Error: {error_msg}"})
+            return history, "", error_msg, state
         
         # Create orchestrator
         try:
-            save_folder = state.session.run_folder / "execution"
-            self.orchestrator = SamplingOrchestrator(
-                model_name=model_name,
-                state=state,
-                tools_collection=self.tools,
-                omniparser_client=self.omniparser_client,
-                max_steps=20,
-            )
+            # Prepare orchestrator kwargs
+            orchestrator_kwargs = {
+                "model_name": model_name,
+                "state": state,
+                "tools_collection": self.tools,
+                "omniparser_client": self.omniparser_client,
+                "windows_host_client": self.windows_host_client,
+                "max_steps": 20,
+                "provider": provider,
+            }
+            
+            # Add Azure endpoint if using Azure provider
+            if provider == "azure":
+                orchestrator_kwargs["azure_endpoint"] = self.settings.azure_endpoint
+            
+            self.orchestrator = SamplingOrchestrator(**orchestrator_kwargs)
             
             # Run sampling loop
             status = "Running..."
@@ -228,14 +247,13 @@ class GradioApp:
                     break
             
             # Update history with assistant response
-            updated_history.append((None, "Execution complete"))
-            
-            return updated_history, "", status, state
+            history.append({"role": "assistant", "content": status})
+            return history, "", status, state
         
         except Exception as e:
             error_msg = f"Execution failed: {str(e)}"
-            updated_history.append((None, error_msg))
-            return updated_history, "", error_msg, state
+            history.append({"role": "assistant", "content": error_msg})
+            return history, "", error_msg, state
     
     def on_file_upload(self, state, files) -> Tuple:
         """Handle file upload.

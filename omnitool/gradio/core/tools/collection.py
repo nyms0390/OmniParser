@@ -2,17 +2,30 @@
 Tool collection for managing available tools.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TYPE_CHECKING
 
 from .base import BaseTool, ToolResult
+from .computer import ComputerTool
+
+if TYPE_CHECKING:
+    from omnitool.gradio.clients.services.windows_host import WindowsHostClient
 
 
 class ToolCollection:
     """Manages a collection of available tools."""
     
-    def __init__(self):
-        """Initialize empty tool collection."""
+    def __init__(self, windows_host_client: Optional["WindowsHostClient"] = None):
+        """Initialize tool collection.
+        
+        Args:
+            windows_host_client: Optional Windows host client for ComputerTool
+        """
         self.tools: Dict[str, BaseTool] = {}
+        
+        # Initialize ComputerTool if Windows host client provided
+        if windows_host_client:
+            computer_tool = ComputerTool(windows_host_client)
+            self.add_tool(computer_tool)
     
     def add_tool(self, tool: BaseTool):
         """Add a tool to the collection.

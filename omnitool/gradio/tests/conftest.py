@@ -62,13 +62,26 @@ def mock_llm_client():
 
 @pytest.fixture
 def mock_omniparser_client():
-    """Create mock OmniParser client."""
+    """Create mock OmniParser client for parsing only."""
     client = Mock()
-    client.capture_and_parse.return_value = {
+    client.parse_screenshot.return_value = {
         "original_screenshot_base64": "base64data",
         "som_image_base64": "som_base64",
         "screen_info": "Mock screen content",
         "latency": 0.5,
+    }
+    return client
+
+
+@pytest.fixture
+def mock_windows_host_client():
+    """Create mock Windows host client for screenshot capture."""
+    client = Mock()
+    client.get_screenshot.return_value = {
+        "screenshot_base64": "base64screenshotdata",
+        "width": 1920,
+        "height": 1080,
+        "timestamp": "2024-01-01T00:00:00Z",
     }
     return client
 

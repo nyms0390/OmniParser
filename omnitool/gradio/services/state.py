@@ -20,6 +20,7 @@ class AuthProvider(StrEnum):
     DASHSCOPE = "dashscope"
     BEDROCK = "bedrock"
     VERTEX = "vertex"
+    AZURE = "azure"
 
 
 @dataclass

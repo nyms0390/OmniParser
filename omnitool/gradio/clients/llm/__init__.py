@@ -8,6 +8,7 @@ from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import APIProvider, get_model_config
 
 from .anthropic import AnthropicClient
+from .azure import AzureOpenAIClient
 from .groq import GroqClient
 from .openai import OpenAIClient
 
@@ -86,6 +87,14 @@ def get_llm_client(
             **kwargs
         )
     
+    elif provider_lower in [APIProvider.AZURE, "azure"]:
+        return AzureOpenAIClient(
+            api_key=api_key,
+            model=model,
+            azure_endpoint=kwargs.get("azure_endpoint"),
+            **kwargs
+        )
+    
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")
 
@@ -124,6 +133,7 @@ __all__ = [
     "OpenAIClient",
     "GroqClient",
     "AnthropicClient",
+    "AzureOpenAIClient",
     "get_llm_client",
     "get_llm_client_for_model",
 ]

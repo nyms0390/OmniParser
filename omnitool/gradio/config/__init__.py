@@ -15,8 +15,8 @@ from omnitool.gradio.config.constants import (
     TYPING_DELAY_MS,
     WINDOWS_HOST_TIMEOUT_SECONDS,
 )
+from omnitool.gradio.config.enums import APIProvider
 from omnitool.gradio.config.models import (
-    APIProvider,
     MODEL_CONFIG,
     OCR_CONFIG,
     get_all_model_names,

@@ -23,17 +23,18 @@ def get_provider_options_for_model(model_name: str) -> List[str]:
         model_name: Model display name
         
     Returns:
-        List of provider options
+        List of provider options (provider names as strings)
     """
     config = MODEL_CONFIG.get(model_name, {})
-    provider = config.get('provider')
+    providers = config.get('provider')
     
-    # For Anthropic models, list all possible providers
-    if config.get('anthropic_providers'):
-        return config['anthropic_providers']
+    # Provider field is now a list of APIProvider enums
+    if isinstance(providers, list):
+        # Convert APIProvider enums to strings
+        return [str(p) for p in providers]
     
-    # For other models, return single provider
-    return [provider] if provider else []
+    # Fallback for single provider (shouldn't happen with new schema)
+    return [str(providers)] if providers else []
 
 
 def create_settings_panel() -> dict:
