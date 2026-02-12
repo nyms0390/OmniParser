@@ -18,11 +18,15 @@ Environment variables (or set via --config-file):
     WINDOWS_HOST_URL: Windows host URL (default: http://localhost:8006)
 """
 
+import asyncio
+import base64
 import logging
+from io import BytesIO
 from pathlib import Path
 from typing import Optional, Tuple
 
 import gradio as gr
+from PIL import Image
 
 from omnitool.gradio.clients import OmniParserClient, PaddleOCRClient, WindowsHostClient
 from omnitool.gradio.clients.services import ServiceValidator
@@ -121,6 +125,12 @@ class GradioApp:
                     with gr.Column(scale=1):
                         submit_button = gr.Button("Send")
             
+            # Capture initial screenshot on app load (non-blocking)
+            interface.load(
+                fn=self.on_app_load,
+                outputs=[chatbot],
+            )
+            
             # File upload and viewer
             with gr.Accordion(label="Files"):
                 file_upload = gr.File(
@@ -165,6 +175,55 @@ class GradioApp:
         
         return interface
     
+    async def on_app_load(self) -> list:
+        """Capture initial screenshot on app startup (non-blocking).
+        
+        Returns:
+            Initial chatbot history with screenshot
+        """
+        try:
+            # Capture screenshot
+            screenshot_data = await asyncio.to_thread(
+                self.windows_host_client.get_screenshot
+            )
+            screenshot_base64 = screenshot_data.get("screenshot_base64")
+            
+            if not screenshot_base64:
+                logger.warning("Screenshot returned but no image data")
+                return [{"role": "system", "content": "Initial screenshot: No image data available"}]
+            
+            # Optionally resize to reasonable max width (1024px)
+            try:
+                # Decode base64 to PIL Image
+                img_data = base64.b64decode(screenshot_base64)
+                img = Image.open(BytesIO(img_data))
+                
+                # Resize if width exceeds 1024px
+                max_width = 1024
+                if img.width > max_width:
+                    ratio = max_width / img.width
+                    new_height = int(img.height * ratio)
+                    img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+                    
+                    # Re-encode to base64
+                    buffer = BytesIO()
+                    img.save(buffer, format="PNG")
+                    screenshot_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                    logger.debug(f"Resized screenshot from {screenshot_data.get('width')}x{screenshot_data.get('height')} to {img.width}x{img.height}")
+            except Exception as resize_error:
+                logger.debug(f"Screenshot resize failed, using original: {resize_error}")
+            
+            # Format as HTML img tag with base64 data URI
+            img_html = f'<img src="data:image/png;base64,{screenshot_base64}" style="max-width: 100%; border-radius: 8px; margin: 10px 0;">'
+            
+            # Return initial message history with context text
+            return [{"role": "system", "content": f"Initial desktop state:\n\n{img_html}"}]
+        
+        except Exception as e:
+            error_msg = f"Failed to capture initial screenshot: {str(e)}"
+            logger.error(error_msg)
+            return [{"role": "system", "content": error_msg}]
+    
     def on_model_change(self, model_name: str) -> Tuple:
         """Handle model selection change.
         
@@ -187,7 +246,7 @@ class GradioApp:
         model_name: str,
         provider: str,
         chatbot_history,
-    ) -> Tuple:
+    ) -> Tuple[list, str, str, AppState]:
         """Handle submit button click.
         
         Args:

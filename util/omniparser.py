@@ -77,8 +77,8 @@ class Omniparser:
               use_local_semantics: bool = True,
               ocr_backend: str = 'easyocr',
               use_gpu: bool = False,
-              box_threshold: Optional[float] = None,
-              iou_threshold: Optional[float] = None,
+              box_threshold: Optional[float] = 0.05,
+              iou_threshold: Optional[float] = 0.1,
               imgsz: Optional[int] = None) -> Tuple[str, List[Dict]]:
         """
         Parse screenshot with SOM detection.
