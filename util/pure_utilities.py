@@ -152,51 +152,7 @@ def is_inside(box1: Tuple[float, float, float, float],
     return False
 
 
-def remove_overlap(boxes: torch.Tensor, 
-                   iou_threshold: float, 
-                   ocr_bbox: List = None) -> torch.Tensor:
-    """
-    Remove overlapping bounding boxes, keeping smaller boxes when overlap is detected.
-    Legacy version - maintains backward compatibility with tensor-based boxes.
-    
-    Args:
-        boxes: Tensor of bounding boxes in (x1, y1, x2, y2) format
-        iou_threshold: IoU threshold for considering boxes as overlapping
-        ocr_bbox: Optional list of OCR bounding boxes to preserve (not removed)
-        
-    Returns:
-        Tensor of filtered boxes
-    """
-    assert ocr_bbox is None or isinstance(ocr_bbox, List)
-
-    boxes_list = boxes.tolist()
-    filtered_boxes = []
-    
-    if ocr_bbox:
-        filtered_boxes.extend(ocr_bbox)
-    
-    for i, box1 in enumerate(boxes_list):
-        is_valid_box = True
-        for j, box2 in enumerate(boxes_list):
-            # Keep the smaller box when overlap is detected
-            if (i != j and iou(box1, box2) > iou_threshold and 
-                box_area(box1) > box_area(box2)):
-                is_valid_box = False
-                break
-        
-        if is_valid_box:
-            if ocr_bbox:
-                # Only add the box if it doesn't significantly overlap with OCR boxes
-                if not any(iou(box1, box3) > iou_threshold and not is_inside(box1, box3) 
-                          for box3 in ocr_bbox):
-                    filtered_boxes.append(box1)
-            else:
-                filtered_boxes.append(box1)
-    
-    return torch.tensor(filtered_boxes)
-
-
-def remove_overlap_new(boxes: List[dict], 
+def remove_overlap(boxes: List[dict], 
                        iou_threshold: float, 
                        ocr_bbox: List[dict] = None) -> List[dict]:
     """

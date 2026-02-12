@@ -6,6 +6,7 @@ openai==1.3.5
 transformers
 ultralytics==8.3.70
 azure-identity
+azure-openai
 numpy==1.26.4
 opencv-python
 opencv-python-headless
@@ -28,5 +29,6 @@ boto3>=1.28.57
 google-auth<3,>=2
 screeninfo
 uiautomation
+pyyaml
 dashscope
 groq

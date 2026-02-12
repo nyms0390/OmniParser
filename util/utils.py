@@ -42,7 +42,7 @@ from util.box_annotator import BoxAnnotator
 from util.pure_utilities import (
     get_xywh, get_xyxy, get_xywh_yolo, int_box_area,
     box_area, intersection_area, iou, is_inside,
-    remove_overlap, remove_overlap_new
+    remove_overlap
 )
 
 
@@ -181,17 +181,6 @@ def get_parsed_content_icon_phi3v(filtered_boxes, ocr_bbox, image_source, captio
 
     return generated_texts
 
-def remove_overlap(boxes, iou_threshold, ocr_bbox=None):
-    # Imported from pure_utilities, kept as reference for backward compatibility
-    from util.pure_utilities import remove_overlap as _remove_overlap
-    return _remove_overlap(boxes, iou_threshold, ocr_bbox)
-
-
-def remove_overlap_new(boxes, iou_threshold, ocr_bbox=None):
-    # Imported from pure_utilities, kept as reference for backward compatibility
-    from util.pure_utilities import remove_overlap_new as _remove_overlap_new
-    return _remove_overlap_new(boxes, iou_threshold, ocr_bbox)
-
 
 def load_image(image_path: str) -> Tuple[np.array, torch.Tensor]:
     transform = T.Compose(
@@ -319,7 +308,7 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
 
     ocr_bbox_elem = [{'type': 'text', 'bbox':box, 'interactivity':False, 'content':txt, 'source': 'box_ocr_content_ocr'} for box, txt in zip(ocr_bbox, ocr_text) if int_box_area(box, w, h) > 0] 
     xyxy_elem = [{'type': 'icon', 'bbox':box, 'interactivity':True, 'content':None} for box in xyxy.tolist() if int_box_area(box, w, h) > 0]
-    filtered_boxes = remove_overlap_new(boxes=xyxy_elem, iou_threshold=iou_threshold, ocr_bbox=ocr_bbox_elem)
+    filtered_boxes = remove_overlap(boxes=xyxy_elem, iou_threshold=iou_threshold, ocr_bbox=ocr_bbox_elem)
     
     # sort the filtered_boxes so that the one with 'content': None is at the end, and get the index of the first 'content': None
     filtered_boxes_elem = sorted(filtered_boxes, key=lambda x: x['content'] is None)

@@ -27,6 +27,11 @@ class OmniParserClient(BaseServiceClient):
         self.parse_endpoint = "parse"
         logger.info(f"Initialized OmniParser client at {base_url}")
     
+    @property
+    def probe_endpoint(self) -> str:
+        """Endpoint for health check."""
+        return "probe"
+    
     def parse_screenshot(
         self,
         screenshot_base64: str,

@@ -24,7 +24,8 @@ from typing import Optional, Tuple
 
 import gradio as gr
 
-from omnitool.gradio.clients import OmniParserClient, WindowsHostClient
+from omnitool.gradio.clients import OmniParserClient, PaddleOCRClient, WindowsHostClient
+from omnitool.gradio.clients.services import ServiceValidator
 from omnitool.gradio.config import (
     APIProvider,
     create_argument_parser,
@@ -63,14 +64,16 @@ class GradioApp:
         self.state = None  # Will be created in Gradio
         self.omniparser_client = OmniParserClient(settings.omniparser_url)
         self.windows_host_client = WindowsHostClient(settings.windows_host_url)
+        self.paddleocr_client = PaddleOCRClient(settings.paddleocr_url)
         self.tools = ToolCollection(windows_host_client=self.windows_host_client)
         self.orchestrator = None
         
-        # Validate Windows host availability on startup
-        if self.windows_host_client.probe():
-            logger.info(f"Windows host service is available at {settings.windows_host_url}")
-        else:
-            logger.warning(f"Windows host service at {settings.windows_host_url} may be unavailable")
+        # Validate all services on startup
+        validator = ServiceValidator()
+        validator.register("OmniParser", self.omniparser_client)
+        validator.register("Windows Host", self.windows_host_client)
+        validator.register("PaddleOCR", self.paddleocr_client)
+        validator.validate_all()
     
     def build_interface(self):
         """Build Gradio interface."""

@@ -11,6 +11,7 @@ from omnitool.gradio.clients.llm import (
     get_llm_client_for_model,
 )
 from omnitool.gradio.clients.services.omniparser import OmniParserClient
+from omnitool.gradio.clients.services.paddleocr import PaddleOCRClient
 from omnitool.gradio.clients.services.windows_host import WindowsHostClient
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "GroqClient",
     "AnthropicClient",
     "OmniParserClient",
+    "PaddleOCRClient",
     "WindowsHostClient",
     "get_llm_client",
     "get_llm_client_for_model",

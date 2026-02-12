@@ -36,6 +36,11 @@ class PaddleOCRClient(BaseServiceClient):
         self.ocr_endpoint = "ocr"
         logger.info(f"Initialized PaddleOCR GPU API client at {base_url}")
     
+    @property
+    def probe_endpoint(self) -> str:
+        """Endpoint for health check."""
+        return "health"
+    
     def recognize(
         self,
         image: bytes,
@@ -71,17 +76,3 @@ class PaddleOCRClient(BaseServiceClient):
         except Exception as e:
             logger.error(f"PaddleOCR API recognition failed: {str(e)}")
             raise
-    
-    def health_check(self) -> bool:
-        """Check if API server is healthy.
-        
-        Returns:
-            True if server is responsive, False otherwise
-        """
-        try:
-            self._make_request("GET", "health")
-            logger.info("PaddleOCR API health check passed")
-            return True
-        except Exception as e:
-            logger.warning(f"PaddleOCR API health check failed: {str(e)}")
-            return False

@@ -22,7 +22,7 @@ from torchvision.ops import box_convert
 
 from util.utils import (
     predict_yolo, get_parsed_content_icon, get_parsed_content_icon_phi3v,
-    annotate, int_box_area, remove_overlap_new
+    annotate, int_box_area, remove_overlap
 )
 from util.pure_utilities import box_area
 
@@ -232,7 +232,7 @@ class OmniParserPipeline:
         """
         # Use provided threshold or fall back to config default
         threshold = iou_threshold if iou_threshold is not None else self.config.get('iou_threshold', 0.9)
-        filtered_boxes = remove_overlap_new(
+        filtered_boxes = remove_overlap(
             boxes=xyxy_elem,
             iou_threshold=threshold,
             ocr_bbox=ocr_bbox_elem

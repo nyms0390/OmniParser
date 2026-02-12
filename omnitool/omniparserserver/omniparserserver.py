@@ -98,6 +98,14 @@ def parse_arguments() -> argparse.Namespace:
         help="Server port number to listen on.",
     )
 
+    # Development/reload configuration arguments
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        default=False,
+        help="Enable auto-reload on file changes (development only).",
+    )
+
     return parser.parse_args()
 
 
@@ -245,10 +253,20 @@ if __name__ == "__main__":
     logger.info(
         f"Starting OmniParser API server on http://{_args.host}:{_args.port}"
     )
+    
+    # Configure reload settings with proper scope
+    reload_dirs = None
+    if _args.reload:
+        # Only watch omniparserserver directory for changes
+        server_dir = Path(__file__).parent
+        reload_dirs = [str(server_dir)]
+        logger.info(f"Reload enabled, watching: {reload_dirs}")
+    
     uvicorn.run(
         "omnitool.omniparserserver.omniparserserver:app",
         host=_args.host,
         port=_args.port,
-        reload=False,
+        reload=_args.reload,
+        reload_dirs=reload_dirs,
         log_level=_log_level.lower(),
     )

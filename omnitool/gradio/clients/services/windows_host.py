@@ -36,21 +36,12 @@ class WindowsHostClient(BaseServiceClient):
         super().__init__(base_url, timeout)
         self.screenshot_endpoint = "screenshot"
         self.execute_endpoint = "execute"
-        self.probe_endpoint = "probe"
         logger.info(f"Initialized Windows host client at {base_url}")
     
-    def probe(self) -> bool:
-        """Check if Windows host service is available.
-        
-        Returns:
-            True if service is available and operational
-        """
-        try:
-            response = self._make_request("GET", self.probe_endpoint)
-            return response.get("status") == "Probe successful"
-        except Exception as e:
-            logger.warning(f"Windows host probe failed: {str(e)}")
-            return False
+    @property
+    def probe_endpoint(self) -> str:
+        """Endpoint for health check."""
+        return "probe"
     
     def get_screenshot(
         self,

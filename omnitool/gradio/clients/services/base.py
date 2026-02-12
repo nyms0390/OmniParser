@@ -27,6 +27,35 @@ class BaseServiceClient(ABC):
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
     
+    @property
+    @abstractmethod
+    def probe_endpoint(self) -> str:
+        """Endpoint path for health/probe check.
+        
+        Must be implemented by subclasses to define their specific probe endpoint.
+        
+        Returns:
+            Endpoint path (e.g., 'probe', 'health')
+        """
+        pass
+    
+    def probe(self) -> bool:
+        """Check if service is available and operational.
+        
+        Makes a GET request to the probe endpoint defined by the subclass.
+        Uses permissive error handling - returns False on any failure rather than raising.
+        
+        Returns:
+            True if service is available, False otherwise
+        """
+        try:
+            self._make_request("GET", self.probe_endpoint)
+            logger.info(f"{self.__class__.__name__} probe successful")
+            return True
+        except Exception as e:
+            logger.warning(f"{self.__class__.__name__} probe failed: {str(e)}")
+            return False
+    
     def _make_request(
         self,
         method: str,

@@ -25,6 +25,7 @@ class Settings:
     # Service URLs
     omniparser_url: str = "http://localhost:8000"
     windows_host_url: str = "http://localhost:5000"
+    paddleocr_url: str = "http://localhost:8001"
     
     # Google Cloud settings (for Vertex AI)
     cloud_ml_region: str = "us-central1"
@@ -60,6 +61,13 @@ def create_argument_parser() -> argparse.ArgumentParser:
         type=str,
         default="http://localhost:5000",
         help="Windows host URL",
+    )
+    
+    parser.add_argument(
+        "--paddleocr_url",
+        type=str,
+        default="http://localhost:8001",
+        help="PaddleOCR API server URL",
     )
     
     parser.add_argument(
@@ -133,6 +141,7 @@ def load_settings(args: Optional[argparse.Namespace] = None, config_file_path: O
     settings.cloud_ml_region = os.getenv("CLOUD_ML_REGION", "us-central1")
     settings.omniparser_url = os.getenv("OMNIPARSER_URL", "http://localhost:8000")
     settings.windows_host_url = os.getenv("WINDOWS_HOST_URL", "http://localhost:5000")
+    settings.paddleocr_url = os.getenv("PADDLEOCR_URL", "http://localhost:8001")
     settings.run_folder = os.getenv("RUN_FOLDER", "./runs")
     
     # Step 2: Load from YAML config file (if provided)
@@ -157,6 +166,8 @@ def load_settings(args: Optional[argparse.Namespace] = None, config_file_path: O
                 settings.omniparser_url = yaml_config["omniparser_url"]
             if "windows_host_url" in yaml_config:
                 settings.windows_host_url = yaml_config["windows_host_url"]
+            if "paddleocr_url" in yaml_config:
+                settings.paddleocr_url = yaml_config["paddleocr_url"]
             if "cloud_ml_region" in yaml_config:
                 settings.cloud_ml_region = yaml_config["cloud_ml_region"]
             if "run_folder" in yaml_config:
@@ -172,6 +183,8 @@ def load_settings(args: Optional[argparse.Namespace] = None, config_file_path: O
             settings.omniparser_url = args.omniparser_server_url
         if args.windows_host_url:
             settings.windows_host_url = args.windows_host_url
+        if hasattr(args, 'paddleocr_url') and args.paddleocr_url:
+            settings.paddleocr_url = args.paddleocr_url
     
     return settings
 
