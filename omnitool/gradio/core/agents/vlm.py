@@ -58,21 +58,21 @@ class VLMAgent(BaseAgent):
     def plan(
         self,
         messages: List[Dict[str, Any]],
-        parsed_screen: Dict[str, Any],
+        screen_info: List[Dict[str, Any]],
         system_prompt: str = "",
     ) -> Dict[str, Any]:
         """Generate response from VLM based on screen state.
         
         Args:
             messages: Conversation history
-            parsed_screen: Parsed screen info from OmniParser
+            screen_info: Parsed screen info from OmniParser
             system_prompt: System prompt
             
         Returns:
             Response dict with response_text, any tool_calls, and metadata
         """
         # Prepare messages with screen information
-        prepared_messages = self._prepare_messages(messages, parsed_screen)
+        prepared_messages = self._prepare_messages(messages, screen_info)
         
         try:
             # Call LLM
@@ -105,13 +105,13 @@ class VLMAgent(BaseAgent):
     def _prepare_messages(
         self,
         messages: List[Dict[str, Any]],
-        parsed_screen: Dict[str, Any],
+        screen_info: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """Prepare messages with screen information.
         
         Args:
             messages: Original messages
-            parsed_screen: Parsed screen data
+            screen_info: Parsed screen data
             
         Returns:
             Prepared messages with screen info appended
@@ -120,9 +120,6 @@ class VLMAgent(BaseAgent):
         
         # Append screen information to last user message
         if prepared and prepared[-1].get('role') == 'user':
-            screen_info = parsed_screen.get('screen_info', '')
-            screenshot_path = parsed_screen.get('original_screenshot_base64', '')
-            som_path = parsed_screen.get('som_image_base64', '')
             
             # Build screen context
             screen_context = f"\n\nCurrent screen:\n{screen_info}"

@@ -46,7 +46,7 @@ class AnthropicAgent(BaseAgent):
     def plan(
         self,
         messages: List[Dict[str, Any]],
-        parsed_screen: Dict[str, Any],
+        screen_info: List[Dict[str, Any]],
         system_prompt: str = "",
     ) -> Dict[str, Any]:
         """Generate response from Anthropic Claude.
@@ -55,14 +55,14 @@ class AnthropicAgent(BaseAgent):
         
         Args:
             messages: Conversation history
-            parsed_screen: Parsed screen info
+            screen_info: Parsed screen info
             system_prompt: System prompt
             
         Returns:
             Response dict with response_text, tool_calls, and metadata
         """
         # Prepare messages with screen context
-        prepared_messages = self._prepare_messages(messages, parsed_screen)
+        prepared_messages = self._prepare_messages(messages, screen_info)
         
         try:
             # Call Claude via LLM client
@@ -95,7 +95,7 @@ class AnthropicAgent(BaseAgent):
     def _prepare_messages(
         self,
         messages: List[Dict[str, Any]],
-        parsed_screen: Dict[str, Any],
+        screen_info: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """Prepare messages with screen information for Claude.
         
@@ -110,7 +110,6 @@ class AnthropicAgent(BaseAgent):
         
         # Add screen info to last user message
         if prepared and prepared[-1].get('role') == 'user':
-            screen_info = parsed_screen.get('screen_info', '')
             screen_context = f"\n\nCurrent screen state:\n{screen_info}"
             
             last_msg = prepared[-1]

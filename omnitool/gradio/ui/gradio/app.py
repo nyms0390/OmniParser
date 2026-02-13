@@ -18,12 +18,11 @@ Environment variables (or set via --config-file):
     WINDOWS_HOST_URL: Windows host URL (default: http://localhost:8006)
 """
 
-import asyncio
 import base64
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Generator, Optional, Tuple
 
 import gradio as gr
 from PIL import Image
@@ -46,7 +45,10 @@ from omnitool.gradio.core import (
 from omnitool.gradio.services import AppState, FileHandler, validate_api_key
 from omnitool.gradio.ui.gradio.components import (
     create_settings_panel,
+    format_action_result,
     format_message_for_display,
+    format_parsed_screen,
+    format_thinking,
     get_model_choices,
     get_provider_options_for_model,
     render_file_viewer,
@@ -114,6 +116,7 @@ class GradioApp:
             with gr.Accordion(label="Chat"):
                 chatbot = gr.Chatbot(
                     label="Conversation",
+                    sanitize_html=False,
                 )
                 
                 with gr.Row():
@@ -175,17 +178,15 @@ class GradioApp:
         
         return interface
     
-    async def on_app_load(self) -> list:
-        """Capture initial screenshot on app startup (non-blocking).
+    def on_app_load(self) -> list:
+        """Capture initial screenshot on app startup.
         
         Returns:
             Initial chatbot history with screenshot
         """
         try:
-            # Capture screenshot
-            screenshot_data = await asyncio.to_thread(
-                self.windows_host_client.get_screenshot
-            )
+            # Capture screenshot (sync call)
+            screenshot_data = self.windows_host_client.get_screenshot()
             screenshot_base64 = screenshot_data.get("screenshot_base64")
             
             if not screenshot_base64:
@@ -246,8 +247,11 @@ class GradioApp:
         model_name: str,
         provider: str,
         chatbot_history,
-    ) -> Tuple[list, str, str, AppState]:
+    ) -> Generator:
         """Handle submit button click.
+        
+        This is a sync generator — Gradio 4+ auto-detects generators and
+        streams each ``yield`` as an incremental UI update.
         
         Args:
             state: App state
@@ -256,8 +260,8 @@ class GradioApp:
             provider: Selected provider
             chatbot_history: Chat history
             
-        Returns:
-            Updated chatbot, input, status, state
+        Yields:
+            Tuple of (chatbot_history, message_input, status_text, state)
         """
         # Initialize state if needed
         if state is None or not isinstance(state, AppState):
@@ -269,6 +273,9 @@ class GradioApp:
         state.chat.add_message("user", message)
         history.append({"role": "user", "content": message})
         
+        # Yield immediately so the user message appears right away
+        yield history, "", "Validating...", state
+        
         # Validate API key
         is_valid, error_msg = validate_api_key(
             provider,
@@ -277,7 +284,8 @@ class GradioApp:
         
         if not is_valid:
             history.append({"role": "assistant", "content": f"Error: {error_msg}"})
-            return history, "", error_msg, state
+            yield history, "", error_msg, state
+            return
         
         # Create orchestrator
         try:
@@ -298,24 +306,94 @@ class GradioApp:
             
             self.orchestrator = SamplingOrchestrator(**orchestrator_kwargs)
             
-            # Run sampling loop
+            # Stream sampling loop updates to the chatbot
             status = "Running..."
+            is_first_screen = True  # Auto-expand the initial screen capture
             for update in self.orchestrator.sampling_loop():
-                if update.get('type') == 'complete':
-                    status = f"Complete. Steps: {update.get('total_steps')}, Tokens: {update.get('total_tokens')}, Cost: {update.get('total_cost')}"
-                    break
-                elif update.get('type') == 'error':
-                    status = f"Error: {update.get('message')}"
-                    break
+                update_type = update.get("type", "")
+                
+                if update_type == "parsed_screen":
+                    # Render the SOM-annotated screenshot
+                    # Auto-expand the first one; keep subsequent ones collapsed
+                    screen_html = format_parsed_screen(
+                        som_image_base64=update.get("som_image_base64", ""),
+                        screen_info=update.get("screen_info", ""),
+                        auto_expand=is_first_screen,
+                    )
+                    is_first_screen = False
+                    history.append({"role": "assistant", "content": screen_html})
+                    status = "Screen captured and parsed"
+                    yield history, "", status, state
+                
+                elif update_type == "thinking":
+                    # Render LLM reasoning — only shown when non-empty
+                    thinking_html = format_thinking(update.get("response_text", ""))
+                    if thinking_html is not None:
+                        history.append({"role": "assistant", "content": thinking_html})
+                        yield history, "", "Agent is thinking...", state
+                
+                elif update_type == "action_result":
+                    # Render the executed action and optional post-action screenshot
+                    action_html = format_action_result(
+                        tool_name=update.get("tool", "unknown"),
+                        output=update.get("output", ""),
+                        error=update.get("error", ""),
+                        base64_image=update.get("base64_image", ""),
+                    )
+                    history.append({"role": "assistant", "content": action_html})
+                    status = f"Executed: {update.get('tool', 'unknown')}"
+                    yield history, "", status, state
+                
+                elif update_type == "status":
+                    status = update.get("message", "")
+                    yield history, "", status, state
+                
+                elif update_type == "step":
+                    status = f"Step {update.get('step_num', '?')}..."
+                    yield history, "", status, state
+                
+                elif update_type == "progress":
+                    status = (
+                        f"Step {update.get('step', '?')} — "
+                        f"Tokens: {update.get('tokens_total', 0)}, "
+                        f"Cost: {update.get('cost_total', '$0')}"
+                    )
+                    yield history, "", status, state
+                
+                elif update_type == "assistant_reply":
+                    # LLM gave a conversational response (no tool calls = done)
+                    reply_msg = update.get("message", "")
+                    if reply_msg:
+                        history.append({"role": "assistant", "content": reply_msg})
+                    yield history, "", "Agent finished", state
+                
+                elif update_type == "complete":
+                    status = (
+                        f"✅ Complete — "
+                        f"Steps: {update.get('total_steps')}, "
+                        f"Tokens: {update.get('total_tokens')}, "
+                        f"Cost: {update.get('total_cost')}"
+                    )
+                    history.append({"role": "assistant", "content": status})
+                    yield history, "", status, state
+                    return
+                
+                elif update_type == "error":
+                    status = f"❌ Error: {update.get('message')}"
+                    history.append({"role": "assistant", "content": status})
+                    yield history, "", status, state
+                    return
             
-            # Update history with assistant response
+            # Loop ended without explicit complete/error (hit max_steps)
+            status = f"⚠️ Stopped after {self.orchestrator.step_count} steps (max reached)"
             history.append({"role": "assistant", "content": status})
-            return history, "", status, state
+            yield history, "", status, state
         
         except Exception as e:
             error_msg = f"Execution failed: {str(e)}"
-            history.append({"role": "assistant", "content": error_msg})
-            return history, "", error_msg, state
+            logger.error(error_msg, exc_info=True)
+            history.append({"role": "assistant", "content": f"❌ {error_msg}"})
+            yield history, "", error_msg, state
     
     def on_file_upload(self, state, files) -> Tuple:
         """Handle file upload.

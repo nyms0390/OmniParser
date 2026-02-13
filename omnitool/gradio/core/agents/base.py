@@ -53,14 +53,14 @@ class BaseAgent(ABC):
     def plan(
         self,
         messages: List[Dict[str, Any]],
-        parsed_screen: Dict[str, Any],
+        screen_info: List[Dict[str, Any]],
         system_prompt: str = "",
     ) -> Dict[str, Any]:
         """Generate plan/response from LLM based on screen state.
         
         Args:
             messages: Conversation history
-            parsed_screen: Parsed screen information from OmniParser
+            screen_info: Parsed screen information from OmniParser
             system_prompt: System instruction for LLM
             
         Returns:

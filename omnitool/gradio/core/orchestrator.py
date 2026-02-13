@@ -99,7 +99,14 @@ class SamplingOrchestrator:
             
             # Get initial screen
             yield {"type": "status", "message": "Capturing initial screen..."}
-            parsed_screen = self._capture_screen()
+            screen_base64, screen_info = self._capture_screen()
+            
+            # Yield initial parsed screen for UI display
+            yield {
+                "type": "parsed_screen",
+                "som_image_base64": screen_base64,
+                "screen_info": screen_info,
+            }
             
             # Main loop
             while self.step_count < self.max_steps:
@@ -110,10 +117,20 @@ class SamplingOrchestrator:
                 
                 # PLAN: Get agent response
                 yield {"type": "status", "message": f"Step {self.step_count}: Planning..."}
-                plan_response = self._plan_step(parsed_screen)
+                plan_response = self._plan_step(screen_info)
                 
                 if plan_response is None:
                     break
+                
+                # Yield LLM thinking/reasoning for UI display
+                response_text = plan_response.get("response_text", "")
+                tool_calls_preview = plan_response.get("tool_calls", [])
+                if response_text:
+                    yield {
+                        "type": "thinking",
+                        "response_text": response_text,
+                        "tool_calls": tool_calls_preview,
+                    }
                 
                 # Update state
                 self.state.chat.add_message(
@@ -127,24 +144,62 @@ class SamplingOrchestrator:
                 
                 # EXECUTE: Run tool calls if any
                 tool_calls = plan_response.get("tool_calls", [])
-                if tool_calls:
-                    yield {"type": "status", "message": f"Executing {len(tool_calls)} tool(s)..."}
-                    tool_results = self.executor.execute(tool_calls, self.tools_collection)
+                if not tool_calls:
+                    # No tool calls = LLM gave a conversational reply (task done)
+                    yield {
+                        "type": "assistant_reply",
+                        "message": plan_response.get("response_text", ""),
+                    }
+                    break
+                
+                yield {"type": "status", "message": f"Executing {len(tool_calls)} tool(s)..."}
+                tool_results = self.executor.execute(tool_calls, self.tools_collection)
+                
+                # Add tool results to messages and yield for UI display
+                for result in tool_results:
+                    tool_result_obj = result.get('result')
+                    tool_output = ""
+                    tool_base64_image = ""
+                    tool_error = ""
                     
-                    # Add tool results to messages
-                    for result in tool_results:
-                        self.state.chat.add_message(
-                            role="system",
-                            content=f"Tool {result['tool']}: {result.get('result', result.get('error'))}",
-                        )
+                    if result.get('status') == 'success' and tool_result_obj is not None:
+                        # Extract from ToolResult dataclass
+                        if hasattr(tool_result_obj, 'output'):
+                            tool_output = tool_result_obj.output or ""
+                            tool_base64_image = tool_result_obj.base64_image or ""
+                            tool_error = tool_result_obj.error or ""
+                        else:
+                            tool_output = str(tool_result_obj)
+                    else:
+                        tool_error = result.get('error', 'Unknown error')
+                    
+                    self.state.chat.add_message(
+                        role="system",
+                        content=f"Tool {result['tool']}: {tool_output or tool_error}",
+                    )
+                    
+                    yield {
+                        "type": "action_result",
+                        "tool": result.get('tool', 'unknown'),
+                        "output": tool_output,
+                        "error": tool_error,
+                        "base64_image": tool_base64_image,
+                    }
                 
                 # OBSERVE: Capture new screen
                 yield {"type": "status", "message": "Capturing screen after action..."}
-                parsed_screen = self._capture_screen()
+                screen_base64, screen_info = self._capture_screen()
+                
+                # Yield post-action parsed screen for UI display
+                yield {
+                    "type": "parsed_screen",
+                    "som_image_base64": screen_base64,
+                    "screen_info": screen_info,
+                }
                 
                 # Save trajectory step (for orchestrated mode)
                 if self.is_orchestrated:
-                    self._save_trajectory_step(parsed_screen, plan_response)
+                    self._save_trajectory_step(screen_info, plan_response)
                 
                 # Report progress
                 yield {
@@ -166,11 +221,11 @@ class SamplingOrchestrator:
             logger.error(f"Orchestrator error: {str(e)}")
             yield {"type": "error", "message": str(e)}
     
-    def _plan_step(self, parsed_screen: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _plan_step(self, screen_info: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Plan next step - get agent response.
         
         Args:
-            parsed_screen: Current parsed screen
+            screen_info: Current parsed screen information
             
         Returns:
             Plan response dict or None if stopping
@@ -182,7 +237,7 @@ class SamplingOrchestrator:
             # Get agent response
             response = self.agent.plan(
                 messages=self.state.chat.messages,
-                parsed_screen=parsed_screen,
+                screen_info=screen_info,
                 system_prompt=system_prompt,
             )
             
@@ -192,7 +247,7 @@ class SamplingOrchestrator:
             logger.error(f"Planning failed: {str(e)}")
             raise
     
-    def _capture_screen(self) -> Dict[str, Any]:
+    def _capture_screen(self) -> List[Dict[str, Any]]:
         """Capture and parse current screen.
         
         Returns:
@@ -217,7 +272,9 @@ class SamplingOrchestrator:
             result = self.omniparser_client.parse_screenshot(screenshot_b64)
             
             logger.debug("Screenshot parsed successfully")
-            return result
+            screen_base64 = result.get("labeled_screenshot_base64", "")
+            screen_info = result.get("parsed_content_list", "")
+            return screen_base64, screen_info
         
         except Exception as e:
             logger.error(f"Screen capture/parse failed: {str(e)}")
@@ -225,19 +282,19 @@ class SamplingOrchestrator:
     
     def _save_trajectory_step(
         self,
-        parsed_screen: Dict[str, Any],
+        screen_info: List[Dict[str, Any]],
         plan_response: Dict[str, Any],
     ):
         """Save trajectory step for orchestrated mode.
         
         Args:
-            parsed_screen: Captured screen
+            screen_info: Captured screen information
             plan_response: Agent's response
         """
         step_data = {
             "step": self.step_count,
             "timestamp": datetime.now().isoformat(),
-            "screen_info": parsed_screen.get("screen_info", ""),
+            "screen_info": screen_info,
             "agent_response": plan_response.get("response_text", ""),
             "tool_calls": plan_response.get("tool_calls", []),
             "tokens": plan_response.get("metadata", {}).get("tokens"),
