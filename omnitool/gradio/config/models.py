@@ -25,7 +25,6 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "max_tokens": 4096,
         "temperature": 0.0,
         "supports_images": True,
-        "orchestrated_variant": "omniparser + gpt-4o-orchestrated",
     },
     # O1 Standard (OpenAI)
     "omniparser + o1": {
@@ -41,7 +40,6 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "max_tokens": 4096,
         "temperature": 0.0,
         "supports_images": True,
-        "orchestrated_variant": "omniparser + o1-orchestrated",
     },
     # O3-Mini (OpenAI)
     "omniparser + o3-mini": {
@@ -57,7 +55,6 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "max_tokens": 4096,
         "temperature": 0.0,
         "supports_images": True,
-        "orchestrated_variant": "omniparser + o3-mini-orchestrated",
     },
     # Qwen 2.5 VL (DashScope/Aliyun)
     "omniparser + qwen2.5vl": {
@@ -73,7 +70,6 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "max_tokens": 2048,  # Qwen has lower max tokens
         "temperature": 0.0,
         "supports_images": True,
-        "orchestrated_variant": "omniparser + qwen2.5vl-orchestrated",
     },
     # DeepSeek R1 (Groq)
     "omniparser + R1": {
@@ -89,87 +85,6 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "max_tokens": 4096,
         "temperature": 0.6,  # Groq R1 uses different temperature
         "supports_images": False,  # R1 doesn't support images
-        "orchestrated_variant": "omniparser + R1-orchestrated",
-    },
-    # GPT-4o Orchestrated (OpenAI and Azure)
-    "omniparser + gpt-4o-orchestrated": {
-        "internal_name": "gpt-4o-2024-11-20",
-        "agent_type": "VLMAgent",  # Same agent, orchestration in core.orchestrator
-        "llm_client": "openai",
-        "provider": [APIProvider.OPENAI, APIProvider.AZURE],
-        "provider_base_url": "https://api.openai.com/v1",
-        "pricing": {
-            "token_type": "total",
-            "cost_per_1m": 2.5,
-        },
-        "max_tokens": 4096,
-        "temperature": 0.0,
-        "supports_images": True,
-        "orchestrated_variant": None,
-    },
-    # O1 Orchestrated (OpenAI)
-    "omniparser + o1-orchestrated": {
-        "internal_name": "o1",
-        "agent_type": "VLMAgent",
-        "llm_client": "openai",
-        "provider": [APIProvider.OPENAI],
-        "provider_base_url": "https://api.openai.com/v1",
-        "pricing": {
-            "token_type": "total",
-            "cost_per_1m": 15.0,
-        },
-        "max_tokens": 4096,
-        "temperature": 0.0,
-        "supports_images": True,
-        "orchestrated_variant": None,
-    },
-    # O3-Mini Orchestrated (OpenAI)
-    "omniparser + o3-mini-orchestrated": {
-        "internal_name": "o3-mini",
-        "agent_type": "VLMAgent",
-        "llm_client": "openai",
-        "provider": [APIProvider.OPENAI],
-        "provider_base_url": "https://api.openai.com/v1",
-        "pricing": {
-            "token_type": "total",
-            "cost_per_1m": 1.1,
-        },
-        "max_tokens": 4096,
-        "temperature": 0.0,
-        "supports_images": True,
-        "orchestrated_variant": None,
-    },
-    # Qwen Orchestrated (DashScope/Aliyun)
-    "omniparser + qwen2.5vl-orchestrated": {
-        "internal_name": "qwen2.5-vl-72b-instruct",
-        "agent_type": "VLMAgent",
-        "llm_client": "openai",
-        "provider": [APIProvider.DASHSCOPE],
-        "provider_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "pricing": {
-            "token_type": "total",
-            "cost_per_1m": 2.2,
-        },
-        "max_tokens": 2048,
-        "temperature": 0.0,
-        "supports_images": True,
-        "orchestrated_variant": None,
-    },
-    # R1 Orchestrated (Groq)
-    "omniparser + R1-orchestrated": {
-        "internal_name": "deepseek-r1-distill-llama-70b",
-        "agent_type": "VLMAgent",
-        "llm_client": "groq",
-        "provider": [APIProvider.GROQ],
-        "provider_base_url": None,
-        "pricing": {
-            "token_type": "total",
-            "cost_per_1m": 0.99,
-        },
-        "max_tokens": 4096,
-        "temperature": 0.6,
-        "supports_images": False,
-        "orchestrated_variant": None,
     },
     # Claude 3.5 Sonnet (Anthropic, Bedrock, Vertex)
     "claude-3-5-sonnet-20241022": {
@@ -188,7 +103,6 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "max_tokens": 4096,
         "temperature": 0.0,
         "supports_images": True,
-        "orchestrated_variant": None,
     },
 }
 
@@ -270,13 +184,4 @@ def get_all_model_names() -> list[str]:
     return list(MODEL_CONFIG.keys())
 
 
-def is_orchestrated_model(model_name: str) -> bool:
-    """Check if a model is orchestrated variant.
-    
-    Args:
-        model_name: Display name of the model
-        
-    Returns:
-        True if model has 'orchestrated' in its name
-    """
-    return "orchestrated" in model_name.lower()
+

@@ -1,6 +1,4 @@
-"""
-Core module for OmniParser - agents, executors, orchestrator, and tools.
-"""
+"""Core module for OmniParser - agents, orchestrator, and tools."""
 
 from omnitool.gradio.core.agents import (
     AnthropicAgent,
@@ -9,10 +7,6 @@ from omnitool.gradio.core.agents import (
     create_agent,
     get_agent_info,
     get_available_agents,
-)
-from omnitool.gradio.core.executors import (
-    BaseExecutor,
-    ToolExecutor,
 )
 from omnitool.gradio.core.orchestrator import SamplingOrchestrator
 from omnitool.gradio.core.tools import (
@@ -31,9 +25,6 @@ __all__ = [
     "create_agent",
     "get_available_agents",
     "get_agent_info",
-    # Executors
-    "BaseExecutor",
-    "ToolExecutor",
     # Orchestrator
     "SamplingOrchestrator",
     # Tools

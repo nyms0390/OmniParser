@@ -112,8 +112,50 @@ def format_action_result(
     return "\n".join(parts)
 
 
+def format_plan(plan_text: str) -> str:
+    """Format an orchestrated-mode plan as a collapsible block.
+
+    Args:
+        plan_text: The plan JSON or text generated at step 0.
+
+    Returns:
+        HTML string with a ``<details>`` block (open by default).
+    """
+    escaped = html.escape(plan_text.strip()) if plan_text else "(empty)"
+    return (
+        '<details open style="margin: 6px 0;">'
+        "<summary>📋 Plan</summary>"
+        '<pre style="max-height: 300px; overflow-y: auto; '
+        "font-size: 0.85em; padding: 8px; background: #fff8e1; "
+        f'border-radius: 4px; white-space: pre-wrap;">{escaped}</pre>'
+        "</details>"
+    )
+
+
+def format_ledger(ledger_text: str) -> str:
+    """Format an orchestrated-mode ledger reflection as a collapsible block.
+
+    Args:
+        ledger_text: The ledger JSON generated before each action step.
+
+    Returns:
+        HTML string with a ``<details>`` block (collapsed).
+    """
+    escaped = html.escape(ledger_text.strip()) if ledger_text else "(empty)"
+    return (
+        '<details style="margin: 6px 0;">'
+        "<summary>📒 Task Progress Ledger (click to expand)</summary>"
+        '<pre style="max-height: 300px; overflow-y: auto; '
+        "font-size: 0.85em; padding: 8px; background: #f3e5f5; "
+        f'border-radius: 4px; white-space: pre-wrap;">{escaped}</pre>'
+        "</details>"
+    )
+
+
 __all__ = [
     "format_parsed_screen",
     "format_thinking",
     "format_action_result",
+    "format_plan",
+    "format_ledger",
 ]

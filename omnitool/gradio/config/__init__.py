@@ -15,17 +15,24 @@ from omnitool.gradio.config.constants import (
     TYPING_DELAY_MS,
     WINDOWS_HOST_TIMEOUT_SECONDS,
 )
-from omnitool.gradio.config.enums import APIProvider
+from omnitool.gradio.config.enums import AgentMode, APIProvider
 from omnitool.gradio.config.models import (
     MODEL_CONFIG,
     OCR_CONFIG,
     get_all_model_names,
     get_model_config,
-    is_orchestrated_model,
     get_ocr_config,
     get_all_ocr_backends,
 )
 from omnitool.gradio.config.logging_config import setup_logging
+from omnitool.gradio.config.prompts import (
+    PLATFORM_PROMPTS,
+    PlatformPrompt,
+    build_anthropic_system_prompt,
+    build_vlm_system_prompt,
+    ORCHESTRATOR_PLAN_PROMPT,
+    ORCHESTRATOR_LEDGER_PROMPT,
+)
 from omnitool.gradio.config.settings import (
     Settings,
     create_argument_parser,
@@ -47,12 +54,20 @@ __all__ = [
     "MAX_UPLOAD_SIZE_MB",
     "ALLOWED_FILE_EXTENSIONS",
     "CONFIG_DIR_NAME",
-    # Models
+    # Enums
+    "AgentMode",
     "APIProvider",
+    # Models
     "MODEL_CONFIG",
     "get_model_config",
     "get_all_model_names",
-    "is_orchestrated_model",
+    # Prompts
+    "PLATFORM_PROMPTS",
+    "PlatformPrompt",
+    "build_vlm_system_prompt",
+    "build_anthropic_system_prompt",
+    "ORCHESTRATOR_PLAN_PROMPT",
+    "ORCHESTRATOR_LEDGER_PROMPT",
     # OCR
     "OCR_CONFIG",
     "get_ocr_config",

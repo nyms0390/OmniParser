@@ -6,6 +6,8 @@ Windows host server via WindowsHostClient.
 """
 
 import logging
+import re
+import time
 from typing import Dict, Optional, Tuple
 
 from omnitool.gradio.clients.services.windows_host import WindowsHostClient
@@ -42,6 +44,14 @@ class ComputerTool(BaseTool):
         self.display_width = display_width
         self.display_height = display_height
         
+        # Key name conversion matching pyautogui expectations (from legacy)
+        self.key_conversion = {
+            "Page_Down": "pagedown",
+            "Page_Up": "pageup",
+            "Super_L": "win",
+            "Escape": "esc",
+        }
+        
         logger.info(f"Initialized ComputerTool (display: {display_width}x{display_height})")
     
     def run(self, action: str, **kwargs) -> ToolResult:
@@ -77,6 +87,14 @@ class ComputerTool(BaseTool):
                 return self._scroll(100)
             elif action == "scroll_down":
                 return self._scroll(-100)
+            elif action == "middle_click":
+                return self._middle_click()
+            elif action == "hover":
+                return self._hover()
+            elif action == "wait":
+                return self._wait()
+            elif action == "left_press":
+                return self._left_press()
             else:
                 return ToolResult(error=f"Unknown action: {action}")
         
@@ -246,17 +264,7 @@ class ComputerTool(BaseTool):
             logger.debug(f"Dragging to ({x}, {y})")
             
             # Get current position first
-            try:
-                current_pos = self.windows_host_client.execute_pyautogui_command(
-                    "pyautogui.position()",
-                    parse_output=True
-                )
-                if isinstance(current_pos, (list, tuple)) and len(current_pos) == 2:
-                    current_x, current_y = current_pos
-                else:
-                    current_x, current_y = 0, 0
-            except Exception:
-                current_x, current_y = 0, 0
+            current_x, current_y = self._parse_position()
             
             # Perform drag
             self.windows_host_client.execute_pyautogui_command(
@@ -285,6 +293,12 @@ class ComputerTool(BaseTool):
                 return ToolResult(error="text parameter required")
             
             logger.debug(f"Typing: {text}")
+            
+            # Click to focus before typing (matches legacy behavior)
+            self.windows_host_client.execute_pyautogui_command(
+                "pyautogui.click()",
+                parse_output=False
+            )
             
             # Type text and press enter
             self.windows_host_client.execute_pyautogui_command(
@@ -317,32 +331,26 @@ class ComputerTool(BaseTool):
             logger.debug(f"Pressing key: {text}")
             
             # Handle key combinations (e.g., "ctrl+c")
+            # Always use keyDown/keyUp to match legacy behavior
             keys = text.split('+')
+            key_list = [
+                self.key_conversion.get(k.strip(), k.strip()).lower()
+                for k in keys
+            ]
             
-            if len(keys) == 1:
-                # Single key
-                key = keys[0].strip().lower()
+            # Press all keys down
+            for key in key_list:
                 self.windows_host_client.execute_pyautogui_command(
-                    f"pyautogui.press('{key}')",
-                    parse_output=False
+                    f"pyautogui.keyDown('{key}')",
+                    parse_output=False,
                 )
-            else:
-                # Key combination - press all down, then release in reverse
-                key_list = [k.strip().lower() for k in keys]
-                
-                # Press all keys
-                for key in key_list:
-                    self.windows_host_client.execute_pyautogui_command(
-                        f"pyautogui.keyDown('{key}')",
-                        parse_output=False,
-                    )
-                
-                # Release all keys in reverse
-                for key in reversed(key_list):
-                    self.windows_host_client.execute_pyautogui_command(
-                        f"pyautogui.keyUp('{key}')",
-                        parse_output=False,
-                    )
+            
+            # Release all keys in reverse
+            for key in reversed(key_list):
+                self.windows_host_client.execute_pyautogui_command(
+                    f"pyautogui.keyUp('{key}')",
+                    parse_output=False,
+                )
             
             return ToolResult(output=f"Pressed key: {text}")
         except Exception as e:
@@ -356,19 +364,11 @@ class ComputerTool(BaseTool):
         """
         try:
             logger.debug("Getting cursor position")
-            
-            pos = self.windows_host_client.execute_pyautogui_command(
-                "pyautogui.position()",
-                parse_output=True
+            x, y = self._parse_position()
+            return ToolResult(
+                output=f"X={x},Y={y}",
+                metadata={"x": x, "y": y}
             )
-            
-            if isinstance(pos, (list, tuple)) and len(pos) == 2:
-                return ToolResult(
-                    output=f"Cursor position: ({pos[0]}, {pos[1]})",
-                    metadata={"x": pos[0], "y": pos[1]}
-                )
-            else:
-                return ToolResult(error=f"Unexpected position format: {pos}")
         except Exception as e:
             return ToolResult(error=f"Get cursor position failed: {str(e)}")
     
@@ -394,6 +394,75 @@ class ComputerTool(BaseTool):
         except Exception as e:
             return ToolResult(error=f"Scroll failed: {str(e)}")
     
+    def _middle_click(self) -> ToolResult:
+        """Middle click at current position."""
+        try:
+            logger.debug("Middle clicking at current position")
+            self.windows_host_client.execute_pyautogui_command(
+                "pyautogui.middleClick()",
+                parse_output=False
+            )
+            return ToolResult(output="Performed middle_click")
+        except Exception as e:
+            return ToolResult(error=f"Middle click failed: {str(e)}")
+    
+    def _hover(self) -> ToolResult:
+        """Hover at current position (no-op, cursor already moved)."""
+        return ToolResult(output="Performed hover")
+    
+    def _wait(self) -> ToolResult:
+        """Wait for 1 second."""
+        time.sleep(1)
+        return ToolResult(output="Performed wait")
+    
+    def _left_press(self) -> ToolResult:
+        """Long-press (mouse down, hold, mouse up)."""
+        try:
+            logger.debug("Left press (long-press)")
+            self.windows_host_client.execute_pyautogui_command(
+                "pyautogui.mouseDown()",
+                parse_output=False
+            )
+            time.sleep(1)
+            self.windows_host_client.execute_pyautogui_command(
+                "pyautogui.mouseUp()",
+                parse_output=False
+            )
+            return ToolResult(output="Performed left_press")
+        except Exception as e:
+            return ToolResult(error=f"Left press failed: {str(e)}")
+    
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _parse_position(self) -> Tuple[int, int]:
+        """Query and parse current cursor position.
+        
+        Uses regex to parse ``Point(x=123, y=456)`` output from
+        ``pyautogui.position()`` since ``ast.literal_eval`` cannot
+        handle named-tuple repr strings.
+        
+        Returns:
+            (x, y) tuple of cursor coordinates
+            
+        Raises:
+            ValueError: If position output cannot be parsed
+        """
+        raw = self.windows_host_client.execute_pyautogui_command(
+            "pyautogui.position()",
+            parse_output=True
+        )
+        # parse_output may already return a parsed tuple/list
+        if isinstance(raw, (list, tuple)) and len(raw) == 2:
+            return int(raw[0]), int(raw[1])
+        # Otherwise parse the Point(x=..., y=...) string
+        raw_str = str(raw)
+        match = re.search(r'Point\(x=(\d+),\s*y=(\d+)\)', raw_str)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+        raise ValueError(f"Could not parse cursor position from: {raw_str}")
+    
     def get_info(self) -> Dict[str, str]:
         """Get tool information.
         
@@ -403,5 +472,10 @@ class ComputerTool(BaseTool):
         return {
             "name": self.name,
             "description": self.description,
-            "actions": "screenshot, left_click, right_click, double_click, mouse_move, left_click_drag, type, key, cursor_position, scroll_up, scroll_down",
+            "actions": (
+                "screenshot, left_click, right_click, double_click, "
+                "middle_click, mouse_move, left_click_drag, type, key, "
+                "cursor_position, scroll_up, scroll_down, hover, wait, "
+                "left_press"
+            ),
         }

@@ -87,12 +87,13 @@ class ToolCollection:
         """
         return [tool.get_info() for tool in self.tools.values()]
     
-    async def run(self, name: str, action: str) -> ToolResult:
+    def run(self, name: str, action: str, **kwargs) -> ToolResult:
         """Run a tool by name.
         
         Args:
             name: Tool name
             action: Action specification
+            **kwargs: Additional action-specific arguments
             
         Returns:
             Tool result
@@ -104,4 +105,4 @@ class ToolCollection:
         if not tool:
             raise ValueError(f"Tool not found: {name}")
         
-        return tool.run(action)
+        return tool.run(action, **kwargs)

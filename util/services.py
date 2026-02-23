@@ -166,29 +166,74 @@ class PaddleOCRBackend(BaseOCRBackend):
             result = ocr.recognize(image_bytes, text_threshold=text_threshold)
         else:
             # Local OCR processing with PaddleOCR 3.x
-            # PaddleOCR 3.x returns: {'res': {'rec_polys': ndarray, 'rec_texts': ndarray, 'rec_scores': ndarray, ...}}
-            result = ocr.ocr(image)
+            # predict() returns a list of result objects, each dict-like
+            result = ocr.predict(image, text_rec_score_thresh=text_threshold)
             
         coord = []
         text = []
         
-        if result and 'res' in result:
-            res = result['res']
-            rec_polys = res.get('rec_polys', [])
-            rec_texts = res.get('rec_texts', [])
-            rec_scores = res.get('rec_scores', np.array([]))
+        if not result:
+            return coord, text
+        
+        # PaddleOCR 3.x predict() returns a list of result objects.
+        # Each result object is dict-like with keys directly accessible:
+        #   rec_polys: List[numpy.ndarray] - text region polygons (filtered by threshold)
+        #   rec_texts: List[str] - recognized texts (filtered by threshold)
+        #   rec_scores: List[float] - recognition confidence scores (filtered)
+        #
+        # When serialized (via .json/.print()), results are wrapped as {'res': {...}}.
+        # We handle both schemas for robustness.
+        
+        items = result if isinstance(result, list) else [result]
+        
+        for res_item in items:
+            data = self._unwrap_result(res_item)
+            if data is None:
+                continue
             
-            # Iterate through detected text regions
+            try:
+                rec_polys = data['rec_polys'] if 'rec_polys' in data else []
+                rec_texts = data['rec_texts'] if 'rec_texts' in data else []
+                rec_scores = data['rec_scores'] if 'rec_scores' in data else []
+            except (TypeError, KeyError):
+                logger.warning("Could not extract OCR fields from result: %s", type(res_item))
+                continue
+            
             for i, (poly, txt) in enumerate(zip(rec_polys, rec_texts)):
-                # Get confidence score for this detection
-                score = rec_scores[i] if i < len(rec_scores) else 0.0
-                
-                # Filter by confidence threshold
-                if float(score) > text_threshold:
+                score = float(rec_scores[i]) if i < len(rec_scores) else 0.0
+                if score > text_threshold:
                     coord.append(poly)
                     text.append(str(txt))
         
         return coord, text
+    
+    @staticmethod
+    def _unwrap_result(res_item):
+        """Unwrap a PaddleOCR result item, handling both direct and 'res'-wrapped schemas.
+        
+        PaddleOCR 3.x result objects support two access patterns:
+          - Schema A (direct): result_obj["rec_texts"] — dict-like access on result objects
+          - Schema B (wrapped): result_obj["res"]["rec_texts"] — serialized/JSON format
+        
+        Returns the inner data dict, or None if unparseable.
+        """
+        if res_item is None:
+            return None
+        try:
+            # Schema B: check for 'res' wrapper (serialized format)
+            if 'res' in res_item:
+                inner = res_item['res']
+                # Verify it actually contains OCR fields (not just a coincidental 'res' key)
+                if hasattr(inner, '__getitem__') and ('rec_texts' in inner or 'rec_polys' in inner):
+                    return inner
+            # Schema A: direct access — keys like rec_texts are at top level
+            if 'rec_texts' in res_item or 'rec_polys' in res_item:
+                return res_item
+        except (TypeError, KeyError):
+            pass
+        
+        logger.debug("Unrecognized PaddleOCR result format: %s", type(res_item))
+        return None
     
     def _get_ocr(self):
         """Lazily initialize PaddleOCR instance or API client."""

@@ -18,6 +18,13 @@ class APIProvider(StrEnum):
     AZURE = "azure"
 
 
+class AgentMode(StrEnum):
+    """Agent execution modes."""
+    INTERACTIVE = "interactive"
+    ORCHESTRATED = "orchestrated"
+    TASK = "task"
+
+
 class Sender(StrEnum):
     """Message sender types in chat."""
     USER = "user"

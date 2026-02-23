@@ -52,12 +52,17 @@ class ToolExecutor(BaseExecutor):
                 # Get tool and execute
                 tool = tools_collection.get_tool(tool_name)
                 
+                # Extract kwargs (everything except 'tool' and 'action')
+                tool_kwargs = {
+                    k: v for k, v in tool_call.items()
+                    if k not in ('tool', 'action')
+                }
+                
                 # Handle async tools
                 if asyncio.iscoroutinefunction(tool.run):
-                    # Run async in event loop
-                    result = asyncio.run(tool.run(action))
+                    result = asyncio.run(tool.run(action, **tool_kwargs))
                 else:
-                    result = tool.run(action)
+                    result = tool.run(action, **tool_kwargs)
                 
                 results.append({
                     'tool': tool_name,

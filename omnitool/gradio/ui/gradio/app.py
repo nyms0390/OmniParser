@@ -30,6 +30,7 @@ from PIL import Image
 from omnitool.gradio.clients import OmniParserClient, PaddleOCRClient, WindowsHostClient
 from omnitool.gradio.clients.services import ServiceValidator
 from omnitool.gradio.config import (
+    AgentMode,
     APIProvider,
     create_argument_parser,
     get_all_model_names,
@@ -46,8 +47,10 @@ from omnitool.gradio.services import AppState, FileHandler, validate_api_key
 from omnitool.gradio.ui.gradio.components import (
     create_settings_panel,
     format_action_result,
+    format_ledger,
     format_message_for_display,
     format_parsed_screen,
+    format_plan,
     format_thinking,
     get_model_choices,
     get_provider_options_for_model,
@@ -103,6 +106,22 @@ class GradioApp:
                         choices=["openai"],
                         value="openai",
                         label="Provider",
+                    )
+                
+                with gr.Row():
+                    mode_dropdown = gr.Dropdown(
+                        choices=[
+                            ("Interactive", AgentMode.INTERACTIVE.value),
+                            ("Orchestrated", AgentMode.ORCHESTRATED.value),
+                            ("Task (coming soon)", AgentMode.TASK.value),
+                        ],
+                        value=AgentMode.INTERACTIVE.value,
+                        label="Mode",
+                    )
+                    platform_dropdown = gr.Dropdown(
+                        choices=["windows", "macos", "linux", "generic"],
+                        value="windows",
+                        label="Platform",
                     )
                 
                 # Update provider options when model changes
@@ -161,6 +180,8 @@ class GradioApp:
                     model_dropdown,
                     provider_dropdown,
                     chatbot,
+                    mode_dropdown,
+                    platform_dropdown,
                 ],
                 outputs=[
                     chatbot,
@@ -185,9 +206,14 @@ class GradioApp:
             Initial chatbot history with screenshot
         """
         try:
-            # Capture screenshot (sync call)
-            screenshot_data = self.windows_host_client.get_screenshot()
-            screenshot_base64 = screenshot_data.get("screenshot_base64")
+            # Capture screenshot via ComputerTool
+            computer_tool = self.tools.get_tool("computer")
+            if not computer_tool:
+                logger.warning("ComputerTool not available in tools collection")
+                return [{"role": "system", "content": "Initial screenshot: ComputerTool not available"}]
+            
+            screenshot_result = computer_tool.run("screenshot")
+            screenshot_base64 = screenshot_result.base64_image
             
             if not screenshot_base64:
                 logger.warning("Screenshot returned but no image data")
@@ -210,7 +236,7 @@ class GradioApp:
                     buffer = BytesIO()
                     img.save(buffer, format="PNG")
                     screenshot_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-                    logger.debug(f"Resized screenshot from {screenshot_data.get('width')}x{screenshot_data.get('height')} to {img.width}x{img.height}")
+                    logger.debug(f"Resized screenshot to {img.width}x{img.height}")
             except Exception as resize_error:
                 logger.debug(f"Screenshot resize failed, using original: {resize_error}")
             
@@ -247,6 +273,8 @@ class GradioApp:
         model_name: str,
         provider: str,
         chatbot_history,
+        mode: str = "interactive",
+        platform: str = "windows",
     ) -> Generator:
         """Handle submit button click.
         
@@ -289,15 +317,22 @@ class GradioApp:
         
         # Create orchestrator
         try:
+            # Resolve mode enum
+            try:
+                agent_mode = AgentMode(mode)
+            except ValueError:
+                agent_mode = AgentMode.INTERACTIVE
+            
             # Prepare orchestrator kwargs
             orchestrator_kwargs = {
                 "model_name": model_name,
                 "state": state,
                 "tools_collection": self.tools,
                 "omniparser_client": self.omniparser_client,
-                "windows_host_client": self.windows_host_client,
                 "max_steps": 20,
                 "provider": provider,
+                "mode": agent_mode,
+                "platform": platform,
             }
             
             # Add Azure endpoint if using Azure provider
@@ -331,6 +366,16 @@ class GradioApp:
                     if thinking_html is not None:
                         history.append({"role": "assistant", "content": thinking_html})
                         yield history, "", "Agent is thinking...", state
+                
+                elif update_type == "plan":
+                    plan_html = format_plan(update.get("plan_text", ""))
+                    history.append({"role": "assistant", "content": plan_html})
+                    yield history, "", "Plan generated", state
+                
+                elif update_type == "ledger":
+                    ledger_html = format_ledger(update.get("ledger_text", ""))
+                    history.append({"role": "assistant", "content": ledger_html})
+                    yield history, "", "Ledger updated", state
                 
                 elif update_type == "action_result":
                     # Render the executed action and optional post-action screenshot

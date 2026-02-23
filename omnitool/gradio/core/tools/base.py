@@ -60,11 +60,12 @@ class BaseTool(ABC):
         self.description = description
     
     @abstractmethod
-    def run(self, action: str) -> ToolResult:
+    def run(self, action: str, **kwargs) -> ToolResult:
         """Execute tool with given action.
         
         Args:
             action: Action specification
+            **kwargs: Additional action-specific arguments
             
         Returns:
             ToolResult with execution result

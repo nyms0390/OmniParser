@@ -2,7 +2,7 @@
 Anthropic Claude agent for computer use tasks.
 """
 
-import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -11,6 +11,8 @@ from omnitool.gradio.config import get_model_config
 from omnitool.gradio.services.state import AppState
 
 from .base import BaseAgent
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicAgent(BaseAgent):
@@ -25,19 +27,8 @@ class AnthropicAgent(BaseAgent):
         save_folder: Path,
         **kwargs
     ):
-        """Initialize AnthropicAgent.
-        
-        Args:
-            model_name: Display name of model
-            llm_client: Initialized AnthropicClient
-            state: Application state
-            tools_collection: Available tools
-            save_folder: Folder for saving outputs
-            **kwargs: Additional arguments
-        """
         super().__init__(model_name, llm_client, state, tools_collection, save_folder, **kwargs)
         
-        # Get model config for pricing
         try:
             self.model_config = get_model_config(model_name)
         except ValueError:
@@ -46,40 +37,27 @@ class AnthropicAgent(BaseAgent):
     def plan(
         self,
         messages: List[Dict[str, Any]],
-        screen_info: List[Dict[str, Any]],
+        parsed_screen: Dict[str, Any],
         system_prompt: str = "",
     ) -> Dict[str, Any]:
         """Generate response from Anthropic Claude.
         
         Claude uses tool_use feature for computer interaction.
-        
-        Args:
-            messages: Conversation history
-            screen_info: Parsed screen info
-            system_prompt: System prompt
-            
-        Returns:
-            Response dict with response_text, tool_calls, and metadata
         """
-        # Prepare messages with screen context
-        prepared_messages = self._prepare_messages(messages, screen_info)
+        prepared_messages = self._prepare_messages(messages, parsed_screen)
         
         try:
-            # Call Claude via LLM client
             response_text, metadata = self.llm_client.generate(
                 messages=prepared_messages,
                 system_prompt=system_prompt,
             )
             
-            # Update token tracking (Anthropic has separate input/output)
             tokens = metadata.get('tokens', 0)
             self.update_token_usage(tokens)
             
-            # Calculate cost using Anthropic's input/output pricing
             cost = self._calculate_cost(metadata)
             self.update_cost(cost)
             
-            # Parse tool calls from response (Claude uses tool_use blocks)
             tool_calls = self._parse_tool_calls(response_text)
             
             return {
@@ -95,48 +73,53 @@ class AnthropicAgent(BaseAgent):
     def _prepare_messages(
         self,
         messages: List[Dict[str, Any]],
-        screen_info: List[Dict[str, Any]],
+        parsed_screen: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         """Prepare messages with screen information for Claude.
-        
-        Args:
-            messages: Original messages
-            parsed_screen: Parsed screen data
-            
-        Returns:
-            Prepared messages
+
+        Screen info is injected as a separate user message wrapped in
+        ``<screen_elements>`` tags.
+
+        The SOM image is intentionally **not** included here to avoid
+        exceeding the context window during planning.  It is sent in the
+        ledger call instead (see :pymethod:`SamplingOrchestrator._update_ledger`).
         """
-        prepared = messages.copy()
-        
-        # Add screen info to last user message
-        if prepared and prepared[-1].get('role') == 'user':
-            screen_context = f"\n\nCurrent screen state:\n{screen_info}"
-            
-            last_msg = prepared[-1]
-            if isinstance(last_msg['content'], str):
-                last_msg['content'] += screen_context
-            elif isinstance(last_msg['content'], list):
-                last_msg['content'].append({
-                    "type": "text",
-                    "text": screen_context
-                })
-        
+        prepared = [self._strip_images(msg) for msg in messages]
+
+        screen_info_text = str(parsed_screen.get("parsed_content_list", []))
+
+        prepared.append({
+            "role": "user",
+            "content": (
+                "Here is the list of detected UI elements on the current "
+                "screen:\n"
+                f"<screen_elements>\n{screen_info_text}\n</screen_elements>"
+            ),
+        })
+
         return prepared
-    
+
+    @staticmethod
+    def _strip_images(msg: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a shallow copy of *msg* with all ``image_url`` blocks removed."""
+        msg = msg.copy()
+        content = msg.get("content")
+        if isinstance(content, list):
+            msg["content"] = [
+                item for item in content
+                if not (isinstance(item, dict) and item.get("type") == "image_url")
+            ]
+        return msg
+
     def _parse_tool_calls(self, response_text: str) -> List[Dict[str, Any]]:
         """Parse tool calls from Claude response.
         
         Claude uses tool_use content blocks in responses.
-        This is placeholder - actual parsing depends on response format.
-        
-        Args:
-            response_text: LLM response
-            
-        Returns:
-            List of tool calls
+        Actual parsing depends on response format from the Anthropic SDK.
         """
-        # This would parse tool_use blocks from Claude's response
-        # For now, return empty list as actual parsing happens in executor
+        # Claude's tool_use blocks are handled by the SDK/executor layer.
+        # Return empty list here; tool_calls are extracted from the
+        # structured response by the Anthropic client.
         return []
     
     def _calculate_cost(self, metadata: Dict[str, Any]) -> float:

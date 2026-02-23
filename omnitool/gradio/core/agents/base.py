@@ -3,12 +3,15 @@ Base agent class for OmniParser vision-language models.
 Provides common interface and shared functionality.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from omnitool.gradio.clients.base import BaseLLMClient
 from omnitool.gradio.services.state import AppState
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent(ABC):
@@ -53,14 +56,17 @@ class BaseAgent(ABC):
     def plan(
         self,
         messages: List[Dict[str, Any]],
-        screen_info: List[Dict[str, Any]],
+        parsed_screen: Dict[str, Any],
         system_prompt: str = "",
     ) -> Dict[str, Any]:
         """Generate plan/response from LLM based on screen state.
         
         Args:
             messages: Conversation history
-            screen_info: Parsed screen information from OmniParser
+            parsed_screen: Dict from orchestrator containing:
+                - parsed_content_list: list of detected UI elements
+                - screen_width: screenshot width in pixels
+                - screen_height: screenshot height in pixels
             system_prompt: System instruction for LLM
             
         Returns:
@@ -104,6 +110,65 @@ class BaseAgent(ABC):
             cost: Cost in USD
         """
         self.total_cost += cost
+    
+    def execute_tool_calls(
+        self, tool_calls: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Execute tool calls using the agent's tools collection.
+        
+        Iterates over tool-call dicts produced by ``plan()``, looks up
+        each tool by name in ``self.tools_collection``, and calls
+        ``tool.run(action, **kwargs)``.
+        
+        Args:
+            tool_calls: List of dicts, each with at least ``tool`` and
+                ``action`` keys.  Remaining keys are forwarded as kwargs.
+                
+        Returns:
+            List of result dicts, each containing:
+                - tool: Tool name
+                - status: 'success' or 'error'
+                - result: ToolResult (on success)
+                - error: Error message (on failure)
+        """
+        results: List[Dict[str, Any]] = []
+        
+        for tool_call in tool_calls:
+            tool_name = tool_call.get("tool")
+            action = tool_call.get("action")
+            
+            if not self.tools_collection.has_tool(tool_name):
+                results.append({
+                    "tool": tool_name,
+                    "status": "error",
+                    "error": f"Tool not found: {tool_name}",
+                })
+                continue
+            
+            try:
+                tool = self.tools_collection.get_tool(tool_name)
+                
+                # Everything except 'tool' and 'action' is forwarded
+                tool_kwargs = {
+                    k: v for k, v in tool_call.items()
+                    if k not in ("tool", "action")
+                }
+                
+                result = tool.run(action, **tool_kwargs)
+                results.append({
+                    "tool": tool_name,
+                    "status": "success",
+                    "result": result,
+                })
+            except Exception as exc:
+                logger.error("Tool execution failed for %s: %s", tool_name, exc)
+                results.append({
+                    "tool": tool_name,
+                    "status": "error",
+                    "error": str(exc),
+                })
+        
+        return results
     
     def reset(self):
         """Reset agent state for new execution."""
