@@ -32,7 +32,22 @@ def format_parsed_screen(som_image_base64: str, screen_info: str = "", auto_expa
     if som_image_base64:
         parts.append(
             f'<img src="data:image/png;base64,{som_image_base64}" '
-            'style="max-width: 100%; border-radius: 8px; margin: 8px 0;">'
+            'style="max-width: 100%; border-radius: 8px; margin: 8px 0; cursor: zoom-in;" '
+            "onclick=\""
+            "var m=document.createElement('div');"
+            "m.style.cssText='position:fixed;top:0;left:0;width:100vw;height:100vh;"
+            "background:rgba(0,0,0,0.9);display:flex;align-items:center;"
+            "justify-content:center;z-index:9999;cursor:zoom-out;';"
+            "var i=document.createElement('img');"
+            "i.src=this.src;"
+            "i.style.cssText='max-width:95vw;max-height:95vh;object-fit:contain;"
+            "border-radius:8px;';"
+            "m.appendChild(i);"
+            "m.onclick=function(){this.remove();};"
+            "document.body.appendChild(m);"
+            '">'
+            '\n<div style="font-size: 0.8em; color: #888; margin-top: -4px;">'
+            "Click image to view full size</div>"
         )
 
     if screen_info:

@@ -7,7 +7,6 @@ using OmniParser bounding boxes.
 
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -107,14 +106,22 @@ class VLMAgent(BaseAgent):
         prepared = [self._strip_images(msg) for msg in messages]
 
         screen_info_text = str(parsed_screen.get("parsed_content_list", []))
+        screen_desc = parsed_screen.get("screen_description", "")
+
+        context_parts = [
+            "Here is the list of all detected bounding boxes by IDs "
+            "on the screen and their description:\n"
+            f"<screen_elements>\n{screen_info_text}\n</screen_elements>",
+        ]
+        if screen_desc:
+            context_parts.append(
+                f"\nCurrent screen summary (from previous observation):\n"
+                f"<screen_description>\n{screen_desc}\n</screen_description>"
+            )
 
         prepared.append({
             "role": "user",
-            "content": (
-                "Here is the list of all detected bounding boxes by IDs "
-                "on the screen and their description:\n"
-                f"<screen_elements>\n{screen_info_text}\n</screen_elements>"
-            ),
+            "content": "\n".join(context_parts),
         })
 
         return prepared
@@ -197,29 +204,6 @@ class VLMAgent(BaseAgent):
             logger.warning("Unknown action type: %s", action_type)
         
         return tool_calls
-    
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _strip_images(msg: Dict[str, Any]) -> Dict[str, Any]:
-        """Return a shallow copy of *msg* with all ``image_url`` blocks removed."""
-        msg = msg.copy()
-        content = msg.get("content")
-        if isinstance(content, list):
-            msg["content"] = [
-                item for item in content
-                if not (isinstance(item, dict) and item.get("type") == "image_url")
-            ]
-        return msg
-
-    @staticmethod
-    def _extract_data(input_string: str, data_type: str) -> str:
-        """Extract content from ````data_type … ```` fenced blocks."""
-        pattern = f"```{data_type}" + r"(.*?)(```|$)"
-        matches = re.findall(pattern, input_string, re.DOTALL)
-        return matches[0][0].strip() if matches else input_string
     
     def _calculate_cost(self, metadata: Dict[str, Any]) -> float:
         """Calculate cost based on provider and token usage.

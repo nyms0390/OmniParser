@@ -87,29 +87,25 @@ class AnthropicAgent(BaseAgent):
         prepared = [self._strip_images(msg) for msg in messages]
 
         screen_info_text = str(parsed_screen.get("parsed_content_list", []))
+        screen_desc = parsed_screen.get("screen_description", "")
+
+        context_parts = [
+            "Here is the list of detected UI elements on the current "
+            "screen:\n"
+            f"<screen_elements>\n{screen_info_text}\n</screen_elements>",
+        ]
+        if screen_desc:
+            context_parts.append(
+                f"\nCurrent screen summary (from previous observation):\n"
+                f"<screen_description>\n{screen_desc}\n</screen_description>"
+            )
 
         prepared.append({
             "role": "user",
-            "content": (
-                "Here is the list of detected UI elements on the current "
-                "screen:\n"
-                f"<screen_elements>\n{screen_info_text}\n</screen_elements>"
-            ),
+            "content": "\n".join(context_parts),
         })
 
         return prepared
-
-    @staticmethod
-    def _strip_images(msg: Dict[str, Any]) -> Dict[str, Any]:
-        """Return a shallow copy of *msg* with all ``image_url`` blocks removed."""
-        msg = msg.copy()
-        content = msg.get("content")
-        if isinstance(content, list):
-            msg["content"] = [
-                item for item in content
-                if not (isinstance(item, dict) and item.get("type") == "image_url")
-            ]
-        return msg
 
     def _parse_tool_calls(self, response_text: str) -> List[Dict[str, Any]]:
         """Parse tool calls from Claude response.

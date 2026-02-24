@@ -94,7 +94,8 @@ You are able to use a mouse and keyboard to interact with the computer based on 
 You may be given some history plan and actions, this is the response from the previous loop.
 You should carefully consider your plan based on the task, screenshot, and history actions.
 
-The current screen's detected UI elements (bounding boxes with IDs and descriptions) will be provided in a user message. Use them along with the screenshot to determine your next action.
+The current screen's detected UI elements (bounding boxes with IDs and descriptions) will be provided in a user message. \
+A high-level screen description from a previous observation may also be provided. Use both to determine your next action.
 
 Your available "Next Action" only include:
 - type: types a string of text.
@@ -170,7 +171,8 @@ Analyze the current screen state and use your tool_use capabilities to
 interact with the computer and accomplish the user's task.
 
 The current screen's detected UI elements will be provided in a user
-message.  Use them together with the screenshot for accurate targeting.
+message. A high-level screen description from a previous observation
+may also be included. Use them for accurate targeting.
 """
 
 
@@ -195,8 +197,13 @@ Recall we are working on the following request:
 
 {task}
 
+A screenshot of the current screen state is attached (if available). \
+If no screenshot is attached, state that the screen is unavailable in \
+your screen description.
+
 To make progress on the request, please answer the following questions, including necessary reasoning:
 
+    - Briefly describe the current screen state based on the attached screenshot. What application or page is visible? What key UI elements, text, or indicators do you see?
     - Is the request fully satisfied? (True if complete, or False if the original request has yet to be SUCCESSFULLY and FULLY addressed)
     - Are we in a loop where we are repeating the same requests and / or getting the same responses as before? Loops can span multiple turns, and can include repeated actions like scrolling up or down more than a handful of times.
     - Are we making forward progress? (True if just starting, or recent messages are adding value. False if recent messages show evidence of being stuck in a loop or if there is evidence of significant barriers to success such as the inability to read from a required file)
@@ -205,7 +212,8 @@ To make progress on the request, please answer the following questions, includin
 Please output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
 
     {{
-       "is_request_satisfied": {{
+        "screen_description": string,
+        "is_request_satisfied": {{
             "reason": string,
             "answer": boolean
         }},

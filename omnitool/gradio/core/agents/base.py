@@ -4,6 +4,7 @@ Provides common interface and shared functionality.
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -170,6 +171,29 @@ class BaseAgent(ABC):
         
         return results
     
+    # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _strip_images(msg: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a shallow copy of *msg* with all ``image_url`` blocks removed."""
+        msg = msg.copy()
+        content = msg.get("content")
+        if isinstance(content, list):
+            msg["content"] = [
+                item for item in content
+                if not (isinstance(item, dict) and item.get("type") == "image_url")
+            ]
+        return msg
+
+    @staticmethod
+    def _extract_data(input_string: str, data_type: str) -> str:
+        """Extract content from fenced code blocks (e.g. ````json ... ````)."""
+        pattern = f"```{data_type}" + r"(.*?)(```|$)"
+        matches = re.findall(pattern, input_string, re.DOTALL)
+        return matches[0][0].strip() if matches else input_string
+
     def reset(self):
         """Reset agent state for new execution."""
         self.step_count = 0

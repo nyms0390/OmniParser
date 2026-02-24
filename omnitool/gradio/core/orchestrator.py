@@ -56,6 +56,7 @@ class SamplingOrchestrator:
         azure_endpoint: Optional[str] = None,
         mode: AgentMode = AgentMode.INTERACTIVE,
         platform: str = "windows",
+        context_n: int = 15,
     ):
         self.model_name = model_name
         self.state = state
@@ -67,6 +68,7 @@ class SamplingOrchestrator:
         self.azure_endpoint = azure_endpoint
         self.mode = mode
         self.platform = platform
+        self.context_n = context_n
         
         # Create agent
         save_folder = state.session.run_folder / "execution"
@@ -83,6 +85,7 @@ class SamplingOrchestrator:
         # Orchestration state
         self.plan_text: Optional[str] = None
         self.ledger: Optional[str] = None
+        self.screen_description: Optional[str] = None
         self.trajectory: List[Dict[str, Any]] = []
         self.step_count = 0
         self._task: Optional[str] = None  # user task for plan/ledger prompts
@@ -172,7 +175,7 @@ class SamplingOrchestrator:
         tokens = metadata.get('tokens', 0)
         self.agent.update_token_usage(tokens)
         
-        plan = self.agent._extract_data(response_text, "json") if hasattr(self.agent, '_extract_data') else response_text
+        plan = self.agent._extract_data(response_text, "json")
         
         # Save plan
         plan_path = self.agent.save_folder / "plan.json"
@@ -227,7 +230,7 @@ class SamplingOrchestrator:
         tokens = metadata.get('tokens', 0)
         self.agent.update_token_usage(tokens)
 
-        ledger = self.agent._extract_data(response_text, "json") if hasattr(self.agent, '_extract_data') else response_text
+        ledger = self.agent._extract_data(response_text, "json")
         return ledger
 
     # ------------------------------------------------------------------
@@ -243,6 +246,7 @@ class SamplingOrchestrator:
             "step": self.step_count,
             "timestamp": datetime.now().isoformat(),
             "screen_info": str(parsed_screen.get("parsed_content_list", [])),
+            "screen_description": self.screen_description,
             "agent_response": plan_response.get("response_text", ""),
             "tool_calls": plan_response.get("tool_calls", []),
             "tokens": plan_response.get("metadata", {}).get("tokens"),
@@ -288,6 +292,16 @@ class SamplingOrchestrator:
             # Build system prompt once (it's static per run)
             system_prompt = self._get_system_prompt()
             
+            # --------------------------------------------------
+            # ORCHESTRATED: one-time plan initialization
+            # --------------------------------------------------
+            if self.mode == AgentMode.ORCHESTRATED:
+                yield {"type": "status", "message": "Generating plan..."}
+                self.plan_text = self._initialize_plan(self.state.chat.messages)
+                
+                self.state.chat.add_message("assistant", self.plan_text)
+                yield {"type": "plan", "plan_text": self.plan_text}
+            
             # Main loop
             while self.step_count < self.max_steps:
                 self.step_count += 1
@@ -295,41 +309,55 @@ class SamplingOrchestrator:
                 yield {"type": "step", "step_num": self.step_count}
                 
                 # --------------------------------------------------
-                # ORCHESTRATED: plan on step 1, ledger on step 2+
+                # OBSERVE: capture screen (always first in loop)
+                # Skip on step 1 — reuse initial capture above.
+                # --------------------------------------------------
+                if self.step_count > 1:
+                    yield {"type": "status", "message": "Capturing screen..."}
+                    parsed_screen = self._capture_screen()
+                    
+                    yield {
+                        "type": "parsed_screen",
+                        "som_image_base64": parsed_screen.get("som_image_base64", ""),
+                        "screen_info": str(parsed_screen.get("parsed_content_list", [])),
+                    }
+                
+                # --------------------------------------------------
+                # ORCHESTRATED: ledger reflection (step 2+)
                 # --------------------------------------------------
                 if self.mode == AgentMode.ORCHESTRATED:
-                    if self.step_count == 1:
-                        yield {"type": "status", "message": "Generating plan..."}
-                        self.plan_text = self._initialize_plan(self.state.chat.messages)
-                        
-                        self.state.chat.add_message("assistant", self.plan_text)
-                        yield {"type": "plan", "plan_text": self.plan_text}
-                    else:
-                        yield {"type": "status", "message": "Updating ledger..."}
-                        self.ledger = self._update_ledger(self.state.chat.messages, parsed_screen)
-                        
-                        self.state.chat.add_message("assistant", self.ledger)
-                        yield {"type": "ledger", "ledger_text": self.ledger}
-                        
-                        # Check if ledger says we're done or stuck
-                        try:
-                            ledger_json = json.loads(self.ledger)
-                            if ledger_json.get("is_request_satisfied", {}).get("answer"):
-                                yield {"type": "assistant_reply", "message": "Task completed (per ledger)."}
-                                break
-                            if ledger_json.get("is_in_loop", {}).get("answer"):
-                                yield {"type": "assistant_reply", "message": "Detected loop — stopping."}
-                                break
-                        except (json.JSONDecodeError, TypeError):
-                            pass  # Non-JSON ledger — continue anyway
+                    yield {"type": "status", "message": "Updating ledger..."}
+                    self.ledger = self._update_ledger(self.state.chat.messages, parsed_screen)
+                    
+                    self.state.chat.add_message("assistant", self.ledger)
+                    yield {"type": "ledger", "ledger_text": self.ledger}
+                    
+                    # Parse ledger results
+                    try:
+                        ledger_json = json.loads(self.ledger)
+                        self.screen_description = ledger_json.get("screen_description", "")
+                        if ledger_json.get("is_request_satisfied", {}).get("answer"):
+                            yield {"type": "assistant_reply", "message": "Task completed (per ledger)."}
+                            break
+                        if ledger_json.get("is_in_loop", {}).get("answer"):
+                            yield {"type": "assistant_reply", "message": "Detected loop — stopping."}
+                            break
+                    except (json.JSONDecodeError, TypeError):
+                        pass  # Non-JSON ledger — continue anyway
                 
                 # --------------------------------------------------
                 # PLAN: get agent response
                 # --------------------------------------------------
                 yield {"type": "status", "message": f"Step {self.step_count}: Planning..."}
+
+                # Enrich parsed_screen with ledger-derived screen description
+                plan_screen = dict(parsed_screen)
+                if self.screen_description:
+                    plan_screen["screen_description"] = self.screen_description
+
                 plan_response = self.agent.plan(
-                    messages=self.state.chat.messages,
-                    parsed_screen=parsed_screen,
+                    messages=self.state.chat.get_last_n_messages(self.context_n),
+                    parsed_screen=plan_screen,
                     system_prompt=system_prompt,
                 )
                 
@@ -396,18 +424,6 @@ class SamplingOrchestrator:
                         "error": tool_error,
                         "base64_image": tool_base64_image,
                     }
-                
-                # --------------------------------------------------
-                # OBSERVE: capture new screen
-                # --------------------------------------------------
-                yield {"type": "status", "message": "Capturing screen after action..."}
-                parsed_screen = self._capture_screen()
-                
-                yield {
-                    "type": "parsed_screen",
-                    "som_image_base64": parsed_screen.get("som_image_base64", ""),
-                    "screen_info": str(parsed_screen.get("parsed_content_list", [])),
-                }
                 
                 # Save trajectory (always, useful for debugging)
                 self._save_trajectory_step(parsed_screen, plan_response)
