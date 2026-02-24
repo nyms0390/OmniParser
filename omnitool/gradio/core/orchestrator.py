@@ -279,16 +279,6 @@ class SamplingOrchestrator:
         try:
             yield {"type": "status", "message": f"Starting execution with {self.model_name} ({self.mode.value} mode)..."}
             
-            # Initial screen capture
-            yield {"type": "status", "message": "Capturing initial screen..."}
-            parsed_screen = self._capture_screen()
-            
-            yield {
-                "type": "parsed_screen",
-                "som_image_base64": parsed_screen.get("som_image_base64", ""),
-                "screen_info": str(parsed_screen.get("parsed_content_list", [])),
-            }
-            
             # Build system prompt once (it's static per run)
             system_prompt = self._get_system_prompt()
             
@@ -309,18 +299,16 @@ class SamplingOrchestrator:
                 yield {"type": "step", "step_num": self.step_count}
                 
                 # --------------------------------------------------
-                # OBSERVE: capture screen (always first in loop)
-                # Skip on step 1 — reuse initial capture above.
+                # OBSERVE: capture screen and parse with OmniParser
                 # --------------------------------------------------
-                if self.step_count > 1:
-                    yield {"type": "status", "message": "Capturing screen..."}
-                    parsed_screen = self._capture_screen()
-                    
-                    yield {
-                        "type": "parsed_screen",
-                        "som_image_base64": parsed_screen.get("som_image_base64", ""),
-                        "screen_info": str(parsed_screen.get("parsed_content_list", [])),
-                    }
+                yield {"type": "status", "message": "Capturing screen..."}
+                parsed_screen = self._capture_screen()
+                
+                yield {
+                    "type": "parsed_screen",
+                    "som_image_base64": parsed_screen.get("som_image_base64", ""),
+                    "screen_info": str(parsed_screen.get("parsed_content_list", [])),
+                }
                 
                 # --------------------------------------------------
                 # ORCHESTRATED: ledger reflection (step 2+)
