@@ -4,6 +4,7 @@ Application settings loader with priority: CLI args > YAML config > environment 
 
 import argparse
 import os
+import yaml
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional

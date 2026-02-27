@@ -11,8 +11,7 @@ Usage:
 import argparse
 import base64
 import io
-import logging
-from typing import Any, Dict, Tuple
+from typing import Tuple
 
 import gradio as gr
 import requests
@@ -189,7 +188,7 @@ def check_server_health(base_url: str) -> bool:
     except requests.exceptions.ConnectionError as e:
         logger.error(f"[ERROR] Cannot connect to OmniParser server at {base_url}")
         logger.error(f"   Error: {str(e)}")
-        logger.error(f"   Make sure server is running: python -m omniparserserver")
+        logger.error("   Make sure server is running: python -m omniparserserver")
         return False
         
     except requests.exceptions.Timeout:

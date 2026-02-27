@@ -155,6 +155,7 @@ IMPORTANT NOTES:
 6. The tasks involve buying multiple products or navigating through multiple pages. You should break it into subgoals and complete each subgoal one by one in the order of the instructions.
 7. Avoid choosing the same action/elements multiple times in a row, if it happens, reflect to yourself, what may have gone wrong, and predict a different action.
 8. If you are prompted with login information page or captcha page, or you think it need user's permission to do the next action, you should say "Next Action": "None" in the json field.
+9. To open applications from desktop icons or files/folders in file explorer, always use "double_click" instead of "left_click". A single click on a desktop icon only selects it without launching the application. Use "left_click" for buttons, links, menu items, and other interactive UI elements inside applications.
 """
 
 
@@ -201,13 +202,16 @@ A screenshot of the current screen state is attached (if available). \
 If no screenshot is attached, state that the screen is unavailable in \
 your screen description.
 
+Here is a summary of the most recent actions taken:
+{recent_actions}
+
 To make progress on the request, please answer the following questions, including necessary reasoning:
 
     - Briefly describe the current screen state based on the attached screenshot. What application or page is visible? What key UI elements, text, or indicators do you see?
     - Is the request fully satisfied? (True if complete, or False if the original request has yet to be SUCCESSFULLY and FULLY addressed)
-    - Are we in a loop where we are repeating the same requests and / or getting the same responses as before? Loops can span multiple turns, and can include repeated actions like scrolling up or down more than a handful of times.
+    - Are we in a loop where we are repeating the same requests and / or getting the same responses as before? Carefully examine the recent action history above. A loop includes repeating the SAME action on the SAME element multiple times.
     - Are we making forward progress? (True if just starting, or recent messages are adding value. False if recent messages show evidence of being stuck in a loop or if there is evidence of significant barriers to success such as the inability to read from a required file)
-    - What instruction or question would you give in order to complete the task?
+    - What instruction or question would you give in order to complete the task? If stuck, suggest a DIFFERENT action type or target.
 
 Please output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
 

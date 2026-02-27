@@ -2,7 +2,6 @@
 Model configuration registry mapping model names to agent types, LLM clients, and pricing.
 """
 
-from enum import StrEnum
 from typing import Any, Dict
 
 from omnitool.gradio.config.enums import APIProvider

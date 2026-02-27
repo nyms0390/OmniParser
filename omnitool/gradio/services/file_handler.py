@@ -215,9 +215,9 @@ class FileHandler:
                     html_parts.append(f"<p>PDF files cannot be displayed inline. Download to view: {name}</p>")
             
             elif category == "video":
-                html_parts.append(f'<video width="320" height="240" controls>')
+                html_parts.append('<video width="320" height="240" controls>')
                 html_parts.append(f'  <source src="file://{file_path}">')
-                html_parts.append(f'</video>')
+                html_parts.append('</video>')
             
             else:
                 html_parts.append(f"<p>Cannot preview file type: {category}</p>")

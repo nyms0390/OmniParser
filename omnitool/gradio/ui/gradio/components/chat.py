@@ -2,7 +2,7 @@
 Gradio UI components for chat interface.
 """
 
-from typing import Callable, List, Optional, Tuple
+from typing import Optional, Tuple
 
 
 def format_message_for_display(role: str, content: str) -> Tuple[Optional[str], Optional[str]]:

@@ -106,7 +106,7 @@ class BaseServiceClient(ABC):
             logger.error(f"Cannot connect to service at {url}: {str(e)}")
             raise Exception(f"Cannot connect to service: {url}")
         
-        except requests.exceptions.HTTPError as e:
+        except requests.exceptions.HTTPError:
             logger.error(f"HTTP error from {url}: {response.status_code} {response.text}")
             raise Exception(f"Service returned error {response.status_code}: {response.text}")
         

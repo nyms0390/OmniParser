@@ -90,8 +90,8 @@ class GroqClient(BaseLLMClient):
         generation_params = {
             "model": self.model,
             "messages": prepared_messages,
-            "temperature": kwargs.get("temperature", self.kwargs.get("temperature", 0.6)),
-            "max_tokens": kwargs.get("max_tokens", self.kwargs.get("max_tokens", 4096)),
+            "temperature": kwargs.get("temperature", self.kwargs.get("temperature")),
+            "max_tokens": kwargs.get("max_tokens", self.kwargs.get("max_tokens")),
         }
         
         # Remove None values

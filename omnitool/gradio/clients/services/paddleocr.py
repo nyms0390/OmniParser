@@ -2,9 +2,8 @@
 PaddleOCR GPU API client for remote text recognition.
 """
 
-from typing import List, Tuple, Optional, Any, Dict
+from typing import Any, Dict
 import logging
-import requests
 
 from .base import BaseServiceClient
 

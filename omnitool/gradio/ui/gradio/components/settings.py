@@ -2,7 +2,7 @@
 Settings UI components.
 """
 
-from typing import Callable, List
+from typing import List
 
 from omnitool.gradio.config import MODEL_CONFIG, get_all_model_names
 

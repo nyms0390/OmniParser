@@ -4,8 +4,6 @@ import ast
 import base64
 from io import BytesIO
 from PIL import Image
-from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
-
 import openai
 from openai import BadRequestError
 
@@ -20,8 +18,6 @@ def convert_pil_image_to_base64(image):
 
 from util.utils import get_som_labeled_img, check_ocr_box, get_caption_model_processor, get_yolo_model
 import torch
-from ultralytics import YOLO
-from PIL import Image
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 SOM_MODEL_PATH='...'
 CAPTION_MODEL_PATH='...'
@@ -31,7 +27,6 @@ som_model.to(device)
 print('model to {}'.format(device))
 
 # two choices for caption model: fine-tuned blip2 or florence2
-import importlib
 caption_model_processor = get_caption_model_processor(model_name="florence2", model_name_or_path="CAPTION_MODEL_PATH", device=device)
 
 def omniparser_parse(image, image_path):
@@ -77,8 +72,6 @@ Example 2: Task instruction: Search on google. \n{"Analysis": "Based on the scre
 
 
 
-from azure.identity import AzureCliCredential, DefaultAzureCredential, get_bearer_token_provider
-from openai import AzureOpenAI
 from util.utils import get_pred_phi3v, extract_dict_from_text, get_phi3v_model_dict
 
 class GPT4XModel():

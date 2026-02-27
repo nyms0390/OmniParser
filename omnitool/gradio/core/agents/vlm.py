@@ -8,11 +8,14 @@ using OmniParser bounding boxes.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from omnitool.gradio.clients.base import BaseLLMClient
 from omnitool.gradio.config import get_model_config
 from omnitool.gradio.services.state import AppState
+
+if TYPE_CHECKING:
+    from omnitool.gradio.core.tools import ToolCollection
 
 from .base import BaseAgent
 

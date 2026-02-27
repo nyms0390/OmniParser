@@ -8,7 +8,7 @@ Windows host server via WindowsHostClient.
 import logging
 import re
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 from omnitool.gradio.clients.services.windows_host import WindowsHostClient
 

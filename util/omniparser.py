@@ -18,7 +18,7 @@ from PIL import Image
 import torch
 
 from util.model_services import YOLOModelService, CaptionModelService
-from util.services import get_ocr_service, OCRServiceManager
+from util.services import get_ocr_service
 from util.pipeline import OmniParserPipeline
 
 logger = logging.getLogger(__name__)

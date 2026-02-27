@@ -63,7 +63,6 @@ class AnthropicClient(BaseLLMClient):
         """Initialize AWS Bedrock client."""
         try:
             from anthropic import BedrockConverse
-            import os
             
             # Bedrock uses AWS credentials from environment or explicit args
             self.client = BedrockConverse(

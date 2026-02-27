@@ -8,8 +8,7 @@ on ML models, OCR, or global state. They focus on:
 - Overlap/IoU calculations
 """
 
-from typing import List, Tuple, Union
-import torch
+from typing import List, Tuple
 
 
 def get_xywh(input: Tuple) -> Tuple[int, int, int, int]:

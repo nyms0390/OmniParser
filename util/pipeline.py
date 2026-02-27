@@ -14,7 +14,7 @@ import io
 import base64
 import time
 import logging
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 from PIL import Image
 import numpy as np
 import torch
@@ -24,7 +24,7 @@ from util.utils import (
     predict_yolo, get_parsed_content_icon, get_parsed_content_icon_phi3v,
     annotate, int_box_area, remove_overlap
 )
-from util.pure_utilities import box_area
+
 
 logger = logging.getLogger(__name__)
 

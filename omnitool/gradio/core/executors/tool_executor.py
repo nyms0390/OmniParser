@@ -6,8 +6,6 @@ import asyncio
 import logging
 from typing import Any, Dict, List
 
-from omnitool.gradio.core.tools import ToolCollection
-
 from .base import BaseExecutor
 
 logger = logging.getLogger(__name__)

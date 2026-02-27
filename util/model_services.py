@@ -5,7 +5,7 @@ This module encapsulates model initialization and caching,
 reducing initialization overhead and centralizing model management.
 """
 
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 import logging
 import torch
 

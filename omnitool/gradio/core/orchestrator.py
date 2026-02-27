@@ -13,7 +13,6 @@ import json
 import logging
 from datetime import datetime
 from io import BytesIO
-from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 
 from PIL import Image
@@ -28,7 +27,7 @@ from omnitool.gradio.config import (
 )
 from omnitool.gradio.services import AppState
 
-from .agents import BaseAgent, create_agent
+from .agents import create_agent
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +203,11 @@ class SamplingOrchestrator:
         Returns:
             Ledger JSON string.
         """
-        ledger_prompt = ORCHESTRATOR_LEDGER_PROMPT.format(task=self._task or "")
+        recent_actions_text = self._format_recent_actions()
+        ledger_prompt = ORCHESTRATOR_LEDGER_PROMPT.format(
+            task=self._task or "",
+            recent_actions=recent_actions_text,
+        )
         ledger_messages = copy.deepcopy(messages)
 
         # Build the ledger user message — text + optional SOM image
@@ -232,6 +235,60 @@ class SamplingOrchestrator:
 
         ledger = self.agent._extract_data(response_text, "json")
         return ledger
+
+    # ------------------------------------------------------------------
+    # Loop detection (derived from self.trajectory)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_primary_action(tool_calls: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Extract the primary action and coordinate from a step's tool_calls.
+
+        ``mouse_move`` is treated as a targeting call, not the primary action.
+        """
+        primary_action = None
+        coordinate = None
+        for tc in tool_calls:
+            if tc.get("action") == "mouse_move":
+                coordinate = tc.get("coordinate")
+            else:
+                primary_action = tc.get("action")
+        return {"action": primary_action, "coordinate": coordinate}
+
+    def _format_recent_actions(self, n: int = 5) -> str:
+        """Format the last *n* trajectory entries as a readable summary."""
+        if not self.trajectory:
+            return "(no actions taken yet)"
+        recent = self.trajectory[-n:]
+        lines = []
+        for entry in recent:
+            info = self._extract_primary_action(entry.get("tool_calls", []))
+            coord_str = (
+                f" at coordinate {info['coordinate']}"
+                if info.get("coordinate") else ""
+            )
+            lines.append(
+                f"  Step {entry['step']}: {info['action'] or 'unknown'}{coord_str}"
+            )
+        return "\n".join(lines)
+
+    def _detect_repeated_actions(self, threshold: int = 3) -> bool:
+        """Return *True* if the last *threshold* trajectory entries share
+        the same primary action on the same target (within 50 px)."""
+        if len(self.trajectory) < threshold:
+            return False
+        recent = self.trajectory[-threshold:]
+        infos = [self._extract_primary_action(e.get("tool_calls", [])) for e in recent]
+        actions = [i["action"] for i in infos]
+        if len(set(actions)) != 1:
+            return False
+        coords = [i["coordinate"] for i in infos if i.get("coordinate")]
+        if len(coords) == threshold:
+            ref = coords[0]
+            for c in coords[1:]:
+                if abs(c[0] - ref[0]) > 50 or abs(c[1] - ref[1]) > 50:
+                    return False
+        return True
 
     # ------------------------------------------------------------------
     # Trajectory saving
@@ -328,8 +385,18 @@ class SamplingOrchestrator:
                             yield {"type": "assistant_reply", "message": "Task completed (per ledger)."}
                             break
                         if ledger_json.get("is_in_loop", {}).get("answer"):
-                            yield {"type": "assistant_reply", "message": "Detected loop — stopping."}
-                            break
+                            loop_reason = ledger_json["is_in_loop"].get("reason", "")
+                            suggestion = ledger_json.get("instruction_or_question", {}).get("answer", "")
+                            corrective_hint = (
+                                f"LOOP DETECTED: {loop_reason} "
+                                f"You MUST try a different action or target. "
+                            )
+                            if suggestion:
+                                corrective_hint += f"Suggested next step: {suggestion}"
+                            self.state.chat.add_message("system", corrective_hint)
+                            yield {"type": "status", "message": f"Loop detected — injecting corrective hint: {suggestion or loop_reason}"}
+                            logger.warning(f"Ledger detected loop: {loop_reason}")
+                            # Fall through to PLAN so the agent can try a different action
                     except (json.JSONDecodeError, TypeError):
                         pass  # Non-JSON ledger — continue anyway
                 
@@ -415,6 +482,14 @@ class SamplingOrchestrator:
                 
                 # Save trajectory (always, useful for debugging)
                 self._save_trajectory_step(parsed_screen, plan_response)
+
+                # Programmatic repeated-action detection
+                if self._detect_repeated_actions(threshold=5):
+                    yield {
+                        "type": "assistant_reply",
+                        "message": "Stopping — repeated identical action detected with no progress.",
+                    }
+                    break
                 
                 yield {
                     "type": "progress",

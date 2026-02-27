@@ -10,40 +10,28 @@ Note: This module delegates model loading to model_services.py
 and OCR operations to services.py for cleaner separation of concerns.
 """
 
-import os
 import io
 import base64
 import time
-from PIL import Image, ImageDraw, ImageFont
-import json
-import requests
-from openai import AzureOpenAI
-
-import sys
+from PIL import Image
 import cv2
 import numpy as np
 from matplotlib import pyplot as plt
 
-import ast
 import torch
 from typing import Tuple, List, Union
 from torchvision.ops import box_convert
-import re
 from torchvision.transforms import ToPILImage
 import supervision as sv
 import torchvision.transforms as T
 
 # Import services for model and OCR management
-from util.model_services import CaptionModelService, YOLOModelService, ModelCache
+from util.model_services import CaptionModelService, YOLOModelService
 from util.services import get_ocr_service
 
 # Import pure utility functions from dedicated module
 from util.box_annotator import BoxAnnotator
-from util.pure_utilities import (
-    get_xywh, get_xyxy, get_xywh_yolo, int_box_area,
-    box_area, intersection_area, iou, is_inside,
-    remove_overlap
-)
+from util.pure_utilities import remove_overlap
 
 
 def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2-opt-2.7b", device=None):
@@ -110,9 +98,7 @@ def get_parsed_content_icon(filtered_boxes, starting_idx, image_source, caption_
     generated_texts = []
     device = model.device
     for i in range(0, len(croped_pil_image), batch_size):
-        start = time.time()
         batch = croped_pil_image[i:i+batch_size]
-        t1 = time.time()
         if model.device.type == 'cuda':
             inputs = processor(images=batch, text=[prompt]*len(batch), return_tensors="pt", do_resize=False).to(device=device, dtype=torch.float16)
         else:
@@ -334,10 +320,8 @@ def get_som_labeled_img(image_source: Union[str, Image.Image], model=None, BOX_T
                 box['content'] = parsed_content_icon.pop(0)
         for i, txt in enumerate(parsed_content_icon):
             parsed_content_icon_ls.append(f"Icon Box ID {str(i+icon_start)}: {txt}")
-        parsed_content_merged = ocr_text + parsed_content_icon_ls
     else:
         ocr_text = [f"Text Box ID {i}: {txt}" for i, txt in enumerate(ocr_text)]
-        parsed_content_merged = ocr_text
     print('time to get parsed content:', time.time()-time1)
 
     filtered_boxes = box_convert(boxes=filtered_boxes, in_fmt="xyxy", out_fmt="cxcywh")

@@ -22,7 +22,7 @@ import base64
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Generator, Optional, Tuple
+from typing import Generator, Tuple
 
 import gradio as gr
 from PIL import Image
@@ -31,30 +31,23 @@ from omnitool.gradio.clients import OmniParserClient, PaddleOCRClient, WindowsHo
 from omnitool.gradio.clients.services import ServiceValidator
 from omnitool.gradio.config import (
     AgentMode,
-    APIProvider,
     create_argument_parser,
-    get_all_model_names,
-    get_model_config,
     get_settings,
     setup_logging,
 )
 from omnitool.gradio.core import (
     SamplingOrchestrator,
     ToolCollection,
-    get_available_agents,
 )
 from omnitool.gradio.services import AppState, FileHandler, validate_api_key
 from omnitool.gradio.ui.gradio.components import (
-    create_settings_panel,
     format_action_result,
     format_ledger,
-    format_message_for_display,
     format_parsed_screen,
     format_plan,
     format_thinking,
     get_model_choices,
     get_provider_options_for_model,
-    render_file_viewer,
 )
 
 logger = logging.getLogger(__name__)
@@ -169,7 +162,7 @@ class GradioApp:
                     interactive=False,
                     lines=3,
                 )
-                progress_bar = gr.Progress()
+                gr.Progress()  # reserved for future progress tracking
             
             # Wire up interactions
             submit_button.click(
@@ -501,7 +494,7 @@ def main():
     
     # Setup logging (BEFORE loading settings)
     log_file = args.log_file or "omniparser_app.log"
-    logger = setup_logging("omniparser_app", level=args.log_level, log_file=log_file)
+    setup_logging("omniparser_app", level=args.log_level, log_file=log_file)
     
     # Load settings
     settings = get_settings(args)

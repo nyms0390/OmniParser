@@ -3,9 +3,8 @@ State management for OmniParser Gradio application.
 Manages session lifecycle, chat state, authentication, file state, and configuration state.
 """
 
-import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path

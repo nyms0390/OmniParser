@@ -5,7 +5,7 @@ Agent factory for creating agents from model configuration.
 from pathlib import Path
 from typing import Optional
 
-from omnitool.gradio.clients import BaseLLMClient, get_llm_client, get_llm_client_for_model
+from omnitool.gradio.clients import BaseLLMClient, get_llm_client
 from omnitool.gradio.config import MODEL_CONFIG, get_model_config
 from omnitool.gradio.services import AppState, get_api_key, AuthProvider
 
@@ -125,7 +125,16 @@ def _create_llm_client(
     """
     internal_name = config.get('internal_name')
     base_url = config.get('provider_base_url')
-    
+
+    # Pull per-model generation defaults from the model config so they flow
+    # into the client's self.kwargs and act as the second-priority fallback
+    # (after per-call overrides, before hard-coded constants).
+    generation_kwargs = {}
+    if 'temperature' in config:
+        generation_kwargs['temperature'] = config['temperature']
+    if 'max_tokens' in config:
+        generation_kwargs['max_tokens'] = config['max_tokens']
+
     # Create client based on provider/type
     if llm_client_name == 'openai' or provider in ['openai', 'dashscope', 'azure']:
         # For Azure, pass the endpoint
@@ -133,21 +142,23 @@ def _create_llm_client(
             'provider': provider,
             'model': internal_name,
             'api_key': api_key,
+            **generation_kwargs,
         }
         if base_url:
             kwargs['base_url'] = base_url
         if provider == 'azure' and azure_endpoint:
             kwargs['azure_endpoint'] = azure_endpoint
-            
+
         return get_llm_client(**kwargs)
-    
+
     elif llm_client_name == 'groq':
         return get_llm_client(
             provider='groq',
             model=internal_name,
             api_key=api_key,
+            **generation_kwargs,
         )
-    
+
     elif llm_client_name == 'anthropic':
         # Check if we should use bedrock/vertex instead
         if provider == 'bedrock':
@@ -155,20 +166,23 @@ def _create_llm_client(
                 provider='bedrock',
                 model=internal_name,
                 api_key=api_key,
+                **generation_kwargs,
             )
         elif provider == 'vertex':
             return get_llm_client(
                 provider='vertex',
                 model=internal_name,
                 api_key=api_key,
+                **generation_kwargs,
             )
         else:
             return get_llm_client(
                 provider='anthropic',
                 model=internal_name,
                 api_key=api_key,
+                **generation_kwargs,
             )
-    
+
     else:
         raise ValueError(f"Unknown LLM client: {llm_client_name}")
 

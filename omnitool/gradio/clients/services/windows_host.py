@@ -104,7 +104,7 @@ class WindowsHostClient(BaseServiceClient):
         
         except requests.exceptions.Timeout:
             logger.error(f"Screenshot request timed out after {self.timeout}s")
-            raise Exception(f"Windows host screenshot request timed out")
+            raise Exception("Windows host screenshot request timed out")
         except requests.exceptions.ConnectionError as e:
             logger.error(f"Cannot connect to Windows host: {str(e)}")
             raise Exception(f"Cannot connect to Windows host at {self.base_url}")
@@ -159,7 +159,7 @@ class WindowsHostClient(BaseServiceClient):
             if execution_delay > 0:
                 time.sleep(execution_delay)
             
-            logger.debug(f"Command executed successfully")
+            logger.debug("Command executed successfully")
             
             # Parse output if requested
             if parse_output and "output" in response:
@@ -168,7 +168,7 @@ class WindowsHostClient(BaseServiceClient):
                     parsed = ast.literal_eval(response["output"].strip())
                     logger.debug(f"Parsed output: {parsed}")
                     return parsed
-                except (ValueError, SyntaxError) as e:
+                except (ValueError, SyntaxError):
                     logger.warning(f"Failed to parse output: {response['output']}")
                     return response["output"]
             

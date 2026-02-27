@@ -3,7 +3,6 @@ File viewer UI components.
 """
 
 from pathlib import Path
-from typing import Optional
 
 from omnitool.gradio.services import FileHandler
 

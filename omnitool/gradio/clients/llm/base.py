@@ -6,7 +6,7 @@ import base64
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 
 class BaseLLMClient(ABC):
@@ -84,72 +84,6 @@ class BaseLLMClient(ABC):
             "model": self.model,
             "provider": self.__class__.__name__,
         }
-    
-    def _generate_openai_compatible(
-        self,
-        messages: List[Dict[str, Any]],
-        system_prompt: str = "",
-        provider_name: str = "openai",
-        **kwargs
-    ) -> Tuple[str, Dict[str, Any]]:
-        """Template method for OpenAI-compatible API clients.
-        
-        This is a reusable pattern for clients that use the OpenAI chat.completions API.
-        Handles message preparation, parameter building, API calls, and response parsing.
-        
-        Args:
-            messages: Conversation messages
-            system_prompt: System prompt
-            provider_name: Provider name for metadata (e.g., 'openai', 'azure', 'groq')
-            **kwargs: Generation parameters (temperature, max_tokens, etc)
-            
-        Returns:
-            (response_text, metadata)
-            
-        Raises:
-            Exception: If API call fails
-        """
-        # Prepare messages
-        prepared_messages = self._process_messages(messages)
-        
-        # Add system prompt if provided
-        if system_prompt:
-            prepared_messages.insert(0, {
-                "role": "system",
-                "content": system_prompt
-            })
-        
-        # Prepare generation parameters
-        generation_params = {
-            "model": self.model,
-            "messages": prepared_messages,
-            "temperature": kwargs.get("temperature", self.kwargs.get("temperature", 0.0)),
-            "max_tokens": kwargs.get("max_tokens", self.kwargs.get("max_tokens", 4096)),
-        }
-        
-        # Remove None values
-        generation_params = {k: v for k, v in generation_params.items() if v is not None}
-        
-        try:
-            # Call API
-            response = self.client.chat.completions.create(**generation_params)
-            
-            # Extract response
-            response_text = response.choices[0].message.content
-            
-            # Prepare metadata
-            metadata = {
-                "tokens": response.usage.total_tokens,
-                "input_tokens": response.usage.prompt_tokens,
-                "output_tokens": response.usage.completion_tokens,
-                "model": self.model,
-                "provider": provider_name,
-            }
-            
-            return response_text, metadata
-        
-        except Exception as e:
-            raise Exception(f"{provider_name.capitalize()} API call failed: {str(e)}")
     
     @staticmethod
     def _encode_image(image_path: str) -> str:
