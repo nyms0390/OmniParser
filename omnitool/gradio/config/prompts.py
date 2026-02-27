@@ -181,22 +181,33 @@ may also be included. Use them for accurate targeting.
 # Orchestrated-mode prompts
 # ---------------------------------------------------------------------------
 
-ORCHESTRATOR_PLAN_PROMPT = """\
-Please devise a short bullet-point plan for addressing the original user task: {task}
-You should write your plan in a json dict, e.g:
+PLAN_PROMPT = """\
+Please devise a step-by-step plan for the following task: {task}
+
+Output a JSON array where each element describes one step and how to verify it. Example:
 ```json
-{{
-"step 1": "xxx",
-"step 2": "xxxx"
-}}
+[
+  {{
+    "id": 1,
+    "step": "Open the browser and navigate to the target website",
+    "verification_hint": "Browser is open and the URL bar shows the target domain"
+  }},
+  {{
+    "id": 2,
+    "step": "Click the Login button",
+    "verification_hint": "A login form or dialog is visible on screen"
+  }}
+]
 ```
-Now start your answer directly.\
+Keep steps concise and actionable. Output only valid JSON. Start directly.\
 """
 
-ORCHESTRATOR_LEDGER_PROMPT = """\
+REFLECT_PROMPT = """\
 Recall we are working on the following request:
 
 {task}
+
+{checklist_section}
 
 A screenshot of the current screen state is attached (if available). \
 If no screenshot is attached, state that the screen is unavailable in \
@@ -212,6 +223,7 @@ To make progress on the request, please answer the following questions, includin
     - Are we in a loop where we are repeating the same requests and / or getting the same responses as before? Carefully examine the recent action history above. A loop includes repeating the SAME action on the SAME element multiple times.
     - Are we making forward progress? (True if just starting, or recent messages are adding value. False if recent messages show evidence of being stuck in a loop or if there is evidence of significant barriers to success such as the inability to read from a required file)
     - What instruction or question would you give in order to complete the task? If stuck, suggest a DIFFERENT action type or target.
+    - For each checklist item, update its status to reflect current progress (use "done", "in_progress", "pending", or "skipped").
 
 Please output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
 
@@ -232,8 +244,34 @@ Please output an answer in pure JSON format according to the following schema. T
         "instruction_or_question": {{
             "reason": string,
             "answer": string
-        }}
+        }},
+        "checklist_updates": [
+            {{"id": integer, "status": "done" | "in_progress" | "pending" | "skipped"}}
+        ]
     }}
+"""
+
+
+
+TASK_PARSE_PROMPT = """\
+The user has provided the following task description or checklist:
+
+{user_text}
+
+Convert it into a structured JSON array of steps, each with a verification hint that \
+describes how to confirm the step is complete. Example format:
+
+```json
+[
+  {{
+    "id": 1,
+    "step": "Concise description of what to do",
+    "verification_hint": "What you would see/check to confirm this step is done"
+  }}
+]
+```
+
+Keep each step concise and actionable. Output only valid JSON. Start directly.\
 """
 
 

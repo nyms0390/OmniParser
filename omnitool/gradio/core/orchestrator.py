@@ -20,11 +20,13 @@ from PIL import Image
 from omnitool.gradio.clients.services.omniparser import OmniParserClient
 from omnitool.gradio.config import (
     AgentMode,
-    ORCHESTRATOR_LEDGER_PROMPT,
-    ORCHESTRATOR_PLAN_PROMPT,
+    PLAN_PROMPT,
+    REFLECT_PROMPT,
+    TASK_PARSE_PROMPT,
     build_anthropic_system_prompt,
     build_vlm_system_prompt,
 )
+from omnitool.gradio.core.checklist import Checklist
 from omnitool.gradio.services import AppState
 
 from .agents import create_agent
@@ -88,6 +90,8 @@ class SamplingOrchestrator:
         self.trajectory: List[Dict[str, Any]] = []
         self.step_count = 0
         self._task: Optional[str] = None  # user task for plan/ledger prompts
+        self.checklist: Optional[Checklist] = None
+        self._initial_screen: Optional[Dict[str, Any]] = None
     
     # ------------------------------------------------------------------
     # System prompt
@@ -155,71 +159,111 @@ class SamplingOrchestrator:
     # Orchestrated-mode helpers
     # ------------------------------------------------------------------
 
-    def _initialize_plan(self, messages: List[Dict[str, Any]]) -> str:
-        """Generate an initial plan via an extra LLM call (step 0).
-        
+    def _parse_checklist(self, raw_json: str) -> Checklist:
+        """Construct a :class:`Checklist` from an LLM JSON string."""
+        return Checklist.from_llm_json(raw_json)
+
+    def _generate_plan(self, messages: List[Dict[str, Any]]) -> Checklist:
+        """Generate an initial plan via an extra LLM call (ORCHESTRATED init).
+
         Returns:
-            Plan text (JSON string).
+            :class:`Checklist` parsed from the LLM response.
         """
         self._task = messages[0]["content"] if messages else ""
-        plan_prompt = ORCHESTRATOR_PLAN_PROMPT.format(task=self._task)
-        
+        plan_prompt = PLAN_PROMPT.format(task=self._task)
+
         plan_messages = copy.deepcopy(messages)
         plan_messages.append({"role": "user", "content": plan_prompt})
-        
+
         response_text, metadata = self.agent.llm_client.generate(
             messages=plan_messages,
             system_prompt="",
         )
         tokens = metadata.get('tokens', 0)
         self.agent.update_token_usage(tokens)
-        
-        plan = self.agent._extract_data(response_text, "json")
-        
-        # Save plan
+
+        raw_plan = self.agent._extract_data(response_text, "json")
+        checklist = self._parse_checklist(raw_plan)
+
+        # Persist the raw plan JSON for debugging
         plan_path = self.agent.save_folder / "plan.json"
         try:
-            plan_path.write_text(plan)
+            plan_path.write_text(json.dumps(checklist.to_dict(), indent=2))
         except Exception as exc:
             logger.warning("Failed to save plan: %s", exc)
-        
-        return plan
 
-    def _update_ledger(
+        return checklist
+
+    def _load_task_checklist(self, messages: List[Dict[str, Any]]) -> Checklist:
+        """Build a :class:`Checklist` from the user's task message (TASK init).
+
+        Tries structured regex parsing first.  If the text appears to be
+        free-form prose (single-item result on multi-line input), falls back to
+        an LLM call using :data:`TASK_PARSE_PROMPT`.
+
+        Returns:
+            :class:`Checklist`.
+        """
+        self._task = messages[0]["content"] if messages else ""
+        checklist = Checklist.from_user_text(self._task)
+
+        # Fallback: multi-line text that parsed to a single item → ask LLM
+        raw_lines = [ln for ln in self._task.splitlines() if ln.strip()]
+        if len(checklist.items) == 1 and len(raw_lines) > 2:
+            parse_prompt = TASK_PARSE_PROMPT.format(user_text=self._task)
+            parse_messages = copy.deepcopy(messages)
+            parse_messages.append({"role": "user", "content": parse_prompt})
+            try:
+                response_text, metadata = self.agent.llm_client.generate(
+                    messages=parse_messages,
+                    system_prompt="",
+                )
+                tokens = metadata.get('tokens', 0)
+                self.agent.update_token_usage(tokens)
+                raw_json = self.agent._extract_data(response_text, "json")
+                checklist = self._parse_checklist(raw_json)
+            except Exception as exc:
+                logger.warning("LLM task-parse fallback failed: %s", exc)
+
+        return checklist
+
+    def _reflect(
         self,
         messages: List[Dict[str, Any]],
-        parsed_screen: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        """Run the ledger-reflection LLM call.
-
-        When *parsed_screen* is provided its SOM image is attached so the
-        LLM can visually verify progress against the current screen state
-        without bloating the main planning context.
+        parsed_screen: Optional[Dict[str, Any]],
+        checklist: Optional[Checklist],
+    ) -> tuple:
+        """Run the Reflect LLM call and update checklist statuses.
 
         Args:
             messages: Conversation history.
             parsed_screen: Latest ``_capture_screen()`` result (optional).
+            checklist: Current :class:`Checklist` (may be *None* for modes
+                that don't use one).
 
         Returns:
-            Ledger JSON string.
+            ``(ledger_str, updated_checklist)`` — the raw ledger JSON string
+            and the (possibly mutated) checklist.
         """
         recent_actions_text = self._format_recent_actions()
-        ledger_prompt = ORCHESTRATOR_LEDGER_PROMPT.format(
+        checklist_section = (
+            checklist.to_prompt_text() if checklist else ""
+        )
+        ledger_prompt = REFLECT_PROMPT.format(
             task=self._task or "",
+            checklist_section=checklist_section,
             recent_actions=recent_actions_text,
         )
         ledger_messages = copy.deepcopy(messages)
 
-        # Build the ledger user message — text + optional SOM image
+        # Attach SOM image when available
         som_b64 = (parsed_screen or {}).get("som_image_base64", "")
         if som_b64:
             ledger_content: list = [
                 {"type": "text", "text": ledger_prompt},
                 {
                     "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/png;base64,{som_b64}",
-                    },
+                    "image_url": {"url": f"data:image/png;base64,{som_b64}"},
                 },
             ]
             ledger_messages.append({"role": "user", "content": ledger_content})
@@ -234,7 +278,45 @@ class SamplingOrchestrator:
         self.agent.update_token_usage(tokens)
 
         ledger = self.agent._extract_data(response_text, "json")
-        return ledger
+
+        # Apply checklist updates from reflect response
+        if checklist:
+            try:
+                ledger_json = json.loads(ledger)
+                updates = ledger_json.get("checklist_updates", [])
+                if updates:
+                    checklist.apply_updates(updates)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        return ledger, checklist
+
+    def _verify_step(self, tool_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Lightweight post-Act verification (no LLM call).
+
+        Checks:
+        1. Whether any tool result carried an error.
+        2. Whether the trajectory shows a repeated-action loop.
+
+        Returns:
+            Dict with keys ``has_error`` (bool), ``error_detail`` (str),
+            ``is_repeated`` (bool).
+        """
+        has_error = False
+        error_detail = ""
+        for result in tool_results:
+            if result.get('status') != 'success':
+                has_error = True
+                error_detail = result.get('error', 'Unknown tool error')
+                break
+            tool_result_obj = result.get('result')
+            if tool_result_obj and hasattr(tool_result_obj, 'error') and tool_result_obj.error:
+                has_error = True
+                error_detail = tool_result_obj.error
+                break
+
+        is_repeated = self._detect_repeated_actions(threshold=5)
+        return {"has_error": has_error, "error_detail": error_detail, "is_repeated": is_repeated}
 
     # ------------------------------------------------------------------
     # Loop detection (derived from self.trajectory)
@@ -329,10 +411,6 @@ class SamplingOrchestrator:
         
         Yields rich update dicts consumed by the UI layer.
         """
-        if self.mode == AgentMode.TASK:
-            yield {"type": "error", "message": "Task mode is not yet implemented."}
-            return
-        
         try:
             yield {"type": "status", "message": f"Starting execution with {self.model_name} ({self.mode.value} mode)..."}
             
@@ -340,15 +418,48 @@ class SamplingOrchestrator:
             system_prompt = self._get_system_prompt()
             
             # --------------------------------------------------
-            # ORCHESTRATED: one-time plan initialization
+            # INIT (mode-specific, runs once before the loop)
             # --------------------------------------------------
             if self.mode == AgentMode.ORCHESTRATED:
+                # Capture initial screen first so the plan can reference it
+                yield {"type": "status", "message": "Capturing initial screen..."}
+                self._initial_screen = self._capture_screen()
+                yield {
+                    "type": "parsed_screen",
+                    "som_image_base64": self._initial_screen.get("som_image_base64", ""),
+                    "screen_info": str(self._initial_screen.get("parsed_content_list", [])),
+                }
+
                 yield {"type": "status", "message": "Generating plan..."}
-                self.plan_text = self._initialize_plan(self.state.chat.messages)
-                
-                self.state.chat.add_message("assistant", self.plan_text)
-                yield {"type": "plan", "plan_text": self.plan_text}
-            
+                self.checklist = self._generate_plan(self.state.chat.messages)
+                self.plan_text = self.checklist.to_prompt_text()
+
+                self.state.chat.add_message("assistant", json.dumps(self.checklist.to_dict()))
+                yield {
+                    "type": "plan",
+                    "plan_text": self.plan_text,
+                    "checklist": self.checklist.to_dict(),
+                }
+
+            elif self.mode == AgentMode.TASK:
+                # Parse the user's checklist, then capture the initial screen
+                yield {"type": "status", "message": "Loading task checklist..."}
+                self.checklist = self._load_task_checklist(self.state.chat.messages)
+                self.plan_text = self.checklist.to_prompt_text()
+                yield {
+                    "type": "plan",
+                    "plan_text": self.plan_text,
+                    "checklist": self.checklist.to_dict(),
+                }
+
+                yield {"type": "status", "message": "Capturing initial screen..."}
+                self._initial_screen = self._capture_screen()
+                yield {
+                    "type": "parsed_screen",
+                    "som_image_base64": self._initial_screen.get("som_image_base64", ""),
+                    "screen_info": str(self._initial_screen.get("parsed_content_list", [])),
+                }
+
             # Main loop
             while self.step_count < self.max_steps:
                 self.step_count += 1
@@ -356,47 +467,65 @@ class SamplingOrchestrator:
                 yield {"type": "step", "step_num": self.step_count}
                 
                 # --------------------------------------------------
-                # OBSERVE: capture screen and parse with OmniParser
+                # OBSERVE: reuse initial screen on step 1, capture fresh thereafter
                 # --------------------------------------------------
-                yield {"type": "status", "message": "Capturing screen..."}
-                parsed_screen = self._capture_screen()
+                if self.step_count == 1 and self._initial_screen is not None:
+                    parsed_screen = self._initial_screen
+                else:
+                    yield {"type": "status", "message": "Capturing screen..."}
+                    parsed_screen = self._capture_screen()
+                    yield {
+                        "type": "parsed_screen",
+                        "som_image_base64": parsed_screen.get("som_image_base64", ""),
+                        "screen_info": str(parsed_screen.get("parsed_content_list", [])),
+                    }
                 
-                yield {
-                    "type": "parsed_screen",
-                    "som_image_base64": parsed_screen.get("som_image_base64", ""),
-                    "screen_info": str(parsed_screen.get("parsed_content_list", [])),
-                }
-                
                 # --------------------------------------------------
-                # ORCHESTRATED: ledger reflection (step 2+)
+                # REFLECT (Orchestrated / Task, step 2+)
                 # --------------------------------------------------
-                if self.mode == AgentMode.ORCHESTRATED:
-                    yield {"type": "status", "message": "Updating ledger..."}
-                    self.ledger = self._update_ledger(self.state.chat.messages, parsed_screen)
+                if (
+                    self.mode in (AgentMode.ORCHESTRATED, AgentMode.TASK)
+                    and self.step_count > 1
+                ):
+                    yield {"type": "status", "message": "Reflecting..."}
+                    self.ledger, self.checklist = self._reflect(
+                        self.state.chat.messages, parsed_screen, self.checklist
+                    )
                     
                     self.state.chat.add_message("assistant", self.ledger)
-                    yield {"type": "ledger", "ledger_text": self.ledger}
+                    yield {
+                        "type": "ledger",
+                        "ledger_text": self.ledger,
+                        "checklist": self.checklist.to_dict() if self.checklist else None,
+                    }
                     
                     # Parse ledger results
                     try:
                         ledger_json = json.loads(self.ledger)
                         self.screen_description = ledger_json.get("screen_description", "")
-                        if ledger_json.get("is_request_satisfied", {}).get("answer"):
-                            yield {"type": "assistant_reply", "message": "Task completed (per ledger)."}
+
+                        # Done? (ledger signal OR all checklist items complete)
+                        task_done = ledger_json.get("is_request_satisfied", {}).get("answer")
+                        checklist_done = self.checklist and self.checklist.all_done()
+                        if task_done or checklist_done:
+                            yield {"type": "assistant_reply", "message": "Task completed."}
                             break
+
                         if ledger_json.get("is_in_loop", {}).get("answer"):
                             loop_reason = ledger_json["is_in_loop"].get("reason", "")
                             suggestion = ledger_json.get("instruction_or_question", {}).get("answer", "")
                             corrective_hint = (
                                 f"LOOP DETECTED: {loop_reason} "
-                                f"You MUST try a different action or target. "
+                                "You MUST try a different action or target. "
                             )
                             if suggestion:
                                 corrective_hint += f"Suggested next step: {suggestion}"
                             self.state.chat.add_message("system", corrective_hint)
-                            yield {"type": "status", "message": f"Loop detected — injecting corrective hint: {suggestion or loop_reason}"}
-                            logger.warning(f"Ledger detected loop: {loop_reason}")
-                            # Fall through to PLAN so the agent can try a different action
+                            yield {
+                                "type": "status",
+                                "message": f"Loop detected — injecting corrective hint: {suggestion or loop_reason}",
+                            }
+                            logger.warning("Reflect detected loop: %s", loop_reason)
                     except (json.JSONDecodeError, TypeError):
                         pass  # Non-JSON ledger — continue anyway
                 
@@ -438,7 +567,7 @@ class SamplingOrchestrator:
                 )
                 
                 # --------------------------------------------------
-                # EXECUTE: run tool calls
+                # ACT: run tool calls
                 # --------------------------------------------------
                 tool_calls = plan_response.get("tool_calls", [])
                 if not tool_calls:
@@ -480,11 +609,14 @@ class SamplingOrchestrator:
                         "base64_image": tool_base64_image,
                     }
                 
-                # Save trajectory (always, useful for debugging)
+                # Save trajectory (always useful for debugging)
                 self._save_trajectory_step(parsed_screen, plan_response)
 
-                # Programmatic repeated-action detection
-                if self._detect_repeated_actions(threshold=5):
+                # --------------------------------------------------
+                # VERIFY: lightweight post-act check (no LLM)
+                # --------------------------------------------------
+                verify = self._verify_step(tool_results)
+                if verify["is_repeated"]:
                     yield {
                         "type": "assistant_reply",
                         "message": "Stopping — repeated identical action detected with no progress.",

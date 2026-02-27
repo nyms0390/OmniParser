@@ -8,6 +8,7 @@ from omnitool.gradio.core.agents import (
     get_agent_info,
     get_available_agents,
 )
+from omnitool.gradio.core.checklist import Checklist, ChecklistItem
 from omnitool.gradio.core.orchestrator import SamplingOrchestrator
 from omnitool.gradio.core.tools import (
     BaseTool,
@@ -25,6 +26,9 @@ __all__ = [
     "create_agent",
     "get_available_agents",
     "get_agent_info",
+    # Checklist
+    "Checklist",
+    "ChecklistItem",
     # Orchestrator
     "SamplingOrchestrator",
     # Tools

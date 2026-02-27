@@ -28,8 +28,9 @@ from omnitool.gradio.config.prompts import (
     PlatformPrompt,
     build_anthropic_system_prompt,
     build_vlm_system_prompt,
-    ORCHESTRATOR_PLAN_PROMPT,
-    ORCHESTRATOR_LEDGER_PROMPT,
+    PLAN_PROMPT,
+    REFLECT_PROMPT,
+    TASK_PARSE_PROMPT,
 )
 from omnitool.gradio.config.settings import (
     Settings,
@@ -62,8 +63,9 @@ __all__ = [
     "PlatformPrompt",
     "build_vlm_system_prompt",
     "build_anthropic_system_prompt",
-    "ORCHESTRATOR_PLAN_PROMPT",
-    "ORCHESTRATOR_LEDGER_PROMPT",
+    "PLAN_PROMPT",
+    "REFLECT_PROMPT",
+    "TASK_PARSE_PROMPT",
     # OCR
     "OCR_CONFIG",
     "get_ocr_config",
