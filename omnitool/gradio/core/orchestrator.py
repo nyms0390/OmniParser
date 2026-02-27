@@ -256,19 +256,9 @@ class SamplingOrchestrator:
         )
         ledger_messages = copy.deepcopy(messages)
 
-        # Attach SOM image when available
-        som_b64 = (parsed_screen or {}).get("som_image_base64", "")
-        if som_b64:
-            ledger_content: list = [
-                {"type": "text", "text": ledger_prompt},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{som_b64}"},
-                },
-            ]
-            ledger_messages.append({"role": "user", "content": ledger_content})
-        else:
-            ledger_messages.append({"role": "user", "content": ledger_prompt})
+        # NOTE: Screenshot is now passed in the Plan step instead (see _prepare_messages).
+        # Reflect relies on action history + checklist for semantic progress assessment.
+        ledger_messages.append({"role": "user", "content": ledger_prompt})
 
         response_text, metadata = self.agent.llm_client.generate(
             messages=ledger_messages,

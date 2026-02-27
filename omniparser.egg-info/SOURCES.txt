@@ -8,5 +8,9 @@ omniparser.egg-info/requires.txt
 omniparser.egg-info/top_level.txt
 util/__init__.py
 util/box_annotator.py
+util/model_services.py
 util/omniparser.py
+util/pipeline.py
+util/pure_utilities.py
+util/services.py
 util/utils.py
