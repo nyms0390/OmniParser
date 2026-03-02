@@ -94,9 +94,6 @@ You are able to use a mouse and keyboard to interact with the computer based on 
 You may be given some history plan and actions, this is the response from the previous loop.
 You should carefully consider your plan based on the task, screenshot, and history actions.
 
-The current screen's detected UI elements (bounding boxes with IDs and descriptions) will be provided in a user message. \
-A high-level screen description from a previous observation may also be provided. Use both to determine your next action.
-
 Your available "Next Action" only include:
 - type: types a string of text.
 - left_click: move mouse to box id and left clicks.
@@ -152,10 +149,9 @@ IMPORTANT NOTES:
 3. Attach the next action prediction in the "Next Action".
 4. You should not include other actions, such as keyboard shortcuts.
 5. When the task is completed, don't complete additional actions. You should say "Next Action": "None" in the json field.
-6. The tasks involve buying multiple products or navigating through multiple pages. You should break it into subgoals and complete each subgoal one by one in the order of the instructions.
-7. Avoid choosing the same action/elements multiple times in a row, if it happens, reflect to yourself, what may have gone wrong, and predict a different action.
-8. If you are prompted with login information page or captcha page, or you think it need user's permission to do the next action, you should say "Next Action": "None" in the json field.
-9. To open applications from desktop icons or files/folders in file explorer, always use "double_click" instead of "left_click". A single click on a desktop icon only selects it without launching the application. Use "left_click" for buttons, links, menu items, and other interactive UI elements inside applications.
+6. Avoid choosing the same action/elements multiple times in a row, if it happens, reflect to yourself, what may have gone wrong, and predict a different action.
+7. If you are prompted with login information page or captcha page, or you think it need user's permission to do the next action, you should say "Next Action": "None" in the json field.
+8. To open applications from desktop icons or files/folders in file explorer, always use "double_click" instead of "left_click". A single click on a desktop icon only selects it without launching the application. Use "left_click" for buttons, links, menu items, and other interactive UI elements inside applications.
 """
 
 
@@ -172,8 +168,19 @@ Analyze the current screen state and use your tool_use capabilities to
 interact with the computer and accomplish the user's task.
 
 The current screen's detected UI elements will be provided in a user
-message. A high-level screen description from a previous observation
-may also be included. Use them for accurate targeting.
+message. Use them for accurate targeting.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Planner system prompt — shared by Plan-init and Reflect LLM calls
+# ---------------------------------------------------------------------------
+
+PLANNER_SYSTEM_PROMPT = """\
+You are an expert computer automation planner.
+Your role is to analyze tasks and screen state to plan or evaluate \
+the progress of automated computer interactions.
+Provide clear, structured responses in the requested JSON format.\
 """
 
 
@@ -209,26 +216,19 @@ Recall we are working on the following request:
 
 {checklist_section}
 
-A screenshot of the current screen state is attached (if available). \
-If no screenshot is attached, state that the screen is unavailable in \
-your screen description.
-
 Here is a summary of the most recent actions taken:
 {recent_actions}
 
 To make progress on the request, please answer the following questions, including necessary reasoning:
 
-    - Briefly describe the current screen state based on the attached screenshot. What application or page is visible? What key UI elements, text, or indicators do you see?
     - Is the request fully satisfied? (True if complete, or False if the original request has yet to be SUCCESSFULLY and FULLY addressed)
     - Are we in a loop where we are repeating the same requests and / or getting the same responses as before? Carefully examine the recent action history above. A loop includes repeating the SAME action on the SAME element multiple times.
-    - Are we making forward progress? (True if just starting, or recent messages are adding value. False if recent messages show evidence of being stuck in a loop or if there is evidence of significant barriers to success such as the inability to read from a required file)
-    - What instruction or question would you give in order to complete the task? If stuck, suggest a DIFFERENT action type or target.
+    - What is the next concrete step to take? If stuck, suggest a DIFFERENT action type or target.
     - For each checklist item, update its status to reflect current progress (use "done", "in_progress", "pending", or "skipped").
 
 Please output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
 
     {{
-        "screen_description": string,
         "is_request_satisfied": {{
             "reason": string,
             "answer": boolean
@@ -237,11 +237,7 @@ Please output an answer in pure JSON format according to the following schema. T
             "reason": string,
             "answer": boolean
         }},
-        "is_progress_being_made": {{
-            "reason": string,
-            "answer": boolean
-        }},
-        "instruction_or_question": {{
+        "next_step_hint": {{
             "reason": string,
             "answer": string
         }},

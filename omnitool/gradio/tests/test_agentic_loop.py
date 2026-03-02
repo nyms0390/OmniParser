@@ -232,7 +232,11 @@ class TestPromptTemplates:
         assert "test task" in out
         assert "checklist_updates" in out
         assert "is_request_satisfied" in out
-        assert "screen_description" in out
+        assert "next_step_hint" in out
+        assert "is_progress_being_made" not in out
+        assert "instruction_or_question" not in out
+        assert "screen_description" not in out
+        assert "screenshot" not in out.lower()
 
     def test_task_parse_prompt_format(self):
         out = TASK_PARSE_PROMPT.format(user_text="do X then Y")
@@ -313,11 +317,9 @@ PLAN_JSON = json.dumps([
 ])
 
 REFLECT_JSON = json.dumps({
-    "screen_description": "Desktop with Notepad open",
     "is_request_satisfied": {"reason": "not done yet", "answer": False},
     "is_in_loop": {"reason": "no loop", "answer": False},
-    "is_progress_being_made": {"reason": "opened notepad", "answer": True},
-    "instruction_or_question": {"reason": "", "answer": "Type hello world"},
+    "next_step_hint": {"reason": "", "answer": "Type hello world"},
     "checklist_updates": [{"id": 1, "status": "done"}],
 })
 
@@ -390,11 +392,9 @@ class TestOrchestratorOrchestrated:
 
     def test_task_complete_when_all_checklist_done(self, app_state, mock_agent, mock_screen):
         all_done_reflect = json.dumps({
-            "screen_description": "Done",
             "is_request_satisfied": {"reason": "complete", "answer": False},
             "is_in_loop": {"reason": "", "answer": False},
-            "is_progress_being_made": {"reason": "", "answer": True},
-            "instruction_or_question": {"reason": "", "answer": ""},
+            "next_step_hint": {"reason": "", "answer": ""},
             "checklist_updates": [
                 {"id": 1, "status": "done"},
                 {"id": 2, "status": "done"},
@@ -486,7 +486,6 @@ class TestVLMAgentPrepareMessages:
         parsed_screen = {
             "som_image_base64": "sombase64data",
             "parsed_content_list": [],
-            "screen_description": "",
         }
         prepared = agent._prepare_messages(messages, parsed_screen)
         last = prepared[-1]
@@ -501,24 +500,24 @@ class TestVLMAgentPrepareMessages:
         parsed_screen = {
             "som_image_base64": "",
             "parsed_content_list": [{"content": "button"}],
-            "screen_description": "",
         }
         prepared = agent._prepare_messages(messages, parsed_screen)
         last = prepared[-1]
         assert isinstance(last["content"], str)
         assert "screen_elements" in last["content"]
 
-    def test_screen_description_injected(self, tmp_path):
+    def test_screen_description_not_injected_when_som_present(self, tmp_path):
         agent = self._make_agent(tmp_path)
         messages = [{"role": "user", "content": "do task"}]
         parsed_screen = {
-            "som_image_base64": "",
+            "som_image_base64": "fakeb64",
             "parsed_content_list": [],
-            "screen_description": "The desktop is visible",
         }
         prepared = agent._prepare_messages(messages, parsed_screen)
-        last_content = prepared[-1]["content"]
-        assert "The desktop is visible" in last_content
+        last = prepared[-1]
+        # Content is a single image_url entry — no text parts at all
+        assert isinstance(last["content"], list)
+        assert all(p.get("type") == "image_url" for p in last["content"])
 
 
 class TestVLMAgentParseToolCalls:

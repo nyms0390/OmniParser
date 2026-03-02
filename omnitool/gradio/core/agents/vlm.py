@@ -98,59 +98,47 @@ class VLMAgent(BaseAgent):
     ) -> List[Dict[str, Any]]:
         """Prepare messages with screen information for the Plan step.
 
-        The SOM image is attached here so the model can visually identify
+        The SOM image is attached so the model can visually identify
         numbered box overlays when choosing a Box ID.
 
-        The ``<screen_elements>`` bounding-box text is commented out — the
-        visual SOM overlay makes it redundant and it adds significant token
-        cost. To re-enable the text list, uncomment the block below.
-
-        ``parsed_content_list`` is intentionally kept in ``parsed_screen``
-        (not shown to the LLM) because ``_parse_tool_calls`` needs it for
-        Box ID → pixel coordinate resolution.
+        ``parsed_content_list`` is kept in ``parsed_screen`` (not shown to
+        the LLM) because ``_parse_tool_calls`` needs it for Box ID → pixel
+        coordinate resolution.
         """
         prepared = [self._strip_images(msg) for msg in messages]
 
-        # NOTE: Positional text list commented out; the SOM image carries
-        # the same information visually (numbered bounding box overlays).
-        # To restore, uncomment the block and remove the SOM image attachment.
+        # NOTE: Text list omitted; the SOM image carries the same information
+        # visually (numbered bounding box overlays). To restore the text list,
+        # uncomment the block below and remove the SOM image attachment.
         #
         # screen_info_text = str(parsed_screen.get("parsed_content_list", []))
-        # context_parts = [
+        # prepared.append({"role": "user", "content": (
         #     "Here is the list of all detected bounding boxes by IDs "
         #     "on the screen and their description:\n"
-        #     f"<screen_elements>\n{screen_info_text}\n</screen_elements>",
-        # ]
-
-        screen_desc = parsed_screen.get("screen_description", "")
-        context_parts = []
-        if screen_desc:
-            context_parts.append(
-                f"Current screen summary (from previous observation):\n"
-                f"<screen_description>\n{screen_desc}\n</screen_description>"
-            )
+        #     f"<screen_elements>\n{screen_info_text}\n</screen_elements>"
+        # )})
 
         som_b64 = parsed_screen.get("som_image_base64", "")
         if som_b64:
-            user_content: list = []
-            if context_parts:
-                user_content.append({"type": "text", "text": "\n".join(context_parts)})
-            user_content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{som_b64}"},
+            prepared.append({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{som_b64}"},
+                    }
+                ],
             })
-            prepared.append({"role": "user", "content": user_content})
         else:
             # Fallback to text-only when no SOM image is available
             screen_info_text = str(parsed_screen.get("parsed_content_list", []))
-            context_parts.insert(0,
-                "Here is the list of all detected bounding boxes by IDs "
-                "on the screen and their description:\n"
-                f"<screen_elements>\n{screen_info_text}\n</screen_elements>"
-            )
             prepared.append({
                 "role": "user",
-                "content": "\n".join(context_parts),
+                "content": (
+                    "Here is the list of all detected bounding boxes by IDs "
+                    "on the screen and their description:\n"
+                    f"<screen_elements>\n{screen_info_text}\n</screen_elements>"
+                ),
             })
 
         return prepared

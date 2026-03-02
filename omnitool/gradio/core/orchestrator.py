@@ -21,6 +21,7 @@ from omnitool.gradio.clients.services.omniparser import OmniParserClient
 from omnitool.gradio.config import (
     AgentMode,
     PLAN_PROMPT,
+    PLANNER_SYSTEM_PROMPT,
     REFLECT_PROMPT,
     TASK_PARSE_PROMPT,
     build_anthropic_system_prompt,
@@ -86,7 +87,6 @@ class SamplingOrchestrator:
         # Orchestration state
         self.plan_text: Optional[str] = None
         self.ledger: Optional[str] = None
-        self.screen_description: Optional[str] = None
         self.trajectory: List[Dict[str, Any]] = []
         self.step_count = 0
         self._task: Optional[str] = None  # user task for plan/ledger prompts
@@ -163,8 +163,17 @@ class SamplingOrchestrator:
         """Construct a :class:`Checklist` from an LLM JSON string."""
         return Checklist.from_llm_json(raw_json)
 
-    def _generate_plan(self, messages: List[Dict[str, Any]]) -> Checklist:
+    def _generate_plan(
+        self,
+        messages: List[Dict[str, Any]],
+        initial_screen: Optional[Dict[str, Any]] = None,
+    ) -> Checklist:
         """Generate an initial plan via an extra LLM call (ORCHESTRATED init).
+
+        Args:
+            messages: Conversation history (first message is the task).
+            initial_screen: Latest ``_capture_screen()`` result; the SOM image
+                is attached so the planner can reference current UI state.
 
         Returns:
             :class:`Checklist` parsed from the LLM response.
@@ -173,11 +182,26 @@ class SamplingOrchestrator:
         plan_prompt = PLAN_PROMPT.format(task=self._task)
 
         plan_messages = copy.deepcopy(messages)
+
+        # Attach the initial SOM image so the planner sees the starting state
+        if initial_screen:
+            som_b64 = initial_screen.get("som_image_base64", "")
+            if som_b64:
+                plan_messages.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{som_b64}"},
+                        }
+                    ],
+                })
+
         plan_messages.append({"role": "user", "content": plan_prompt})
 
         response_text, metadata = self.agent.llm_client.generate(
             messages=plan_messages,
-            system_prompt="",
+            system_prompt=PLANNER_SYSTEM_PROMPT,
         )
         tokens = metadata.get('tokens', 0)
         self.agent.update_token_usage(tokens)
@@ -230,14 +254,12 @@ class SamplingOrchestrator:
     def _reflect(
         self,
         messages: List[Dict[str, Any]],
-        parsed_screen: Optional[Dict[str, Any]],
         checklist: Optional[Checklist],
     ) -> tuple:
         """Run the Reflect LLM call and update checklist statuses.
 
         Args:
             messages: Conversation history.
-            parsed_screen: Latest ``_capture_screen()`` result (optional).
             checklist: Current :class:`Checklist` (may be *None* for modes
                 that don't use one).
 
@@ -255,14 +277,11 @@ class SamplingOrchestrator:
             recent_actions=recent_actions_text,
         )
         ledger_messages = copy.deepcopy(messages)
-
-        # NOTE: Screenshot is now passed in the Plan step instead (see _prepare_messages).
-        # Reflect relies on action history + checklist for semantic progress assessment.
         ledger_messages.append({"role": "user", "content": ledger_prompt})
 
         response_text, metadata = self.agent.llm_client.generate(
             messages=ledger_messages,
-            system_prompt="",
+            system_prompt=PLANNER_SYSTEM_PROMPT,
         )
         tokens = metadata.get('tokens', 0)
         self.agent.update_token_usage(tokens)
@@ -375,7 +394,6 @@ class SamplingOrchestrator:
             "step": self.step_count,
             "timestamp": datetime.now().isoformat(),
             "screen_info": str(parsed_screen.get("parsed_content_list", [])),
-            "screen_description": self.screen_description,
             "agent_response": plan_response.get("response_text", ""),
             "tool_calls": plan_response.get("tool_calls", []),
             "tokens": plan_response.get("metadata", {}).get("tokens"),
@@ -421,7 +439,9 @@ class SamplingOrchestrator:
                 }
 
                 yield {"type": "status", "message": "Generating plan..."}
-                self.checklist = self._generate_plan(self.state.chat.messages)
+                self.checklist = self._generate_plan(
+                    self.state.chat.messages, initial_screen=self._initial_screen
+                )
                 self.plan_text = self.checklist.to_prompt_text()
 
                 self.state.chat.add_message("assistant", json.dumps(self.checklist.to_dict()))
@@ -479,7 +499,7 @@ class SamplingOrchestrator:
                 ):
                     yield {"type": "status", "message": "Reflecting..."}
                     self.ledger, self.checklist = self._reflect(
-                        self.state.chat.messages, parsed_screen, self.checklist
+                        self.state.chat.messages, self.checklist
                     )
                     
                     self.state.chat.add_message("assistant", self.ledger)
@@ -492,7 +512,6 @@ class SamplingOrchestrator:
                     # Parse ledger results
                     try:
                         ledger_json = json.loads(self.ledger)
-                        self.screen_description = ledger_json.get("screen_description", "")
 
                         # Done? (ledger signal OR all checklist items complete)
                         task_done = ledger_json.get("is_request_satisfied", {}).get("answer")
@@ -503,7 +522,7 @@ class SamplingOrchestrator:
 
                         if ledger_json.get("is_in_loop", {}).get("answer"):
                             loop_reason = ledger_json["is_in_loop"].get("reason", "")
-                            suggestion = ledger_json.get("instruction_or_question", {}).get("answer", "")
+                            suggestion = ledger_json.get("next_step_hint", {}).get("answer", "")
                             corrective_hint = (
                                 f"LOOP DETECTED: {loop_reason} "
                                 "You MUST try a different action or target. "
@@ -524,14 +543,22 @@ class SamplingOrchestrator:
                 # --------------------------------------------------
                 yield {"type": "status", "message": f"Step {self.step_count}: Planning..."}
 
-                # Enrich parsed_screen with ledger-derived screen description
-                plan_screen = dict(parsed_screen)
-                if self.screen_description:
-                    plan_screen["screen_description"] = self.screen_description
+                # Build context messages, optionally prefixed with active checklist step
+                context_messages = list(self.state.chat.get_last_n_messages(self.context_n))
+                if self.checklist:
+                    active = self.checklist.get_active()
+                    if active:
+                        context_messages.append({
+                            "role": "user",
+                            "content": (
+                                f"Current checklist step [{active.id}]: {active.step}"
+                                + (f" — {active.verification_hint}" if active.verification_hint else "")
+                            ),
+                        })
 
                 plan_response = self.agent.plan(
-                    messages=self.state.chat.get_last_n_messages(self.context_n),
-                    parsed_screen=plan_screen,
+                    messages=context_messages,
+                    parsed_screen=parsed_screen,
                     system_prompt=system_prompt,
                 )
                 

@@ -82,30 +82,18 @@ class AnthropicAgent(BaseAgent):
 
         Screen info is injected as a separate user message wrapped in
         ``<screen_elements>`` tags.
-
-        The SOM image is intentionally **not** included here to avoid
-        exceeding the context window during planning.  It is sent in the
-        ledger call instead (see :pymethod:`SamplingOrchestrator._update_ledger`).
         """
         prepared = [self._strip_images(msg) for msg in messages]
 
         screen_info_text = str(parsed_screen.get("parsed_content_list", []))
-        screen_desc = parsed_screen.get("screen_description", "")
-
-        context_parts = [
-            "Here is the list of detected UI elements on the current "
-            "screen:\n"
-            f"<screen_elements>\n{screen_info_text}\n</screen_elements>",
-        ]
-        if screen_desc:
-            context_parts.append(
-                f"\nCurrent screen summary (from previous observation):\n"
-                f"<screen_description>\n{screen_desc}\n</screen_description>"
-            )
 
         prepared.append({
             "role": "user",
-            "content": "\n".join(context_parts),
+            "content": (
+                "Here is the list of detected UI elements on the current "
+                "screen:\n"
+                f"<screen_elements>\n{screen_info_text}\n</screen_elements>"
+            ),
         })
 
         return prepared
