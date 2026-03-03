@@ -382,6 +382,21 @@ class OmniAgent:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _format_tool_result(tool_name: str, output: str, error: str) -> str:
+        """Build a descriptive chat-history message from a tool result.
+
+        Includes both *output* and *error* when both are present so neither
+        is silently dropped.
+        """
+        parts = []
+        if output:
+            parts.append(output)
+        if error:
+            parts.append(f"ERROR: {error}")
+        detail = " | ".join(parts) if parts else "(no output)"
+        return f"Tool {tool_name}: {detail}"
+
+    @staticmethod
     def _extract_primary_action(tool_calls: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Extract the primary action and coordinate from a step's tool_calls.
 
@@ -626,7 +641,7 @@ class OmniAgent:
                 
                 self.state.chat.add_message(
                     role="assistant",
-                    content=response_text,
+                    content=f"[Agent plan] {response_text}" if response_text else response_text,
                     metadata={
                         "tokens": plan_response.get("metadata", {}).get("tokens"),
                         "cost": plan_response.get("cost"),
@@ -665,7 +680,7 @@ class OmniAgent:
                     
                     self.state.chat.add_message(
                         role="system",
-                        content=f"Tool {result['tool']}: {tool_output or tool_error}",
+                        content=self._format_tool_result(result['tool'], tool_output, tool_error),
                     )
                     
                     yield {

@@ -107,16 +107,14 @@ class VLMAgent(BaseAgent):
         """
         prepared = [self._strip_images(msg) for msg in messages]
 
-        # NOTE: Text list omitted; the SOM image carries the same information
-        # visually (numbered bounding box overlays). To restore the text list,
-        # uncomment the block below and remove the SOM image attachment.
-        #
-        # screen_info_text = str(parsed_screen.get("parsed_content_list", []))
-        # prepared.append({"role": "user", "content": (
-        #     "Here is the list of all detected bounding boxes by IDs "
-        #     "on the screen and their description:\n"
-        #     f"<screen_elements>\n{screen_info_text}\n</screen_elements>"
-        # )})
+        compact = self.compact_screen_elements(
+            parsed_screen.get("parsed_content_list", [])
+        )
+        prepared.append({"role": "user", "content": (
+            "Here is the list of all detected bounding boxes by IDs "
+            "on the screen and their description:\n"
+            f"<screen_elements>\n{compact}\n</screen_elements>"
+        )})
 
         som_b64 = parsed_screen.get("som_image_base64", "")
         if som_b64:
@@ -129,20 +127,44 @@ class VLMAgent(BaseAgent):
                     }
                 ],
             })
-        else:
-            # Fallback to text-only when no SOM image is available
-            screen_info_text = str(parsed_screen.get("parsed_content_list", []))
-            prepared.append({
-                "role": "user",
-                "content": (
-                    "Here is the list of all detected bounding boxes by IDs "
-                    "on the screen and their description:\n"
-                    f"<screen_elements>\n{screen_info_text}\n</screen_elements>"
-                ),
-            })
 
         return prepared
     
+    # ------------------------------------------------------------------
+    # Screen element formatting
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def compact_screen_elements(parsed_content_list: list) -> str:
+        """Return a compact, ID-indexed summary of detected screen elements.
+
+        Each line: ``<id>: <type>, interactive=<bool>, "<content>"``
+
+        Only the four fields relevant to the LLM are included (ID, type,
+        interactivity, content) — bbox coordinates are omitted to reduce
+        token cost.
+
+        Args:
+            parsed_content_list: List of element dicts as returned by
+                OmniParser (keys: ``type``, ``bbox``, ``interactivity``,
+                ``content``).
+
+        Returns:
+            Multi-line string, one element per line, or ``"(no elements)"``
+            when the list is empty.
+        """
+        if not parsed_content_list:
+            return "(no elements)"
+        lines = []
+        for idx, elem in enumerate(parsed_content_list):
+            elem_type = elem.get("type", "unknown")
+            interactive = elem.get("interactivity", False)
+            content = elem.get("content") or ""
+            lines.append(
+                f'{idx}: {elem_type}, interactive={interactive}, "{content}"'
+            )
+        return "\n".join(lines)
+
     # ------------------------------------------------------------------
     # Response parsing — JSON format with Box ID → coordinate conversion
     # ------------------------------------------------------------------
