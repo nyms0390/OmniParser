@@ -387,8 +387,9 @@ class TestOrchestratorOrchestrated:
         mock_agent._extract_data.side_effect = lambda text, fmt: text
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=1)
         list(orch.sampling_loop())
-        # _capture_screen called once (for init), not again on step 1
-        assert orch._capture_screen.call_count == 1
+        # init capture (1) + verify screen_after on step 1 (1) = 2 total
+        # Observe on step 1 reuses _initial_screen (no capture)
+        assert orch._capture_screen.call_count == 2
 
     def test_task_complete_when_all_checklist_done(self, app_state, mock_agent, mock_screen):
         all_done_reflect = json.dumps({
@@ -579,6 +580,7 @@ class TestVerifyStep:
         result = orch._verify_step(tool_results)
         assert not result["has_error"]
         assert not result["is_repeated"]
+        assert not result["screen_unchanged"]
 
     def test_detects_tool_error(self, app_state, mock_agent, mock_screen):
         orch = _make_orchestrator(app_state, mock_agent, mock_screen)
@@ -596,3 +598,45 @@ class TestVerifyStep:
             })
         result = orch._verify_step([])
         assert result["is_repeated"]
+
+    def test_screen_unchanged_when_same_image(self, app_state, mock_agent, mock_screen):
+        from omnitool.gradio.core.orchestrator import SamplingOrchestrator
+        screen_a = {"som_image_base64": "abc123", "parsed_content_list": []}
+        screen_b = {"som_image_base64": "abc123", "parsed_content_list": []}
+        result = SamplingOrchestrator._compare_screens(screen_a, screen_b)
+        assert result is True
+
+    def test_screen_changed_when_different_image(self, app_state, mock_agent, mock_screen):
+        from omnitool.gradio.core.orchestrator import SamplingOrchestrator
+        screen_a = {"som_image_base64": "abc123", "parsed_content_list": []}
+        screen_b = {"som_image_base64": "xyz789", "parsed_content_list": []}
+        result = SamplingOrchestrator._compare_screens(screen_a, screen_b)
+        assert result is False
+
+    def test_screen_fallback_to_content_list(self, app_state, mock_agent, mock_screen):
+        from omnitool.gradio.core.orchestrator import SamplingOrchestrator
+        screen_a = {"som_image_base64": "", "parsed_content_list": [{"content": "A"}]}
+        screen_b = {"som_image_base64": "", "parsed_content_list": [{"content": "A"}]}
+        assert SamplingOrchestrator._compare_screens(screen_a, screen_b) is True
+
+        screen_c = {"som_image_base64": "", "parsed_content_list": [{"content": "B"}]}
+        assert SamplingOrchestrator._compare_screens(screen_a, screen_c) is False
+
+    def test_screen_compare_returns_false_on_missing(self, app_state, mock_agent, mock_screen):
+        from omnitool.gradio.core.orchestrator import SamplingOrchestrator
+        # Missing either screen → safely report "changed" (don't false-stop)
+        assert SamplingOrchestrator._compare_screens(None, None) is False
+        assert SamplingOrchestrator._compare_screens({"som_image_base64": "x"}, None) is False
+
+    def test_verify_step_screen_unchanged_flag(self, app_state, mock_agent, mock_screen):
+        orch = _make_orchestrator(app_state, mock_agent, mock_screen)
+        same_screen = {"som_image_base64": "identical", "parsed_content_list": []}
+        result = orch._verify_step([], same_screen, same_screen)
+        assert result["screen_unchanged"] is True
+
+    def test_verify_step_screen_changed_flag(self, app_state, mock_agent, mock_screen):
+        orch = _make_orchestrator(app_state, mock_agent, mock_screen)
+        before = {"som_image_base64": "before_data", "parsed_content_list": []}
+        after  = {"som_image_base64": "after_data",  "parsed_content_list": []}
+        result = orch._verify_step([], before, after)
+        assert result["screen_unchanged"] is False

@@ -9,6 +9,7 @@ Supports three agent modes:
 
 import base64
 import copy
+import hashlib
 import json
 import logging
 from datetime import datetime
@@ -300,16 +301,28 @@ class SamplingOrchestrator:
 
         return ledger, checklist
 
-    def _verify_step(self, tool_results: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Lightweight post-Act verification (no LLM call).
+    def _verify_step(
+        self,
+        tool_results: List[Dict[str, Any]],
+        screen_before: Optional[Dict[str, Any]] = None,
+        screen_after: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Post-Act verification (no LLM call).
 
         Checks:
         1. Whether any tool result carried an error.
         2. Whether the trajectory shows a repeated-action loop.
+        3. Whether the screen changed after the action (screen comparison).
+
+        Args:
+            tool_results: Results from ``agent.execute_tool_calls()``.
+            screen_before: ``_capture_screen()`` result before Act.
+            screen_after: ``_capture_screen()`` result after Act.
 
         Returns:
-            Dict with keys ``has_error`` (bool), ``error_detail`` (str),
-            ``is_repeated`` (bool).
+            Dict with keys:
+                ``has_error`` (bool), ``error_detail`` (str),
+                ``is_repeated`` (bool), ``screen_unchanged`` (bool).
         """
         has_error = False
         error_detail = ""
@@ -325,7 +338,44 @@ class SamplingOrchestrator:
                 break
 
         is_repeated = self._detect_repeated_actions(threshold=5)
-        return {"has_error": has_error, "error_detail": error_detail, "is_repeated": is_repeated}
+        screen_unchanged = self._compare_screens(screen_before, screen_after)
+
+        return {
+            "has_error": has_error,
+            "error_detail": error_detail,
+            "is_repeated": is_repeated,
+            "screen_unchanged": screen_unchanged,
+        }
+
+    @staticmethod
+    def _compare_screens(
+        screen_before: Optional[Dict[str, Any]],
+        screen_after: Optional[Dict[str, Any]],
+    ) -> bool:
+        """Return *True* when the screen did not visibly change after an action.
+
+        Uses SHA-256 of the SOM image PNG bytes as a fast fingerprint.
+        Falls back to comparing ``parsed_content_list`` strings when no image
+        is available in either screen dict.
+
+        Returns *False* (i.e. "changed") when either screen is missing, so the
+        check is safely skipped whenever screen capture is unavailable.
+        """
+        if not screen_before or not screen_after:
+            return False
+
+        before_b64 = screen_before.get("som_image_base64", "")
+        after_b64 = screen_after.get("som_image_base64", "")
+
+        if before_b64 and after_b64:
+            h_before = hashlib.sha256(before_b64.encode()).hexdigest()
+            h_after = hashlib.sha256(after_b64.encode()).hexdigest()
+            return h_before == h_after
+
+        # Fallback: compare stringified parsed_content_list
+        before_text = str(screen_before.get("parsed_content_list", ""))
+        after_text = str(screen_after.get("parsed_content_list", ""))
+        return before_text == after_text
 
     # ------------------------------------------------------------------
     # Loop detection (derived from self.trajectory)
@@ -630,9 +680,27 @@ class SamplingOrchestrator:
                 self._save_trajectory_step(parsed_screen, plan_response)
 
                 # --------------------------------------------------
-                # VERIFY: lightweight post-act check (no LLM)
+                # VERIFY: post-act checks (no LLM)
                 # --------------------------------------------------
-                verify = self._verify_step(tool_results)
+                yield {"type": "status", "message": "Verifying action effect..."}
+                screen_after = self._capture_screen()
+                yield {
+                    "type": "parsed_screen",
+                    "som_image_base64": screen_after.get("som_image_base64", ""),
+                    "screen_info": str(screen_after.get("parsed_content_list", [])),
+                }
+
+                verify = self._verify_step(tool_results, parsed_screen, screen_after)
+
+                if verify["screen_unchanged"]:
+                    hint = (
+                        "ACTION HAD NO VISIBLE EFFECT — the screen did not change after "
+                        "this step. Try a different target or action type."
+                    )
+                    self.state.chat.add_message("system", hint)
+                    yield {"type": "status", "message": "Verify: screen unchanged after action."}
+                    logger.warning("Step %d: screen unchanged after action.", self.step_count)
+
                 if verify["is_repeated"]:
                     yield {
                         "type": "assistant_reply",
