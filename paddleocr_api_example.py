@@ -15,10 +15,10 @@ import requests
 from pathlib import Path
 from pprint import pprint
 
-SERVER = "http://10.33.72.167:8080"
+SERVER = "http://127.0.0.1:8080"
 
 
-def ocr_image(image_path: str, text_threshold: float = 0.5) -> dict:
+def ocr_image(image_path: str) -> dict:
     image_bytes = Path(image_path).read_bytes()
     resp = requests.post(
         f"{SERVER}/ocr",
@@ -28,23 +28,26 @@ def ocr_image(image_path: str, text_threshold: float = 0.5) -> dict:
     resp.raise_for_status()
     return resp.json()
 
+def parse_response(results: dict):
+    items = results if isinstance(results, list) else [results]
+    for item in items:
+        data = unwrap_result(item)
+        if data:
+            print(data.keys())
+        else:
+            continue
+            
+def unwrap_result(result: dict) -> dict:
+    if result is None:
+        return {}
+    try:
+        if 'res' in result:
+            inner = result['res']
+            if hasattr(inner, '__getitem__') and ('rec_texts' in inner or 'rec_polys' in inner):
+                return inner
+    except (TypeError, KeyError):
+        pass
 
 if __name__ == "__main__":
     result = ocr_image("screenshot.png")
-
-    # --- Response structure ---
-    print("Keys:", list(result.keys()))
-    print(f"Regions detected: {len(result.get('text', []))}")
-    print()
-
-    coordinates = result.get("coordinates", [])
-    texts       = result.get("text", [])
-    confidences = result.get("confidence", [])
-
-    for i, (coord, text) in enumerate(zip(coordinates, texts)):
-        score = confidences[i] if i < len(confidences) else None
-        print(f"[{i}] {text!r:40s}  coord={coord}  conf={score}")
-
-    print()
-    print("Full response:")
-    pprint(result)
+    parse_response(result)
