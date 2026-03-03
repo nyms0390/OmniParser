@@ -4,7 +4,7 @@ File viewer UI components.
 
 from pathlib import Path
 
-from omnitool.gradio.services import FileHandler
+from omnitool.gradio.app import FileHandler
 
 
 def render_file_list(files: list[Path]) -> str:

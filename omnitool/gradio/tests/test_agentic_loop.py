@@ -13,7 +13,7 @@ import pytest
 from omnitool.gradio.config import AgentMode
 from omnitool.gradio.config.prompts import PLAN_PROMPT, REFLECT_PROMPT, TASK_PARSE_PROMPT
 from omnitool.gradio.core.checklist import Checklist, ChecklistItem
-from omnitool.gradio.services import AppState
+from omnitool.gradio.app import AppState
 
 
 # ---------------------------------------------------------------------------
@@ -67,11 +67,11 @@ def mock_screen():
 
 
 def _make_orchestrator(app_state, mock_agent, mock_screen, mode=AgentMode.INTERACTIVE, max_steps=3):
-    """Build a SamplingOrchestrator with all external calls mocked out."""
-    from omnitool.gradio.core.orchestrator import SamplingOrchestrator
+    """Build an OmniAgent with all external calls mocked out."""
+    from omnitool.gradio.core.omniagent import OmniAgent
 
-    with patch("omnitool.gradio.core.orchestrator.create_agent", return_value=mock_agent):
-        orch = SamplingOrchestrator(
+    with patch("omnitool.gradio.core.omniagent.create_agent", return_value=mock_agent):
+        orch = OmniAgent(
             model_name="omniparser + gpt-4o",
             state=app_state,
             tools_collection=Mock(),
@@ -251,7 +251,7 @@ class TestPromptTemplates:
 class TestOrchestratorInteractive:
     def test_yields_step_events(self, app_state, mock_agent, mock_screen):
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.INTERACTIVE, max_steps=2)
-        events = list(orch.sampling_loop())
+        events = list(orch.run())
         types = [e["type"] for e in events]
         assert "status" in types
         assert "step" in types
@@ -265,7 +265,7 @@ class TestOrchestratorInteractive:
             "cost": 0.0,
         }
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.INTERACTIVE, max_steps=5)
-        events = list(orch.sampling_loop())
+        events = list(orch.run())
         types = [e["type"] for e in events]
         assert "assistant_reply" in types
         # Should stop after step 1
@@ -274,7 +274,7 @@ class TestOrchestratorInteractive:
 
     def test_no_reflect_in_interactive_mode(self, app_state, mock_agent, mock_screen):
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.INTERACTIVE, max_steps=2)
-        list(orch.sampling_loop())
+        list(orch.run())
         # LLM client on agent should not be called for reflect in interactive mode
         assert mock_agent.llm_client.generate.call_count == 0
 
@@ -287,7 +287,7 @@ class TestOrchestratorInteractive:
                 "tool_calls": [{"action": "left_click", "coordinate": [100, 200]}],
             })
         orch.step_count = 4
-        events = list(orch.sampling_loop())
+        events = list(orch.run())
         types = [e["type"] for e in events]
         assert "assistant_reply" in types
         # Stopped early — not 20 steps
@@ -297,13 +297,13 @@ class TestOrchestratorInteractive:
     def test_complete_event_always_yielded(self, app_state, mock_agent, mock_screen):
         mock_agent.plan.return_value = {"response_text": "done", "tool_calls": [], "metadata": {"tokens": 5}, "cost": 0.0}
         orch = _make_orchestrator(app_state, mock_agent, mock_screen)
-        events = list(orch.sampling_loop())
+        events = list(orch.run())
         assert events[-1]["type"] == "complete"
 
     def test_error_event_on_exception(self, app_state, mock_agent, mock_screen):
         orch = _make_orchestrator(app_state, mock_agent, mock_screen)
         orch._capture_screen = Mock(side_effect=RuntimeError("camera broken"))
-        events = list(orch.sampling_loop())
+        events = list(orch.run())
         assert any(e["type"] == "error" for e in events)
 
 
@@ -329,7 +329,7 @@ class TestOrchestratorOrchestrated:
         mock_agent.llm_client.generate.return_value = (PLAN_JSON, {"tokens": 80})
         mock_agent._extract_data.side_effect = lambda text, fmt: text
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=1)
-        events = list(orch.sampling_loop())
+        events = list(orch.run())
         plan_events = [e for e in events if e["type"] == "plan"]
         assert len(plan_events) == 1
         assert "checklist" in plan_events[0]
@@ -338,7 +338,7 @@ class TestOrchestratorOrchestrated:
         mock_agent.llm_client.generate.return_value = (PLAN_JSON, {"tokens": 80})
         mock_agent._extract_data.side_effect = lambda text, fmt: text
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=1)
-        list(orch.sampling_loop())
+        list(orch.run())
         assert orch.checklist is not None
         assert len(orch.checklist.items) == 2
 
@@ -347,7 +347,7 @@ class TestOrchestratorOrchestrated:
         mock_agent.llm_client.generate.return_value = (PLAN_JSON, {"tokens": 80})
         mock_agent._extract_data.side_effect = lambda text, fmt: text
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=1)
-        list(orch.sampling_loop())
+        list(orch.run())
         # Only the plan LLM call, no reflect call on step 1
         assert mock_agent.llm_client.generate.call_count == 1
 
@@ -363,7 +363,7 @@ class TestOrchestratorOrchestrated:
         mock_agent.llm_client.generate.side_effect = side_effect
         mock_agent._extract_data.side_effect = lambda text, fmt: text
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=2)
-        events = list(orch.sampling_loop())
+        events = list(orch.run())
         ledger_events = [e for e in events if e["type"] == "ledger"]
         assert len(ledger_events) == 1  # Only on step 2
 
@@ -378,7 +378,7 @@ class TestOrchestratorOrchestrated:
         mock_agent.llm_client.generate.side_effect = side_effect
         mock_agent._extract_data.side_effect = lambda text, fmt: text
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=2)
-        list(orch.sampling_loop())
+        list(orch.run())
         assert orch.checklist is not None
         assert orch.checklist.items[0].status == "done"  # updated by REFLECT_JSON
 
@@ -386,7 +386,7 @@ class TestOrchestratorOrchestrated:
         mock_agent.llm_client.generate.return_value = (PLAN_JSON, {"tokens": 80})
         mock_agent._extract_data.side_effect = lambda text, fmt: text
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=1)
-        list(orch.sampling_loop())
+        list(orch.run())
         # init capture (1) + verify screen_after on step 1 (1) = 2 total
         # Observe on step 1 reuses _initial_screen (no capture)
         assert orch._capture_screen.call_count == 2
@@ -411,7 +411,7 @@ class TestOrchestratorOrchestrated:
         mock_agent.llm_client.generate.side_effect = side_effect
         mock_agent._extract_data.side_effect = lambda text, fmt: text
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=5)
-        events = list(orch.sampling_loop())
+        events = list(orch.run())
         reply_events = [e for e in events if e["type"] == "assistant_reply"]
         assert len(reply_events) == 1
         # Only reached step 2 (plan on 1, reflect+stop on 2)
@@ -428,13 +428,13 @@ class TestOrchestratorTask:
         mock_agent.llm_client.generate.return_value = (REFLECT_JSON, {"tokens": 60})
         mock_agent._extract_data.side_effect = lambda text, fmt: text
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.TASK, max_steps=1)
-        events = list(orch.sampling_loop())
+        events = list(orch.run())
         assert not any(e.get("message", "").startswith("Task mode is not yet") for e in events if e["type"] == "error")
 
     def test_task_checklist_from_numbered_message(self, app_state, mock_agent, mock_screen):
         app_state.chat.messages[0]["content"] = "1. Open Notepad\n2. Type hello\n3. Save file"
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.TASK, max_steps=1)
-        events = list(orch.sampling_loop())
+        events = list(orch.run())
         plan_events = [e for e in events if e["type"] == "plan"]
         assert len(plan_events) == 1
         assert len(plan_events[0]["checklist"]) == 3
@@ -442,7 +442,7 @@ class TestOrchestratorTask:
     def test_task_plan_event_before_first_step(self, app_state, mock_agent, mock_screen):
         app_state.chat.messages[0]["content"] = "1. Step A\n2. Step B"
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.TASK, max_steps=1)
-        events = list(orch.sampling_loop())
+        events = list(orch.run())
         indices = {e["type"]: i for i, e in enumerate(events)}
         # plan event must come before first step event
         assert indices["plan"] < indices["step"]
@@ -461,7 +461,7 @@ class TestOrchestratorTask:
         mock_agent.llm_client.generate.return_value = (parsed_checklist, {"tokens": 40})
         mock_agent._extract_data.side_effect = lambda text, fmt: text
         orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.TASK, max_steps=1)
-        events = list(orch.sampling_loop())
+        events = list(orch.run())
         plan_events = [e for e in events if e["type"] == "plan"]
         # LLM fallback should have produced 2 items
         assert len(plan_events[0]["checklist"]) == 2
@@ -473,11 +473,11 @@ class TestOrchestratorTask:
 
 class TestVLMAgentPrepareMessages:
     def _make_agent(self, tmp_path):
-        from omnitool.gradio.core.agents.vlm import VLMAgent
+        from omnitool.gradio.core.models.vlm import VLMAgent
         llm_client = Mock()
         state = AppState(run_folder=tmp_path)
         tools = Mock()
-        with patch("omnitool.gradio.core.agents.vlm.get_model_config", return_value={}):
+        with patch("omnitool.gradio.core.models.vlm.get_model_config", return_value={}):
             agent = VLMAgent("omniparser + gpt-4o", llm_client, state, tools, tmp_path)
         return agent
 
@@ -523,8 +523,8 @@ class TestVLMAgentPrepareMessages:
 
 class TestVLMAgentParseToolCalls:
     def _make_agent(self, tmp_path):
-        from omnitool.gradio.core.agents.vlm import VLMAgent
-        with patch("omnitool.gradio.core.agents.vlm.get_model_config", return_value={}):
+        from omnitool.gradio.core.models.vlm import VLMAgent
+        with patch("omnitool.gradio.core.models.vlm.get_model_config", return_value={}):
             return VLMAgent("test", Mock(), AppState(run_folder=tmp_path), Mock(), tmp_path)
 
     def test_left_click_with_box_id(self, tmp_path):
@@ -600,33 +600,33 @@ class TestVerifyStep:
         assert result["is_repeated"]
 
     def test_screen_unchanged_when_same_image(self, app_state, mock_agent, mock_screen):
-        from omnitool.gradio.core.orchestrator import SamplingOrchestrator
+        from omnitool.gradio.core.omniagent import OmniAgent
         screen_a = {"som_image_base64": "abc123", "parsed_content_list": []}
         screen_b = {"som_image_base64": "abc123", "parsed_content_list": []}
-        result = SamplingOrchestrator._compare_screens(screen_a, screen_b)
+        result = OmniAgent._compare_screens(screen_a, screen_b)
         assert result is True
 
     def test_screen_changed_when_different_image(self, app_state, mock_agent, mock_screen):
-        from omnitool.gradio.core.orchestrator import SamplingOrchestrator
+        from omnitool.gradio.core.omniagent import OmniAgent
         screen_a = {"som_image_base64": "abc123", "parsed_content_list": []}
         screen_b = {"som_image_base64": "xyz789", "parsed_content_list": []}
-        result = SamplingOrchestrator._compare_screens(screen_a, screen_b)
+        result = OmniAgent._compare_screens(screen_a, screen_b)
         assert result is False
 
     def test_screen_fallback_to_content_list(self, app_state, mock_agent, mock_screen):
-        from omnitool.gradio.core.orchestrator import SamplingOrchestrator
+        from omnitool.gradio.core.omniagent import OmniAgent
         screen_a = {"som_image_base64": "", "parsed_content_list": [{"content": "A"}]}
         screen_b = {"som_image_base64": "", "parsed_content_list": [{"content": "A"}]}
-        assert SamplingOrchestrator._compare_screens(screen_a, screen_b) is True
+        assert OmniAgent._compare_screens(screen_a, screen_b) is True
 
         screen_c = {"som_image_base64": "", "parsed_content_list": [{"content": "B"}]}
-        assert SamplingOrchestrator._compare_screens(screen_a, screen_c) is False
+        assert OmniAgent._compare_screens(screen_a, screen_c) is False
 
     def test_screen_compare_returns_false_on_missing(self, app_state, mock_agent, mock_screen):
-        from omnitool.gradio.core.orchestrator import SamplingOrchestrator
+        from omnitool.gradio.core.omniagent import OmniAgent
         # Missing either screen → safely report "changed" (don't false-stop)
-        assert SamplingOrchestrator._compare_screens(None, None) is False
-        assert SamplingOrchestrator._compare_screens({"som_image_base64": "x"}, None) is False
+        assert OmniAgent._compare_screens(None, None) is False
+        assert OmniAgent._compare_screens({"som_image_base64": "x"}, None) is False
 
     def test_verify_step_screen_unchanged_flag(self, app_state, mock_agent, mock_screen):
         orch = _make_orchestrator(app_state, mock_agent, mock_screen)

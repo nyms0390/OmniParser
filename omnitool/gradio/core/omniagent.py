@@ -1,10 +1,10 @@
 """
-Orchestrator - Main sampling loop containing all plan-execute-observe logic.
+OmniAgent - Main agentic loop with plan-execute-observe logic.
 
 Supports three agent modes:
 - INTERACTIVE: One action per LLM prompt (default).
 - ORCHESTRATED: Multi-step with plan initialization and ledger updates.
-- TASK: Deterministic workflow (not yet implemented).
+- TASK: Accepts a predefined checklist; shares the ORCHESTRATED loop body.
 """
 
 import base64
@@ -18,7 +18,7 @@ from typing import Any, Dict, Generator, List, Optional
 
 from PIL import Image
 
-from omnitool.gradio.clients.services.omniparser import OmniParserClient
+from omnitool.gradio.clients.external.omniparser import OmniParserClient
 from omnitool.gradio.config import (
     AgentMode,
     PLAN_PROMPT,
@@ -29,22 +29,22 @@ from omnitool.gradio.config import (
     build_vlm_system_prompt,
 )
 from omnitool.gradio.core.checklist import Checklist
-from omnitool.gradio.services import AppState
+from omnitool.gradio.app import AppState
 
-from .agents import create_agent
+from .models import create_agent
 
 logger = logging.getLogger(__name__)
 
 
-class SamplingOrchestrator:
-    """Main orchestrator for agent sampling loop.
-    
+class OmniAgent:
+    """Main agentic loop for OmniParser.
+
     Plan-execute-observe cycle with mode-aware logic:
-    
+
     - **INTERACTIVE** — one LLM call per step, no plan/ledger.
     - **ORCHESTRATED** — step 0 generates a plan, step 1+ runs a ledger
       reflection before the action call (2 LLM calls per step).
-    - **TASK** — deterministic workflow (not yet implemented).
+    - **TASK** — accepts a predefined checklist; shares the ORCHESTRATED loop body.
     """
     
     def __init__(
@@ -464,7 +464,7 @@ class SamplingOrchestrator:
     # Main sampling loop
     # ------------------------------------------------------------------
 
-    def sampling_loop(self) -> Generator[Dict[str, Any], None, None]:
+    def run(self) -> Generator[Dict[str, Any], None, None]:
         """Main sampling loop — plan-execute-observe cycle.
         
         Yields rich update dicts consumed by the UI layer.

@@ -9,7 +9,7 @@ import pytest
 
 from omnitool.gradio.config import APIProvider, get_all_model_names, get_model_config
 from omnitool.gradio.core import BaseTool, ToolCollection, ToolResult, create_agent
-from omnitool.gradio.services import AppState, AuthValidator
+from omnitool.gradio.app import AppState, AuthValidator
 
 
 class TestModelConfig:

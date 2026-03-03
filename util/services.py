@@ -243,7 +243,7 @@ class PaddleOCRBackend(BaseOCRBackend):
             # Use GPU API if enabled and api_url provided
             if use_gpu and 'api_url' in self.backend_config:
                 try:
-                    from omnitool.gradio.clients.services import PaddleOCRClient
+                    from omnitool.gradio.clients.external import PaddleOCRClient
                     api_url = self.backend_config['api_url']
                     logger.info(f"Initializing PaddleOCR GPU API client at {api_url}")
                     self._ocr = PaddleOCRClient(base_url=api_url)
@@ -301,7 +301,7 @@ class PaddleOCRBackend(BaseOCRBackend):
     
     def _is_gpu_api(self) -> bool:
         """Check if using GPU API instead of local PaddleOCR."""
-        return isinstance(self._ocr, __import__('omnitool.gradio.clients.services', 
+        return isinstance(self._ocr, __import__('omnitool.gradio.clients.external', 
                                                  fromlist=['PaddleOCRClient']).PaddleOCRClient)
     
     def clear_cache(self):

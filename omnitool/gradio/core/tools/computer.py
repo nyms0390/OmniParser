@@ -10,7 +10,7 @@ import re
 import time
 from typing import Dict, Tuple
 
-from omnitool.gradio.clients.services.windows_host import WindowsHostClient
+from omnitool.gradio.clients.external.windows_host import WindowsHostClient
 
 from .base import BaseTool, ToolResult
 

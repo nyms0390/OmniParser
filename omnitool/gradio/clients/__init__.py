@@ -10,9 +10,9 @@ from omnitool.gradio.clients.llm import (
     get_llm_client,
     get_llm_client_for_model,
 )
-from omnitool.gradio.clients.services.omniparser import OmniParserClient
-from omnitool.gradio.clients.services.paddleocr import PaddleOCRClient
-from omnitool.gradio.clients.services.windows_host import WindowsHostClient
+from omnitool.gradio.clients.external.omniparser import OmniParserClient
+from omnitool.gradio.clients.external.paddleocr import PaddleOCRClient
+from omnitool.gradio.clients.external.windows_host import WindowsHostClient
 
 __all__ = [
     "BaseLLMClient",

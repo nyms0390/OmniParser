@@ -8,7 +8,7 @@ from .base import BaseTool, ToolResult
 from .computer import ComputerTool
 
 if TYPE_CHECKING:
-    from omnitool.gradio.clients.services.windows_host import WindowsHostClient
+    from omnitool.gradio.clients.external.windows_host import WindowsHostClient
 
 
 class ToolCollection:

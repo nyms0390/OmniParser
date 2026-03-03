@@ -7,7 +7,7 @@ from typing import Optional
 
 from omnitool.gradio.clients import BaseLLMClient, get_llm_client
 from omnitool.gradio.config import MODEL_CONFIG, get_model_config
-from omnitool.gradio.services import AppState, get_api_key, AuthProvider
+from omnitool.gradio.app import AppState, get_api_key, AuthProvider
 
 from .anthropic import AnthropicAgent
 from .base import BaseAgent

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 
 from omnitool.gradio.clients.llm.base import BaseLLMClient
-from omnitool.gradio.services.state import AppState
+from omnitool.gradio.app.state import AppState
 
 if TYPE_CHECKING:
     from omnitool.gradio.core.tools import ToolCollection

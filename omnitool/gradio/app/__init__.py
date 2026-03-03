@@ -2,13 +2,13 @@
 Services module for OmniParser Gradio refactored version.
 """
 
-from omnitool.gradio.services.auth import (
+from omnitool.gradio.app.auth import (
     AuthValidator,
     get_api_key,
     validate_api_key,
 )
-from omnitool.gradio.services.file_handler import FileHandler
-from omnitool.gradio.services.state import (
+from omnitool.gradio.app.file_handler import FileHandler
+from omnitool.gradio.app.state import (
     AgentState,
     AppState,
     AuthProvider,

@@ -28,7 +28,7 @@ import gradio as gr
 from PIL import Image
 
 from omnitool.gradio.clients import OmniParserClient, PaddleOCRClient, WindowsHostClient
-from omnitool.gradio.clients.services import ServiceValidator
+from omnitool.gradio.clients.external import ServiceValidator
 from omnitool.gradio.config import (
     AgentMode,
     create_argument_parser,
@@ -36,10 +36,10 @@ from omnitool.gradio.config import (
     setup_logging,
 )
 from omnitool.gradio.core import (
-    SamplingOrchestrator,
+    OmniAgent,
     ToolCollection,
 )
-from omnitool.gradio.services import AppState, FileHandler, validate_api_key
+from omnitool.gradio.app import AppState, FileHandler, validate_api_key
 from omnitool.gradio.ui.gradio.components import (
     format_action_result,
     format_ledger,
@@ -332,12 +332,12 @@ class GradioApp:
             if provider == "azure":
                 orchestrator_kwargs["azure_endpoint"] = self.settings.azure_endpoint
             
-            self.orchestrator = SamplingOrchestrator(**orchestrator_kwargs)
+            self.orchestrator = OmniAgent(**orchestrator_kwargs)
             
             # Stream sampling loop updates to the chatbot
             status = "Running..."
             is_first_screen = True  # Auto-expand the initial screen capture
-            for update in self.orchestrator.sampling_loop():
+            for update in self.orchestrator.run():
                 update_type = update.get("type", "")
                 
                 if update_type == "parsed_screen":
