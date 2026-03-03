@@ -62,16 +62,14 @@ PLATFORM_PROMPTS: Dict[str, PlatformPrompt] = {
 # ---------------------------------------------------------------------------
 
 THINKING_INSTRUCTION_STANDARD = (
-    "\n2. You should give an analysis to the current screen, and reflect on "
-    "what has been done by looking at the history, then describe your "
-    "step-by-step thoughts on how to achieve the task.\n"
+    "\n2. Write your \"Reasoning\" as a concise prose summary covering "
+    "screen state, history, and action rationale.\n"
 )
 
 THINKING_INSTRUCTION_R1 = (
-    "\n2. In <think> XML tags give an analysis to the current screen, and "
-    "reflect on what has been done by looking at the history, then describe "
-    "your step-by-step thoughts on how to achieve the task. In <output> XML "
-    "tags put the next action prediction JSON.\n"
+    "\n2. Write extended reasoning in <think> XML tags (screen state, "
+    "history, action rationale). Put only the final JSON in <output> "
+    "XML tags.\n"
 )
 
 
@@ -91,8 +89,11 @@ VLM_SYSTEM_PROMPT_TEMPLATE = """\
 You are able to use a mouse and keyboard to interact with the computer based on the given task and screenshot.
 {interaction_constraints}
 
-You may be given some history plan and actions, this is the response from the previous loop.
-You should carefully consider your plan based on the task, screenshot, and history actions.
+For each step, follow this process:
+1. Read the <screen_elements> list to identify what each Box ID represents (type, interactivity, content).
+2. Examine the attached SOM image to locate those boxes visually and understand the screen layout.
+3. Review the action history to assess what has already been done and whether it succeeded.
+4. Decide the single next action and, when required, the target Box ID.
 
 Your available "Next Action" only include:
 - type: types a string of text.
@@ -104,54 +105,52 @@ Your available "Next Action" only include:
 - scroll_down: scrolls the screen down, when the desired button is not visible, or you need to see more content.
 - wait: waits for 1 second for the device to load or respond.
 
-Based on the visual information from the screenshot image and the detected bounding boxes, please determine the next action, the Box ID you should operate on (if action is one of 'type', 'hover', 'scroll_up', 'scroll_down', 'wait', there should be no Box ID field), and the value (if the action is 'type') in order to complete the task.
-
 Output format:
 ```json
 {{
-    "Reasoning": str, # describe what is in the current screen, taking into account the history, then describe your step-by-step thoughts on how to achieve the task, choose one action from available actions at a time.
-    "Next Action": "action_type, action description" | "None" # one action at a time, describe it in short and precisely.
-    "Box ID": n,
-    "value": "xxx" # only provide value field if the action is type, else don't include value key
+    "Reasoning": str, # concise summary of what you see on screen, what history tells you, and why you chose this action.
+    "Next Action": "action_type, action description" | "None" # one action at a time, describe it briefly.
+    "Box ID": n, # required for left_click, right_click, double_click, hover, type — omit for scroll_up, scroll_down, wait
+    "value": "xxx" # required when action is type; omit for all other actions
 }}
 ```
 
 One Example:
 ```json
 {{
-    "Reasoning": "The current screen shows google result of amazon, in previous action I have searched amazon on google. Then I need to click on the first search results to go to amazon.com.",
-    "Next Action": "left_click",
-    "Box ID": m
+    "Reasoning": "Box 3 is an interactive icon ('Chrome browser') on the desktop. No previous actions. Opening Chrome by double-clicking Box 3.",
+    "Next Action": "double_click, open Chrome browser",
+    "Box ID": 3
 }}
 ```
 
 Another Example:
 ```json
 {{
-    "Reasoning": "The current screen shows the front page of amazon. There is no previous action. Therefore I need to type \\"Apple watch\\" in the search bar.",
-    "Next Action": "type",
-    "Box ID": n,
-    "value": "Apple watch"
+    "Reasoning": "Box 0 is the browser address bar. Previous action clicked address bar and screen changed. Typing the target URL.",
+    "Next Action": "type, enter URL",
+    "Box ID": 0,
+    "value": "https://github.com"
 }}
 ```
 
 Another Example:
 ```json
 {{
-    "Reasoning": "The current screen does not show 'submit' button, I need to scroll down to see if the button is available.",
-    "Next Action": "scroll_down",
+    "Reasoning": "No element matching 'Submit' is visible in screen elements. The SOM image shows the page is cut off — button is likely below the fold. Scrolling down.",
+    "Next Action": "scroll_down, look for Submit button",
 }}
 ```
 
 IMPORTANT NOTES:
 1. You should only give a single action at a time.
 {thinking_instruction}
-3. Attach the next action prediction in the "Next Action".
-4. You should not include other actions, such as keyboard shortcuts.
-5. When the task is completed, don't complete additional actions. You should say "Next Action": "None" in the json field.
-6. Avoid choosing the same action/elements multiple times in a row, if it happens, reflect to yourself, what may have gone wrong, and predict a different action.
-7. If you are prompted with login information page or captcha page, or you think it need user's permission to do the next action, you should say "Next Action": "None" in the json field.
-8. To open applications from desktop icons or files/folders in file explorer, always use "double_click" instead of "left_click". A single click on a desktop icon only selects it without launching the application. Use "left_click" for buttons, links, menu items, and other interactive UI elements inside applications.
+3. You should not include other actions, such as keyboard shortcuts.
+4. When the task is completed, say "Next Action": "None".
+5. Avoid choosing the same action/elements multiple times in a row. If it happens, reflect on what may have gone wrong and try a different action or target.
+6. If you encounter a login page, captcha, or an action that requires user permission, say "Next Action": "None".
+7. To open applications from desktop icons or files/folders, always use "double_click". A single click only selects without launching. Use "left_click" for buttons, links, and menu items inside applications.
+8. Strictly follow the output format, do not output any additional explainations.
 """
 
 
