@@ -16,8 +16,10 @@ Usage:
 
 import argparse
 import logging
+import re
 import sys
 import time
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -67,7 +69,7 @@ def _build_ppocr_engine(device: str, lang: str = "en", **kwargs):
 # ---------------------------------------------------------------------------
 
 def _run_vl(engine, pdf_path: Path, out_dir: Path, *, merge_tables: bool, relevel_titles: bool):
-    """Run PaddleOCR-VL inference on a single PDF and save native outputs."""
+    """Run PaddleOCR-VL inference on a single PDF and save outputs."""
     results = list(engine.predict(input=str(pdf_path)))
 
     if merge_tables or relevel_titles:
@@ -82,18 +84,195 @@ def _run_vl(engine, pdf_path: Path, out_dir: Path, *, merge_tables: bool, releve
         res.save_to_json(save_path=str(out_dir))
         res.save_to_markdown(save_path=str(out_dir))
 
+        # save_to_html() is not supported on PaddleOCRVLPagesResult (multi-page /
+        # restructured); it logs a warning and returns None.  Fall back to converting
+        # the markdown we already saved.
+        html_result = res.save_to_html(save_path=str(out_dir))
+        if html_result is None:
+            _convert_md_to_html(out_dir)
+
     return len(results)
 
 
 def _run_ppocr(engine, pdf_path: Path, out_dir: Path):
-    """Run PP-OCRv5 inference on a single PDF and save native outputs."""
+    """Run PP-OCRv5 inference on a single PDF and save res_img only."""
     results = list(engine.predict(input=str(pdf_path)))
 
-    for res in results:
+    for i, res in enumerate(results):
         res.save_to_json(save_path=str(out_dir))
-        res.save_to_img(save_path=str(out_dir))
+        _save_ppocr_res_img(res, out_dir, page_idx=i)
 
     return len(results)
+
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+
+def _save_ppocr_res_img(res, out_dir: Path, page_idx: int) -> None:
+    """Save only the annotated result image (ocr_res_img), skipping
+    any preprocessed / intermediate input images."""
+    img_dict = res.img  # Dict[str, PIL.Image.Image]
+    res_img = img_dict.get("ocr_res_img")
+    if res_img is None:
+        # Unexpected key layout — fall back to saving all keys
+        logger.warning(
+            "ocr_res_img not found in result.img keys %s; saving all.", list(img_dict)
+        )
+        for key, img in img_dict.items():
+            img.save(str(out_dir / f"page_{page_idx:04d}_{key}.png"))
+        return
+    out_path = out_dir / f"page_{page_idx:04d}_res_img.png"
+    res_img.save(str(out_path))
+
+
+def _convert_md_to_html(out_dir: Path) -> None:
+    """Convert every *.md file in *out_dir* to a sibling *.html file.
+
+    Uses a minimal pure-stdlib Markdown→HTML converter sufficient for the
+    structured output that PaddleOCR-VL produces (headers, paragraphs,
+    bold/italic, inline code, fenced code blocks, GFM tables, images,
+    horizontal rules).
+    """
+    for md_path in out_dir.glob("*.md"):
+        html_path = md_path.with_suffix(".html")
+        html_content = _md_to_html(md_path.read_text(encoding="utf-8"))
+        html_path.write_text(html_content, encoding="utf-8")
+        logger.debug("  → converted %s → %s", md_path.name, html_path.name)
+
+
+def _md_to_html(md: str) -> str:
+    """Minimal Markdown-to-HTML converter (no external dependencies).
+
+    Handles the subset produced by PaddleOCR-VL:
+    - ATX headings (#–######)
+    - Fenced code blocks (``` ```)
+    - GFM tables (| col | col |)
+    - Horizontal rules (---, ***)
+    - Images (![alt](src))
+    - Bold (**text** / __text__)
+    - Italic (*text* / _text_)
+    - Inline code (`code`)
+    - Paragraphs / line breaks
+    """
+    lines = md.splitlines()
+    html_parts: list[str] = []
+    i = 0
+
+    def _inline(text: str) -> str:
+        """Apply inline-level transformations."""
+        # Images before links
+        text = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', r'<img alt="\1" src="\2">', text)
+        # Bold
+        text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+        text = re.sub(r'__(.+?)__', r'<strong>\1</strong>', text)
+        # Italic
+        text = re.sub(r'\*(.+?)\*', r'<em>\1</em>', text)
+        text = re.sub(r'_(.+?)_', r'<em>\1</em>', text)
+        # Inline code
+        text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+        return text
+
+    while i < len(lines):
+        line = lines[i]
+
+        # --- Fenced code block ---
+        if line.strip().startswith("```"):
+            lang = line.strip()[3:].strip()
+            code_lines: list[str] = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+            lang_attr = f' class="language-{lang}"' if lang else ""
+            escaped = "\n".join(code_lines).replace("&", "&amp;").replace("<", "&lt;")
+            html_parts.append(f"<pre><code{lang_attr}>{escaped}</code></pre>")
+            i += 1
+            continue
+
+        # --- ATX heading ---
+        heading_match = re.match(r'^(#{1,6})\s+(.*)', line)
+        if heading_match:
+            level = len(heading_match.group(1))
+            html_parts.append(f"<h{level}>{_inline(heading_match.group(2))}</h{level}>")
+            i += 1
+            continue
+
+        # --- Horizontal rule ---
+        if re.match(r'^(\*{3,}|-{3,}|_{3,})\s*$', line):
+            html_parts.append("<hr>")
+            i += 1
+            continue
+
+        # --- GFM table ---
+        if "|" in line and i + 1 < len(lines) and re.match(r'^\|?\s*[-:]+', lines[i + 1]):
+            def _parse_row(row: str) -> list[str]:
+                return [c.strip() for c in row.strip().strip("|").split("|")]
+
+            headers = _parse_row(line)
+            i += 2  # skip separator row
+            header_html = "".join(f"<th>{_inline(h)}</th>" for h in headers)
+            rows_html: list[str] = []
+            while i < len(lines) and "|" in lines[i]:
+                cells = _parse_row(lines[i])
+                row_html = "".join(f"<td>{_inline(c)}</td>" for c in cells)
+                rows_html.append(f"<tr>{row_html}</tr>")
+                i += 1
+            rows_block = "\n".join(rows_html)
+            html_parts.append(
+                f"<table>\n<thead><tr>{header_html}</tr></thead>\n"
+                f"<tbody>\n{rows_block}\n</tbody>\n</table>"
+            )
+            continue
+
+        # --- Empty line (paragraph separator) ---
+        if line.strip() == "":
+            html_parts.append("")
+            i += 1
+            continue
+
+        # --- Paragraph / plain line ---
+        # Collect contiguous non-empty, non-special lines into one <p>
+        para_lines: list[str] = []
+        while i < len(lines):
+            l = lines[i]
+            if (
+                l.strip() == ""
+                or re.match(r'^#{1,6}\s', l)
+                or l.strip().startswith("```")
+                or re.match(r'^(\*{3,}|-{3,}|_{3,})\s*$', l)
+                or ("|" in l and i + 1 < len(lines) and re.match(r'^\|?\s*[-:]+', lines[i + 1]))
+            ):
+                break
+            para_lines.append(_inline(l))
+            i += 1
+        if para_lines:
+            html_parts.append(f"<p>{'<br>'.join(para_lines)}</p>")
+
+    body = "\n".join(html_parts)
+    return (
+        "<!DOCTYPE html>\n<html>\n<head>\n"
+        '<meta charset="utf-8">\n'
+        "<style>\n"
+        "  body { font-family: sans-serif; max-width: 960px; margin: 2em auto; }\n"
+        "  table { border-collapse: collapse; width: 100%; }\n"
+        "  th, td { border: 1px solid #ccc; padding: 6px 10px; }\n"
+        "  th { background: #f0f0f0; }\n"
+        "  pre { background: #f8f8f8; padding: 1em; overflow-x: auto; }\n"
+        "  img { max-width: 100%; }\n"
+        "</style>\n"
+        "</head>\n<body>\n"
+        f"{body}\n"
+        "</body>\n</html>\n"
+    )
+
+
+def _zip_dir(src_dir: Path, zip_path: Path) -> None:
+    """Create a zip archive of all files in *src_dir* (flat, no subdirectory prefix)."""
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for file_path in sorted(src_dir.rglob("*")):
+            if file_path.is_file():
+                zf.write(file_path, arcname=file_path.relative_to(src_dir))
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +358,11 @@ def run_batch(
         "Done — %d/%d files succeeded, %d failed, %d total page(s), %.1fs elapsed",
         success_count, len(pdf_files), fail_count, total_pages, elapsed_total,
     )
+
+    # Zip the entire output directory into a single archive next to it.
+    zip_path = output_dir.with_suffix(".zip")
+    _zip_dir(output_dir, zip_path)
+    logger.info("Results zipped → %s", zip_path)
 
 
 # ---------------------------------------------------------------------------
