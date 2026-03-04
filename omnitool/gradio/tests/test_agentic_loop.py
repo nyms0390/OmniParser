@@ -12,7 +12,7 @@ import pytest
 
 from omnitool.gradio.config import AgentMode
 from omnitool.gradio.config.prompts import PLAN_PROMPT, REFLECT_PROMPT, TASK_PARSE_PROMPT
-from omnitool.gradio.core.checklist import Checklist, ChecklistItem
+from omnitool.gradio.core.agents.checklist import Checklist, ChecklistItem
 from omnitool.gradio.app import AppState
 
 
@@ -68,17 +68,19 @@ def mock_screen():
 
 def _make_orchestrator(app_state, mock_agent, mock_screen, mode=AgentMode.INTERACTIVE, max_steps=3):
     """Build an OmniAgent with all external calls mocked out."""
-    from omnitool.gradio.core.omniagent import OmniAgent
+    from omnitool.gradio.core.agents import OmniAgent
+    from pathlib import Path
 
-    with patch("omnitool.gradio.core.omniagent.create_agent", return_value=mock_agent):
-        orch = OmniAgent(
-            model_name="omniparser + gpt-4o",
-            state=app_state,
-            tools_collection=Mock(),
-            omniparser_client=Mock(),
-            max_steps=max_steps,
-            mode=mode,
-        )
+    orch = OmniAgent(
+        model_name="omniparser + gpt-4o",
+        llm_client=mock_agent,
+        state=app_state,
+        tools_collection=Mock(),
+        save_folder=Path(app_state.run_folder),
+        omniparser_client=Mock(),
+        max_steps=max_steps,
+        mode=mode,
+    )
 
     orch._capture_screen = Mock(return_value=mock_screen)
     return orch
@@ -473,12 +475,11 @@ class TestOrchestratorTask:
 
 class TestVLMAgentPrepareMessages:
     def _make_agent(self, tmp_path):
-        from omnitool.gradio.core.models.vlm import VLMAgent
+        from omnitool.gradio.core.agents import OmniAgent
         llm_client = Mock()
         state = AppState(run_folder=tmp_path)
         tools = Mock()
-        with patch("omnitool.gradio.core.models.vlm.get_model_config", return_value={}):
-            agent = VLMAgent("omniparser + gpt-4o", llm_client, state, tools, tmp_path)
+        agent = OmniAgent("omniparser + gpt-4o", llm_client, state, tools, tmp_path, omniparser_client=Mock())
         return agent
 
     def test_som_image_attached_when_available(self, tmp_path):
@@ -488,7 +489,7 @@ class TestVLMAgentPrepareMessages:
             "som_image_base64": "sombase64data",
             "parsed_content_list": [],
         }
-        prepared = agent._prepare_messages(messages, parsed_screen)
+        prepared = agent._format_messages(messages, parsed_screen)
         last = prepared[-1]
         # Content should be a list (multipart) with an image_url entry
         assert isinstance(last["content"], list)
@@ -502,7 +503,7 @@ class TestVLMAgentPrepareMessages:
             "som_image_base64": "",
             "parsed_content_list": [{"content": "button"}],
         }
-        prepared = agent._prepare_messages(messages, parsed_screen)
+        prepared = agent._format_messages(messages, parsed_screen)
         last = prepared[-1]
         assert isinstance(last["content"], str)
         assert "screen_elements" in last["content"]
@@ -514,7 +515,7 @@ class TestVLMAgentPrepareMessages:
             "som_image_base64": "fakeb64",
             "parsed_content_list": [],
         }
-        prepared = agent._prepare_messages(messages, parsed_screen)
+        prepared = agent._format_messages(messages, parsed_screen)
         last = prepared[-1]
         # Content is a single image_url entry — no text parts at all
         assert isinstance(last["content"], list)
@@ -523,9 +524,8 @@ class TestVLMAgentPrepareMessages:
 
 class TestVLMAgentParseToolCalls:
     def _make_agent(self, tmp_path):
-        from omnitool.gradio.core.models.vlm import VLMAgent
-        with patch("omnitool.gradio.core.models.vlm.get_model_config", return_value={}):
-            return VLMAgent("test", Mock(), AppState(run_folder=tmp_path), Mock(), tmp_path)
+        from omnitool.gradio.core.agents import OmniAgent
+        return OmniAgent("test", Mock(), AppState(run_folder=tmp_path), Mock(), tmp_path, omniparser_client=Mock())
 
     def test_left_click_with_box_id(self, tmp_path):
         agent = self._make_agent(tmp_path)
@@ -535,7 +535,7 @@ class TestVLMAgentParseToolCalls:
             "screen_width": 1000,
             "screen_height": 1000,
         }
-        calls = agent._parse_tool_calls(response, parsed_screen)
+        calls = agent._parse_response(response, parsed_screen)
         actions = [c["action"] for c in calls]
         assert "mouse_move" in actions
         assert "left_click" in actions
@@ -543,24 +543,24 @@ class TestVLMAgentParseToolCalls:
     def test_type_action(self, tmp_path):
         agent = self._make_agent(tmp_path)
         response = '{"Next Action": "type", "value": "hello world"}'
-        calls = agent._parse_tool_calls(response, {"parsed_content_list": [], "screen_width": 1920, "screen_height": 1080})
+        calls = agent._parse_response(response, {"parsed_content_list": [], "screen_width": 1920, "screen_height": 1080})
         assert any(c["action"] == "type" and c.get("text") == "hello world" for c in calls)
 
     def test_none_action_returns_empty(self, tmp_path):
         agent = self._make_agent(tmp_path)
         response = '{"Next Action": "None", "Reasoning": "task complete"}'
-        calls = agent._parse_tool_calls(response, {"parsed_content_list": [], "screen_width": 1920, "screen_height": 1080})
+        calls = agent._parse_response(response, {"parsed_content_list": [], "screen_width": 1920, "screen_height": 1080})
         assert calls == []
 
     def test_invalid_json_returns_empty(self, tmp_path):
         agent = self._make_agent(tmp_path)
-        calls = agent._parse_tool_calls("not json", {"parsed_content_list": [], "screen_width": 1920, "screen_height": 1080})
+        calls = agent._parse_response("not json", {"parsed_content_list": [], "screen_width": 1920, "screen_height": 1080})
         assert calls == []
 
     def test_invalid_box_id_skips_coordinate(self, tmp_path):
         agent = self._make_agent(tmp_path)
         response = '{"Next Action": "left_click", "Box ID": 999}'
-        calls = agent._parse_tool_calls(response, {"parsed_content_list": [], "screen_width": 1920, "screen_height": 1080})
+        calls = agent._parse_response(response, {"parsed_content_list": [], "screen_width": 1920, "screen_height": 1080})
         # Should still produce a left_click, just no mouse_move (no coordinate)
         actions = [c["action"] for c in calls]
         assert "mouse_move" not in actions
@@ -600,21 +600,21 @@ class TestVerifyStep:
         assert result["is_repeated"]
 
     def test_screen_unchanged_when_same_image(self, app_state, mock_agent, mock_screen):
-        from omnitool.gradio.core.omniagent import OmniAgent
+        from omnitool.gradio.core.agents import BaseAgent as OmniAgent
         screen_a = {"som_image_base64": "abc123", "parsed_content_list": []}
         screen_b = {"som_image_base64": "abc123", "parsed_content_list": []}
         result = OmniAgent._compare_screens(screen_a, screen_b)
         assert result is True
 
     def test_screen_changed_when_different_image(self, app_state, mock_agent, mock_screen):
-        from omnitool.gradio.core.omniagent import OmniAgent
+        from omnitool.gradio.core.agents import BaseAgent as OmniAgent
         screen_a = {"som_image_base64": "abc123", "parsed_content_list": []}
         screen_b = {"som_image_base64": "xyz789", "parsed_content_list": []}
         result = OmniAgent._compare_screens(screen_a, screen_b)
         assert result is False
 
     def test_screen_fallback_to_content_list(self, app_state, mock_agent, mock_screen):
-        from omnitool.gradio.core.omniagent import OmniAgent
+        from omnitool.gradio.core.agents import BaseAgent as OmniAgent
         screen_a = {"som_image_base64": "", "parsed_content_list": [{"content": "A"}]}
         screen_b = {"som_image_base64": "", "parsed_content_list": [{"content": "A"}]}
         assert OmniAgent._compare_screens(screen_a, screen_b) is True
@@ -623,7 +623,7 @@ class TestVerifyStep:
         assert OmniAgent._compare_screens(screen_a, screen_c) is False
 
     def test_screen_compare_returns_false_on_missing(self, app_state, mock_agent, mock_screen):
-        from omnitool.gradio.core.omniagent import OmniAgent
+        from omnitool.gradio.core.agents import BaseAgent as OmniAgent
         # Missing either screen → safely report "changed" (don't false-stop)
         assert OmniAgent._compare_screens(None, None) is False
         assert OmniAgent._compare_screens({"som_image_base64": "x"}, None) is False

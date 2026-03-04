@@ -36,7 +36,7 @@ from omnitool.gradio.config import (
     setup_logging,
 )
 from omnitool.gradio.core import (
-    OmniAgent,
+    create_agent,
     ToolCollection,
 )
 from omnitool.gradio.app import AppState, FileHandler, validate_api_key
@@ -322,6 +322,7 @@ class GradioApp:
                 "state": state,
                 "tools_collection": self.tools,
                 "omniparser_client": self.omniparser_client,
+                "save_folder": Path(self.settings.run_folder),
                 "max_steps": 20,
                 "provider": provider,
                 "mode": agent_mode,
@@ -332,7 +333,7 @@ class GradioApp:
             if provider == "azure":
                 orchestrator_kwargs["azure_endpoint"] = self.settings.azure_endpoint
             
-            self.orchestrator = OmniAgent(**orchestrator_kwargs)
+            self.orchestrator = create_agent(**orchestrator_kwargs)
             
             # Stream sampling loop updates to the chatbot
             status = "Running..."

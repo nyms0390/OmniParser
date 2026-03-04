@@ -8,6 +8,7 @@ import logging
 from typing import Dict, List, Tuple
 
 from .base import BaseServiceClient
+from .gta1 import GTA1Client
 from .omniparser import OmniParserClient
 from .paddleocr import PaddleOCRClient
 from .windows_host import WindowsHostClient
@@ -74,6 +75,7 @@ class ServiceValidator:
 
 __all__ = [
     'BaseServiceClient',
+    'GTA1Client',
     'OmniParserClient',
     'PaddleOCRClient',
     'WindowsHostClient',

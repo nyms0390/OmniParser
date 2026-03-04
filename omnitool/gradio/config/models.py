@@ -85,6 +85,22 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
         "temperature": 0.6,  # Groq R1 uses different temperature
         "supports_images": False,  # R1 doesn't support images
     },
+    # GTA1 + GPT-4o (raw screenshot + GTA1 grounding, no OmniParser)
+    "gta1 + gpt-4o": {
+        "internal_name": "gpt-4o-2024-11-20",
+        "agent_type": "GTAAgent",
+        "llm_client": "openai",
+        "provider": [APIProvider.OPENAI],
+        "provider_base_url": "https://api.openai.com/v1",
+        "gta1_url": None,  # falls back to GTA1_URL env var or http://localhost:8002
+        "pricing": {
+            "token_type": "total",
+            "cost_per_1m": 2.5,
+        },
+        "max_tokens": 4096,
+        "temperature": 0.0,
+        "supports_images": True,
+    },
     # Claude 3.5 Sonnet (Anthropic, Bedrock, Vertex)
     "claude-3-5-sonnet-20241022": {
         "internal_name": "claude-3-5-sonnet-20241022",

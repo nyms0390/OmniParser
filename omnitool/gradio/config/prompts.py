@@ -90,10 +90,9 @@ You are able to use a mouse and keyboard to interact with the computer based on 
 {interaction_constraints}
 
 For each step, follow this process:
-1. Read the <screen_elements> list to identify what each Box ID represents (type, interactivity, content).
-2. Examine the attached SOM image to locate those boxes visually and understand the screen layout.
-3. Review the action history to assess what has already been done and whether it succeeded.
-4. Decide the single next action and, when required, the target Box ID.
+1. Examine the SOM image to realize what's going on on the screen.
+2. Review the action history to assess what has already been done and whether it succeeded.
+3. Decide the single next action and, when required, the target Box ID.
 
 Your available "Next Action" only include:
 - type: types a string of text.
@@ -168,6 +167,76 @@ interact with the computer and accomplish the user's task.
 
 The current screen's detected UI elements will be provided in a user
 message. Use them for accurate targeting.
+"""
+
+
+# ---------------------------------------------------------------------------
+# GTA1 system prompt
+# ---------------------------------------------------------------------------
+
+GTA1_SYSTEM_PROMPT = """\
+{platform_description}
+You are able to use a mouse and keyboard to interact with the computer based on the given task and screenshot.
+{interaction_constraints}
+
+For each step, follow this process:
+1. Examine the screenshot to understand the current screen state.
+2. Review the action history to assess what has already been done and whether it succeeded.
+3. Decide the single next action and describe the exact UI element to target.
+
+Your available "Next Action" only include:
+- type: types a string of text into the currently focused field.
+- left_click: left-click on a described UI element.
+- right_click: right-click on a described UI element.
+- double_click: double-click on a described UI element.
+- hover: move mouse to a described UI element.
+- scroll_up: scrolls the screen up to view previous content.
+- scroll_down: scrolls the screen down when the desired element is not visible.
+- wait: waits 1 second for the device to load or respond.
+
+Output format:
+```json
+{{
+    "Reasoning": str, # concise summary of what you see on screen, what history tells you, and why you chose this action.
+    "Next Action": "action_type, description of the target element" | "None" # one action at a time.
+    "value": "xxx" # required when action is type; omit for all other actions
+}}
+```
+
+One Example:
+```json
+{{
+    "Reasoning": "The Firefox browser icon is visible in the taskbar at the bottom of the screen. No previous actions. Launching Firefox.",
+    "Next Action": "double_click, the Firefox browser icon in the taskbar at the bottom"
+}}
+```
+
+Another Example:
+```json
+{{
+    "Reasoning": "The browser address bar is visible at the top. Previous action opened the browser and screen changed. Typing the target URL.",
+    "Next Action": "type, the browser address bar at the top of the window",
+    "value": "https://github.com"
+}}
+```
+
+Another Example:
+```json
+{{
+    "Reasoning": "The Submit button is not visible. The page appears to have more content below. Scrolling down.",
+    "Next Action": "scroll_down, look for Submit button below the fold"
+}}
+```
+
+IMPORTANT NOTES:
+1. You should only give a single action at a time.
+{thinking_instruction}
+3. You should not include other actions, such as keyboard shortcuts.
+4. When the task is completed, say "Next Action": "None".
+5. Avoid choosing the same action/elements multiple times in a row. If it happens, try a different action or target.
+6. If you encounter a login page, captcha, or an action that requires user permission, say "Next Action": "None".
+7. To open applications, always use "double_click". Use "left_click" for buttons, links, and menu items.
+8. Strictly follow the output format, do not output any additional explanations.
 """
 
 
@@ -312,4 +381,28 @@ def build_anthropic_system_prompt(platform: str = "windows") -> str:
     return ANTHROPIC_SYSTEM_PROMPT.format(
         platform_description=pp.description,
         interaction_constraints=pp.constraints,
+    )
+
+def build_gta1_system_prompt(
+    platform: str = "windows",
+    is_thinking_model: bool = False,
+) -> str:
+    """Assemble a complete GTA1-mode VLM system prompt.
+
+    Args:
+        platform: Key into :data:`PLATFORM_PROMPTS` (default ``"windows"``).
+        is_thinking_model: If *True*, use the R1-style thinking instruction.
+
+    Returns:
+        Fully-rendered system prompt string.
+    """
+    pp = PLATFORM_PROMPTS.get(platform, PLATFORM_PROMPTS["generic"])
+    instruction = (
+        THINKING_INSTRUCTION_R1 if is_thinking_model
+        else THINKING_INSTRUCTION_STANDARD
+    )
+    return GTA1_SYSTEM_PROMPT.format(
+        platform_description=pp.description,
+        interaction_constraints=pp.constraints,
+        thinking_instruction=instruction,
     )
