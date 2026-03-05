@@ -88,10 +88,11 @@ def get_llm_client(
         )
     
     elif provider_lower in [APIProvider.AZURE, "azure"]:
+        azure_endpoint = kwargs.pop("azure_endpoint", None)
         return AzureOpenAIClient(
             api_key=api_key,
             model=model,
-            azure_endpoint=kwargs.get("azure_endpoint"),
+            azure_endpoint=azure_endpoint,
             **kwargs
         )
     

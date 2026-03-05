@@ -13,7 +13,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
     # GPT-4o Standard (OpenAI and Azure)
     "omniparser + gpt-4o": {
         "internal_name": "gpt-4o-2024-11-20",
-        "agent_type": "VLMAgent",
+        "agent_type": "OmniAgent",
         "llm_client": "openai",
         "provider": [APIProvider.OPENAI, APIProvider.AZURE],
         "provider_base_url": "https://api.openai.com/v1",
@@ -28,7 +28,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
     # O1 Standard (OpenAI)
     "omniparser + o1": {
         "internal_name": "o1",
-        "agent_type": "VLMAgent",
+        "agent_type": "OmniAgent",
         "llm_client": "openai",
         "provider": [APIProvider.OPENAI],
         "provider_base_url": "https://api.openai.com/v1",
@@ -43,7 +43,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
     # O3-Mini (OpenAI)
     "omniparser + o3-mini": {
         "internal_name": "o3-mini",
-        "agent_type": "VLMAgent",
+        "agent_type": "OmniAgent",
         "llm_client": "openai",
         "provider": [APIProvider.OPENAI],
         "provider_base_url": "https://api.openai.com/v1",
@@ -58,7 +58,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
     # Qwen 2.5 VL (DashScope/Aliyun)
     "omniparser + qwen2.5vl": {
         "internal_name": "qwen2.5-vl-72b-instruct",
-        "agent_type": "VLMAgent",
+        "agent_type": "OmniAgent",
         "llm_client": "openai",  # Uses OpenAI-compatible API
         "provider": [APIProvider.DASHSCOPE],
         "provider_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -73,7 +73,7 @@ MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
     # DeepSeek R1 (Groq)
     "omniparser + R1": {
         "internal_name": "deepseek-r1-distill-llama-70b",
-        "agent_type": "VLMAgent",
+        "agent_type": "OmniAgent",
         "llm_client": "groq",
         "provider": [APIProvider.GROQ],
         "provider_base_url": None,  # Groq manages its own base URL

@@ -159,6 +159,13 @@ def _md_to_html(md: str) -> str:
     html_parts: list[str] = []
     i = 0
 
+    # Block-level HTML tags that must NOT be wrapped in <p>
+    _BLOCK_HTML_RE = re.compile(
+        r'^\s*</?(?:div|figure|section|article|blockquote|ul|ol|li|dl|dt|dd'
+        r'|header|footer|nav|aside|main|details|summary)[^>]*>',
+        re.IGNORECASE,
+    )
+
     def _inline(text: str) -> str:
         """Apply inline-level transformations."""
         # Images before links
@@ -231,6 +238,12 @@ def _md_to_html(md: str) -> str:
             i += 1
             continue
 
+        # --- Raw block-level HTML (e.g. <div> wrappers from pretty=True VL output) ---
+        if _BLOCK_HTML_RE.match(line):
+            html_parts.append(line)
+            i += 1
+            continue
+
         # --- Paragraph / plain line ---
         # Collect contiguous non-empty, non-special lines into one <p>
         para_lines: list[str] = []
@@ -241,6 +254,7 @@ def _md_to_html(md: str) -> str:
                 or re.match(r'^#{1,6}\s', l)
                 or l.strip().startswith("```")
                 or re.match(r'^(\*{3,}|-{3,}|_{3,})\s*$', l)
+                or _BLOCK_HTML_RE.match(l)
                 or ("|" in l and i + 1 < len(lines) and re.match(r'^\|?\s*[-:]+', lines[i + 1]))
             ):
                 break
@@ -267,12 +281,26 @@ def _md_to_html(md: str) -> str:
     )
 
 
-def _zip_dir(src_dir: Path, zip_path: Path) -> None:
-    """Create a zip archive of all files in *src_dir* (flat, no subdirectory prefix)."""
+def _zip_dir(
+    src_dir: Path,
+    zip_path: Path,
+    extensions: "set[str] | None" = None,
+) -> None:
+    """Create a zip archive of *src_dir*, preserving the internal directory tree.
+
+    Args:
+        src_dir: Root folder to archive.
+        zip_path: Destination .zip file path.
+        extensions: Optional set of file suffixes to include (e.g. ``{".png", ".html"}``).
+            When *None* every file is included.
+    """
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for file_path in sorted(src_dir.rglob("*")):
-            if file_path.is_file():
-                zf.write(file_path, arcname=file_path.relative_to(src_dir))
+            if not file_path.is_file():
+                continue
+            if extensions is not None and file_path.suffix.lower() not in extensions:
+                continue
+            zf.write(file_path, arcname=file_path.relative_to(src_dir))
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +389,11 @@ def run_batch(
 
     # Zip the entire output directory into a single archive next to it.
     zip_path = output_dir.with_suffix(".zip")
-    _zip_dir(output_dir, zip_path)
+    if engine_name == "vl":
+        zip_extensions = {".json", ".md", ".html", ".png", ".jpg", ".jpeg"}
+    else:
+        zip_extensions = {".json", ".png", ".jpg", ".jpeg"}
+    _zip_dir(output_dir, zip_path, extensions=zip_extensions)
     logger.info("Results zipped → %s", zip_path)
 
 

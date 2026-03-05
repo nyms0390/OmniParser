@@ -5,6 +5,7 @@ Configuration module for OmniParser Gradio refactored version.
 from omnitool.gradio.config.constants import (
     ALLOWED_FILE_EXTENSIONS,
     CONFIG_DIR_NAME,
+    SCREENSHOT_MAX_WIDTH,
     LLM_TIMEOUT_SECONDS,
     MAX_UPLOAD_SIZE_MB,
     OMNIPARSER_TIMEOUT_SECONDS,
@@ -47,6 +48,7 @@ __all__ = [
     # Constants
     "TYPING_DELAY_MS",
     "SCREENSHOT_RETENTION_COUNT",
+    "SCREENSHOT_MAX_WIDTH",
     "OUTPUT_DIR",
     "LLM_TIMEOUT_SECONDS",
     "OMNIPARSER_TIMEOUT_SECONDS",

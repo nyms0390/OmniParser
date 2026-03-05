@@ -11,6 +11,7 @@ format, parse, and prompt:
     _get_system_prompt()       → which prompt template to use
 """
 
+import base64
 import copy
 import hashlib
 import json
@@ -18,8 +19,11 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple
+
+from PIL import Image
 
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import (
@@ -122,6 +126,22 @@ class BaseAgent(ABC):
     @abstractmethod
     def _get_system_prompt(self) -> str:
         """Return the fully-rendered system prompt for this variant."""
+
+    def _ground(
+        self,
+        tool_calls: List[Dict[str, Any]],
+        parsed_screen: Dict[str, Any],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Resolve any pending grounding in tool_calls (e.g. natural-language → coordinates).
+
+        Default implementation is an identity — returns tool_calls unchanged with an
+        empty grounding log. Override in agents that require an external grounding step
+        (e.g. GTAAgent calls the GTA1 server here, after the LLM parse step).
+
+        Returns:
+            (resolved_tool_calls, grounding_log)
+        """
+        return tool_calls, []
 
     # ------------------------------------------------------------------
     # Shared utilities
@@ -364,6 +384,28 @@ class BaseAgent(ABC):
         return before_text == after_text
 
     @staticmethod
+    def _resize_b64(b64: str, max_width: int) -> str:
+        """Resize a base64 PNG to at most *max_width* pixels wide.
+
+        Returns the original string unchanged if already within the limit or
+        if resizing fails for any reason.
+        """
+        try:
+            img = Image.open(BytesIO(base64.b64decode(b64)))
+            if img.width <= max_width:
+                return b64
+            orig_w, orig_h = img.size
+            ratio = max_width / orig_w
+            img = img.resize((max_width, int(orig_h * ratio)), Image.Resampling.LANCZOS)
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            logger.debug("Screenshot resized %dx%d -> %dx%d", orig_w, orig_h, img.width, img.height)
+            return base64.b64encode(buf.getvalue()).decode("utf-8")
+        except Exception as exc:
+            logger.warning("Screenshot resize failed, using original: %s", exc)
+            return b64
+
+    @staticmethod
     def _format_tool_result(tool_name: str, output: str, error: str) -> str:
         parts = []
         if output:
@@ -459,6 +501,7 @@ class BaseAgent(ABC):
             yield {
                 "type": "parsed_screen",
                 "som_image_base64": self.parsed_screen.get("som_image_base64", ""),
+                "raw_image_base64": self.parsed_screen.get("raw_image_base64", ""),
                 "screen_info": str(self.parsed_screen.get("parsed_content_list", [])),
             }
 
@@ -490,7 +533,6 @@ class BaseAgent(ABC):
 
             # ---- Main loop ----
             while self.step_count < self.max_steps:
-                self.step_count += 1
                 self.update_step_count()
                 yield {"type": "step", "step_num": self.step_count}
 
@@ -570,6 +612,11 @@ class BaseAgent(ABC):
                 )
 
                 tool_calls = self._parse_response(response_text, self.parsed_screen)
+                tool_calls, grounding_log = self._ground(tool_calls, self.parsed_screen)
+
+                if grounding_log:
+                    yield {"type": "grounding", "events": grounding_log}
+
                 plan_response = {
                     "response_text": response_text,
                     "tool_calls": tool_calls,
@@ -621,6 +668,7 @@ class BaseAgent(ABC):
                 yield {
                     "type": "parsed_screen",
                     "som_image_base64": screen_after.get("som_image_base64", ""),
+                    "raw_image_base64": screen_after.get("raw_image_base64", ""),
                     "screen_info": str(screen_after.get("parsed_content_list", [])),
                 }
 

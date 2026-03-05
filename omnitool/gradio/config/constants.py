@@ -7,6 +7,7 @@ TYPING_DELAY_MS = 50  # Delay for typing animation in UI
 
 # Screenshot Management
 SCREENSHOT_RETENTION_COUNT = 2  # Number of screenshots to keep in memory
+SCREENSHOT_MAX_WIDTH = 1280      # Max width (px) for screenshots before sending to VLM
 OUTPUT_DIR = "./tmp/outputs"  # Default output directory
 
 # Timeout Constants

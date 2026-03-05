@@ -6,14 +6,18 @@ a VLM for natural-language action description, then resolves coordinates
 via the GTA1 grounding model server.
 """
 
+import base64
 import json
 import logging
+from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from PIL import Image, ImageDraw
 
 from omnitool.gradio.clients.external.gta1 import GTA1Client
 from omnitool.gradio.clients.llm.base import BaseLLMClient
-from omnitool.gradio.config import AgentMode, build_gta1_system_prompt
+from omnitool.gradio.config import AgentMode, SCREENSHOT_MAX_WIDTH, build_gta1_system_prompt
 from omnitool.gradio.app.state import AppState
 
 from .base import BaseAgent
@@ -24,6 +28,12 @@ logger = logging.getLogger(__name__)
 _POSITIONAL_ACTIONS = frozenset(
     {"left_click", "right_click", "double_click", "hover", "type"}
 )
+
+# Crosshair appearance (mirrors GTA1/scripts/demo.py)
+_CROSSHAIR_RADIUS = 18
+_CROSSHAIR_COLOR  = (255, 50, 50)
+_CROSSHAIR_WIDTH  = 3
+_DOT_RADIUS       = 5
 
 
 class GTAAgent(BaseAgent):
@@ -58,6 +68,7 @@ class GTAAgent(BaseAgent):
         max_steps: int = 20,
         context_n: int = 15,
         output_callback=None,
+        screenshot_max_width: int = SCREENSHOT_MAX_WIDTH,
         **kwargs,
     ):
         super().__init__(
@@ -66,7 +77,9 @@ class GTAAgent(BaseAgent):
             context_n=context_n, output_callback=output_callback, **kwargs,
         )
         self.gta1_client = gta1_client
+        self.screenshot_max_width = screenshot_max_width
 
+    # ------------------------------------------------------------------
     # ------------------------------------------------------------------
     # Template hook implementations
     # ------------------------------------------------------------------
@@ -86,10 +99,9 @@ class GTAAgent(BaseAgent):
             if not screenshot_b64:
                 raise ValueError("No screenshot data from ComputerTool")
 
-            # Decode to get dimensions without importing PIL at call-time cost
-            import base64
-            from io import BytesIO
-            from PIL import Image
+            screenshot_b64 = self._resize_b64(screenshot_b64, self.screenshot_max_width)
+
+            # Read dimensions from the (possibly resized) image
             screen_width, screen_height = 1920, 1080
             try:
                 img = Image.open(BytesIO(base64.b64decode(screenshot_b64)))
@@ -131,7 +143,10 @@ class GTAAgent(BaseAgent):
         response_text: str,
         parsed_screen: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
-        """JSON → grounding description → GTA1 coordinates → tool_calls."""
+        """JSON → pending tool_calls (positional actions carry a ``grounding_instruction``).
+
+        GTA1 coordinate resolution is deferred to :meth:`_ground`.
+        """
         tool_calls: List[Dict[str, Any]] = []
 
         response_json_str = self._extract_data(response_text, "json")
@@ -153,17 +168,13 @@ class GTAAgent(BaseAgent):
         action_type = parts[0].strip()
         grounding_desc = parts[1].strip() if len(parts) > 1 else ""
 
+        # For positional actions, record the grounding instruction; _ground() will resolve it.
         if action_type in _POSITIONAL_ACTIONS and grounding_desc:
-            coordinate = self._resolve_coordinate(
-                parsed_screen.get("raw_image_base64", ""),
-                grounding_desc,
-            )
-            if coordinate:
-                tool_calls.append({
-                    "tool": "computer",
-                    "action": "mouse_move",
-                    "coordinate": coordinate,
-                })
+            tool_calls.append({
+                "tool": "computer",
+                "action": "mouse_move",
+                "grounding_instruction": grounding_desc,
+            })
 
         if action_type == "type":
             tool_calls.append({
@@ -181,12 +192,60 @@ class GTAAgent(BaseAgent):
 
         return tool_calls
 
+    def _ground(
+        self,
+        tool_calls: List[Dict[str, Any]],
+        parsed_screen: Dict[str, Any],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Resolve ``grounding_instruction`` entries into pixel coordinates via GTA1.
+
+        Returns:
+            (resolved_tool_calls, grounding_log) where each grounding_log entry is::
+
+                {
+                    "instruction":         str,
+                    "coordinate":          [x, y] | None,
+                    "annotated_image_b64": str,   # crosshair drawn on raw screenshot
+                    "success":             bool,
+                }
+        """
+        resolved: List[Dict[str, Any]] = []
+        grounding_log: List[Dict[str, Any]] = []
+        image_b64 = parsed_screen.get("raw_image_base64", "")
+
+        for tc in tool_calls:
+            instruction = tc.get("grounding_instruction")
+            if instruction:
+                coordinate = self._resolve_coordinate(image_b64, instruction)
+                annotated_b64 = (
+                    self._draw_crosshair(image_b64, coordinate[0], coordinate[1])
+                    if coordinate and image_b64
+                    else ""
+                )
+                grounding_log.append({
+                    "instruction": instruction,
+                    "coordinate": coordinate,
+                    "annotated_image_b64": annotated_b64,
+                    "success": coordinate is not None,
+                })
+                if coordinate:
+                    resolved.append({
+                        "tool": "computer",
+                        "action": "mouse_move",
+                        "coordinate": coordinate,
+                    })
+                # Drop the entry silently if grounding failed
+            else:
+                resolved.append(tc)
+
+        return resolved, grounding_log
+
     def _get_system_prompt(self) -> str:
         is_thinking = "r1" in self.model_name.lower()
         return build_gta1_system_prompt(self.platform, is_thinking)
 
     # ------------------------------------------------------------------
-    # GTA1 coordinate resolution
+    # GTA1 coordinate resolution + crosshair annotation
     # ------------------------------------------------------------------
 
     def _resolve_coordinate(
@@ -201,3 +260,25 @@ class GTAAgent(BaseAgent):
         except Exception as exc:
             logger.warning("GTA1 grounding failed for '%s': %s", instruction, exc)
             return None
+
+    @staticmethod
+    def _draw_crosshair(image_b64: str, x: int, y: int) -> str:
+        """Draw a red crosshair + dot at (x, y) on the screenshot.
+
+        Returns base64-encoded PNG string, or empty string on failure.
+        Mirrors the visualisation in ``GTA1/scripts/demo.py``.
+        """
+        try:
+            img = Image.open(BytesIO(base64.b64decode(image_b64))).convert("RGBA")
+            draw = ImageDraw.Draw(img)
+            r, w = _CROSSHAIR_RADIUS, _CROSSHAIR_WIDTH
+            draw.line([(x - r, y), (x + r, y)], fill=_CROSSHAIR_COLOR, width=w)
+            draw.line([(x, y - r), (x, y + r)], fill=_CROSSHAIR_COLOR, width=w)
+            dr = _DOT_RADIUS
+            draw.ellipse([(x - dr, y - dr), (x + dr, y + dr)], fill=_CROSSHAIR_COLOR)
+            out = BytesIO()
+            img.convert("RGB").save(out, format="PNG")
+            return base64.b64encode(out.getvalue()).decode()
+        except Exception as exc:
+            logger.warning("Crosshair annotation failed: %s", exc)
+            return ""

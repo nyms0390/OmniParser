@@ -27,8 +27,7 @@ from typing import Generator, Tuple
 import gradio as gr
 from PIL import Image
 
-from omnitool.gradio.clients import OmniParserClient, PaddleOCRClient, WindowsHostClient
-from omnitool.gradio.clients.external import ServiceValidator
+from omnitool.gradio.clients.external import OmniParserClient, PaddleOCRClient, WindowsHostClient, ServiceValidator
 from omnitool.gradio.config import (
     AgentMode,
     create_argument_parser,
@@ -41,16 +40,19 @@ from omnitool.gradio.core import (
 )
 from omnitool.gradio.app import AppState, FileHandler, validate_api_key
 from omnitool.gradio.ui.gradio.components import (
+    render_image,
     format_action_result,
+    format_grounding,
     format_ledger,
     format_parsed_screen,
     format_plan,
+    format_raw_screen,
     format_thinking,
     get_model_choices,
     get_provider_options_for_model,
 )
 
-logger = logging.getLogger(__name__)
+logger = None
 
 
 class GradioApp:
@@ -79,9 +81,9 @@ class GradioApp:
     
     def build_interface(self):
         """Build Gradio interface."""
-        with gr.Blocks(title="OmniParser Refactored") as interface:
+        with gr.Blocks(title="OmniParser") as interface:
             # Header
-            gr.Markdown("# OmniParser - Refactored")
+            gr.Markdown("# OmniParser")
             gr.Markdown("Vision-Language Model for Computer Interaction")
             
             # Initialize state
@@ -92,13 +94,29 @@ class GradioApp:
                 with gr.Row():
                     model_dropdown = gr.Dropdown(
                         choices=get_model_choices(),
-                        value="omniparser + gpt-4o",
+                        value="gta1 + gpt-4o",
                         label="Model",
                     )
                     provider_dropdown = gr.Dropdown(
-                        choices=["openai"],
-                        value="openai",
+                        choices=get_provider_options_for_model("gta1 + gpt-4o"),
+                        value="azure",
                         label="Provider",
+                    )
+
+                with gr.Row():
+                    context_n_slider = gr.Slider(
+                        minimum=0,
+                        maximum=50,
+                        step=1,
+                        value=10,
+                        label="Context: last N messages (0 = all)",
+                    )
+                    max_steps_slider = gr.Slider(
+                        minimum=1,
+                        maximum=50,
+                        step=1,
+                        value=20,
+                        label="Max steps",
                     )
                 
                 with gr.Row():
@@ -106,9 +124,9 @@ class GradioApp:
                         choices=[
                             ("Interactive", AgentMode.INTERACTIVE.value),
                             ("Orchestrated", AgentMode.ORCHESTRATED.value),
-                            ("Task (coming soon)", AgentMode.TASK.value),
+                            ("Task", AgentMode.TASK.value),
                         ],
-                        value=AgentMode.INTERACTIVE.value,
+                        value=AgentMode.ORCHESTRATED.value,
                         label="Mode",
                     )
                     platform_dropdown = gr.Dropdown(
@@ -124,6 +142,15 @@ class GradioApp:
                     outputs=[provider_dropdown],
                 )
             
+            # Status and progress
+            with gr.Accordion(label="Execution"):
+                status_text = gr.Textbox(
+                    label="Status",
+                    interactive=False,
+                    lines=3,
+                )
+                gr.Progress()  # reserved for future progress tracking
+
             # Chat interface
             with gr.Accordion(label="Chat"):
                 chatbot = gr.Chatbot(
@@ -155,15 +182,6 @@ class GradioApp:
                 )
                 file_viewer = gr.HTML(label="File Viewer")
             
-            # Status and progress
-            with gr.Accordion(label="Execution"):
-                status_text = gr.Textbox(
-                    label="Status",
-                    interactive=False,
-                    lines=3,
-                )
-                gr.Progress()  # reserved for future progress tracking
-            
             # Wire up interactions
             submit_button.click(
                 fn=self.on_submit,
@@ -175,6 +193,8 @@ class GradioApp:
                     chatbot,
                     mode_dropdown,
                     platform_dropdown,
+                    context_n_slider,
+                    max_steps_slider,
                 ],
                 outputs=[
                     chatbot,
@@ -212,31 +232,7 @@ class GradioApp:
                 logger.warning("Screenshot returned but no image data")
                 return [{"role": "system", "content": "Initial screenshot: No image data available"}]
             
-            # Optionally resize to reasonable max width (1024px)
-            try:
-                # Decode base64 to PIL Image
-                img_data = base64.b64decode(screenshot_base64)
-                img = Image.open(BytesIO(img_data))
-                
-                # Resize if width exceeds 1024px
-                max_width = 1024
-                if img.width > max_width:
-                    ratio = max_width / img.width
-                    new_height = int(img.height * ratio)
-                    img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
-                    
-                    # Re-encode to base64
-                    buffer = BytesIO()
-                    img.save(buffer, format="PNG")
-                    screenshot_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-                    logger.debug(f"Resized screenshot to {img.width}x{img.height}")
-            except Exception as resize_error:
-                logger.debug(f"Screenshot resize failed, using original: {resize_error}")
-            
-            # Format as HTML img tag with base64 data URI
-            img_html = f'<img src="data:image/png;base64,{screenshot_base64}" style="max-width: 100%; border-radius: 8px; margin: 10px 0;">'
-            
-            # Return initial message history with context text
+            img_html = render_image(screenshot_base64, hint=True)
             return [{"role": "system", "content": f"Initial desktop state:\n\n{img_html}"}]
         
         except Exception as e:
@@ -266,12 +262,14 @@ class GradioApp:
         model_name: str,
         provider: str,
         chatbot_history,
-        mode: str = "interactive",
-        platform: str = "windows",
+        mode: str,
+        platform: str,
+        context_n: int,
+        max_steps: int,
     ) -> Generator:
         """Handle submit button click.
         
-        This is a sync generator — Gradio 4+ auto-detects generators and
+        This is a sync generator - Gradio 4+ auto-detects generators and
         streams each ``yield`` as an incremental UI update.
         
         Args:
@@ -323,10 +321,11 @@ class GradioApp:
                 "tools_collection": self.tools,
                 "omniparser_client": self.omniparser_client,
                 "save_folder": Path(self.settings.run_folder),
-                "max_steps": 20,
+                "max_steps": max_steps,
                 "provider": provider,
                 "mode": agent_mode,
                 "platform": platform,
+                "context_n": context_n,
             }
             
             # Add Azure endpoint if using Azure provider
@@ -342,20 +341,35 @@ class GradioApp:
                 update_type = update.get("type", "")
                 
                 if update_type == "parsed_screen":
-                    # Render the SOM-annotated screenshot
-                    # Auto-expand the first one; keep subsequent ones collapsed
-                    screen_html = format_parsed_screen(
-                        som_image_base64=update.get("som_image_base64", ""),
-                        screen_info=update.get("screen_info", ""),
-                        auto_expand=is_first_screen,
-                    )
+                    som_b64 = update.get("som_image_base64", "")
+                    raw_b64 = update.get("raw_image_base64", "")
+                    if som_b64:
+                        screen_html = format_parsed_screen(
+                            som_image_base64=som_b64,
+                            screen_info=update.get("screen_info", ""),
+                            auto_expand=is_first_screen,
+                        )
+                    elif raw_b64:
+                        screen_html = format_raw_screen(
+                            raw_image_base64=raw_b64,
+                            auto_expand=is_first_screen,
+                        )
+                    else:
+                        screen_html = None  # nothing to show
                     is_first_screen = False
-                    history.append({"role": "assistant", "content": screen_html})
-                    status = "Screen captured and parsed"
-                    yield history, "", status, state
+                    if screen_html:
+                        history.append({"role": "assistant", "content": screen_html})
+                        status = "Screen captured"
+                        yield history, "", status, state
+
+                elif update_type == "grounding":
+                    grounding_html = format_grounding(update.get("events", []))
+                    if grounding_html:
+                        history.append({"role": "assistant", "content": grounding_html})
+                        yield history, "", "Grounding resolved", state
                 
                 elif update_type == "thinking":
-                    # Render LLM reasoning — only shown when non-empty
+                    # Render LLM reasoning - only shown when non-empty
                     thinking_html = format_thinking(update.get("response_text", ""))
                     if thinking_html is not None:
                         history.append({"role": "assistant", "content": thinking_html})
@@ -393,7 +407,7 @@ class GradioApp:
                 
                 elif update_type == "progress":
                     status = (
-                        f"Step {update.get('step', '?')} — "
+                        f"Step {update.get('step', '?')} - "
                         f"Tokens: {update.get('tokens_total', 0)}, "
                         f"Cost: {update.get('cost_total', '$0')}"
                     )
@@ -408,7 +422,7 @@ class GradioApp:
                 
                 elif update_type == "complete":
                     status = (
-                        f"✅ Complete — "
+                        f"[OK] Complete - "
                         f"Steps: {update.get('total_steps')}, "
                         f"Tokens: {update.get('total_tokens')}, "
                         f"Cost: {update.get('total_cost')}"
@@ -418,20 +432,20 @@ class GradioApp:
                     return
                 
                 elif update_type == "error":
-                    status = f"❌ Error: {update.get('message')}"
+                    status = f"[ERROR]: {update.get('message')}"
                     history.append({"role": "assistant", "content": status})
                     yield history, "", status, state
                     return
             
             # Loop ended without explicit complete/error (hit max_steps)
-            status = f"⚠️ Stopped after {self.orchestrator.step_count} steps (max reached)"
+            status = f"[WARN] Stopped after {self.orchestrator.step_count} steps (max reached)"
             history.append({"role": "assistant", "content": status})
             yield history, "", status, state
         
         except Exception as e:
             error_msg = f"Execution failed: {str(e)}"
             logger.error(error_msg, exc_info=True)
-            history.append({"role": "assistant", "content": f"❌ {error_msg}"})
+            history.append({"role": "assistant", "content": f"[ERROR] {error_msg}"})
             yield history, "", error_msg, state
     
     def on_file_upload(self, state, files) -> Tuple:
@@ -489,13 +503,15 @@ class GradioApp:
 
 def main():
     """Main entry point."""
+    global logger
+
     # Parse arguments
     parser = create_argument_parser()
     args = parser.parse_args()
     
     # Setup logging (BEFORE loading settings)
     log_file = args.log_file or "omniparser_app.log"
-    setup_logging("omniparser_app", level=args.log_level, log_file=log_file)
+    logger = setup_logging("omniparser_app", level=args.log_level, log_file=log_file)
     
     # Load settings
     settings = get_settings(args)

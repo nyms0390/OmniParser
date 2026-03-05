@@ -33,7 +33,7 @@ class AzureOpenAIClient(BaseLLMClient):
             ImportError: If azure-identity or azure-openai packages are not installed
         """
         super().__init__(api_key, model, **kwargs)
-        self.azure_endpoint = azure_endpoint.rstrip('/')
+        self.azure_endpoint = (azure_endpoint or "").rstrip("/")
         
         # Import here to avoid hard dependency
         try:
