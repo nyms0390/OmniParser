@@ -7,6 +7,7 @@ from omnitool.gradio.ui.gradio.components.file_viewer import render_file_list, r
 from omnitool.gradio.ui.gradio.components.formatters import (
     render_image,
     format_action_result,
+    format_extraction_result,
     format_grounding,
     format_ledger,
     format_parsed_screen,
@@ -29,6 +30,7 @@ __all__ = [
     "format_action_result",
     "format_plan",
     "format_ledger",
+    "format_extraction_result",
     "get_model_choices",
     "get_provider_options_for_model",
     "create_settings_panel",

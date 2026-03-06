@@ -25,9 +25,12 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from PIL import Image
 
+from omnitool.gradio.clients.external.omniparser import OmniParserClient
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import (
     AgentMode,
+    EXTRACTION_SYSTEM_PROMPT,
+    EXTRACTION_USER_PROMPT,
     PLAN_PROMPT,
     PLANNER_SYSTEM_PROMPT,
     REFLECT_PROMPT,
@@ -60,6 +63,8 @@ class BaseAgent(ABC):
         max_steps: int = 20,
         context_n: int = 15,
         output_callback=None,
+        extract_fields: Optional[List[str]] = None,
+        omniparser_client: Optional[OmniParserClient] = None,
         **kwargs,
     ):
         self.model_name = model_name
@@ -73,6 +78,8 @@ class BaseAgent(ABC):
         self.max_steps = max_steps
         self.context_n = context_n
         self.output_callback = output_callback
+        self.extract_fields = extract_fields
+        self.omniparser_client = omniparser_client
 
         # Model config for cost calculation
         try:
@@ -116,12 +123,40 @@ class BaseAgent(ABC):
         """Prepare messages for the LLM plan call."""
 
     @abstractmethod
-    def _parse_response(
+    def _parse_tool_calls(
         self,
         response_text: str,
         parsed_screen: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
-        """Extract tool_calls from an LLM response string."""
+        """Extract tool_calls from an LLM response string (agent-specific)."""
+
+    def _parse_response(
+        self,
+        response_text: str,
+        parsed_screen: Dict[str, Any],
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """Parse LLM response into tool calls and optional read_fields.
+
+        Calls the agent-specific :meth:`_parse_tool_calls` hook, then extracts
+        ``read_fields`` from the response JSON in one place (base only).
+
+        Returns:
+            ``(tool_calls, read_fields)`` — ``read_fields`` is empty when the
+            model did not request a screen read on this step.
+        """
+        tool_calls = self._parse_tool_calls(response_text, parsed_screen)
+
+        read_fields: List[str] = []
+        try:
+            json_str = self._extract_data(response_text, "json")
+            data = json.loads(json_str)
+            raw = data.get("read_fields", [])
+            if isinstance(raw, list):
+                read_fields = [str(f) for f in raw if f]
+        except Exception:
+            pass
+
+        return tool_calls, read_fields
 
     @abstractmethod
     def _get_system_prompt(self) -> str:
@@ -405,6 +440,104 @@ class BaseAgent(ABC):
             logger.warning("Screenshot resize failed, using original: %s", exc)
             return b64
 
+    def _parse_screen(self, raw_b64: str) -> Dict[str, Any]:
+        """Run OmniParser on a raw screenshot to obtain a SOM image and element list.
+
+        Used by non-OmniAgent variants (e.g. GTAAgent) at extraction time so
+        every agent can benefit from structured screen data.  Returns an empty
+        dict when no ``omniparser_client`` is configured or the call fails.
+        """
+        if not self.omniparser_client:
+            return {}
+        try:
+            result = self.omniparser_client.parse_screenshot(raw_b64)
+            return {
+                "som_image_base64": result.get("labeled_screenshot_base64", ""),
+                "parsed_content_list": result.get("parsed_content_list", []),
+            }
+        except Exception as exc:
+            logger.warning("OmniParser call failed during extraction: %s", exc)
+            return {}
+
+    def _read_screen(
+        self,
+        parsed_screen: Dict[str, Any],
+        fields: Optional[List[str]] = None,
+    ) -> Dict[str, str]:
+        """Read specific fields from the current screen using the VLM.
+
+        Used both mid-loop (agent-requested ``read_fields``) and post-loop
+        (user-preset ``extract_fields``).  The VLM receives the screenshot image
+        plus any structured OCR text for improved precision.
+
+        Args:
+            parsed_screen: Screen data dict from :meth:`_capture_screen`.
+            fields: Field names to read.  Defaults to ``self.extract_fields``.
+
+        Returns:
+            ``{field: value}`` dict.  Values are ``"null"`` when not visible or
+            ``"extraction failed"`` if the LLM call errors.
+        """
+        import json as _json
+
+        fields = fields if fields is not None else (self.extract_fields or [])
+        fallback = {f: "extraction failed" for f in fields}
+
+        # Pick best available screenshot; run OmniParser for SOM when possible.
+        som_b64 = parsed_screen.get("som_image_base64", "")
+        raw_b64 = parsed_screen.get("raw_image_base64", "")
+        content_list = parsed_screen.get("parsed_content_list", [])
+
+        if not som_b64 and raw_b64:
+            omni_result = self._parse_screen(raw_b64)
+            som_b64 = omni_result.get("som_image_base64", "")
+            if not content_list:
+                content_list = omni_result.get("parsed_content_list", [])
+
+        img_b64 = som_b64 or raw_b64
+
+        # Build OCR context block from structured screen info when available.
+        ocr_text = parsed_screen.get("screen_info", "")
+        if not ocr_text and content_list:
+            ocr_text = "\n".join(str(item) for item in content_list)
+
+        ocr_block = (
+            f"Parsed screen elements (OCR):\n{ocr_text}\n\n"
+            if ocr_text else ""
+        )
+
+        user_text = EXTRACTION_USER_PROMPT.format(
+            ocr_block=ocr_block,
+            fields_json=_json.dumps(fields),
+        )
+
+        # Build multimodal message.
+        content: List[Any] = []
+        if img_b64:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+            })
+        content.append({"type": "text", "text": user_text})
+
+        messages = [{"role": "user", "content": content}]
+
+        try:
+            response = self.llm_client.chat(
+                messages=messages,
+                system=EXTRACTION_SYSTEM_PROMPT,
+                model=self.model_name,
+            )
+            raw = self._extract_data(response.content, "json") or response.content
+            result = _json.loads(raw)
+            if isinstance(result, dict):
+                # Ensure every requested field is present.
+                return {f: str(result.get(f, "null")) for f in fields}
+            return fallback
+        except Exception as exc:
+            logger.warning("Result extraction failed: %s", exc)
+            return fallback
+
     @staticmethod
     def _format_tool_result(tool_name: str, output: str, error: str) -> str:
         parts = []
@@ -611,7 +744,7 @@ class BaseAgent(ABC):
                     metadata={"tokens": tokens, "cost": cost},
                 )
 
-                tool_calls = self._parse_response(response_text, self.parsed_screen)
+                tool_calls, read_fields = self._parse_response(response_text, self.parsed_screen)
                 tool_calls, grounding_log = self._ground(tool_calls, self.parsed_screen)
 
                 if grounding_log:
@@ -674,6 +807,19 @@ class BaseAgent(ABC):
 
                 verify = self._verify_step(tool_results, self.parsed_screen, screen_after)
 
+                # ---- READ_FIELDS (mid-loop screen reading) ----
+                if read_fields:
+                    yield {"type": "status", "message": f"Reading screen fields: {read_fields}"}
+                    try:
+                        reading = self._read_screen(screen_after, fields=read_fields)
+                        self.state.chat.add_message(
+                            "system",
+                            f"<screen_reading>\n{json.dumps(reading, indent=2)}\n</screen_reading>",
+                        )
+                        yield {"type": "screen_reading", "fields": reading}
+                    except Exception as exc:
+                        logger.warning("Mid-loop screen reading failed: %s", exc)
+
                 if verify["screen_unchanged"]:
                     hint = (
                         "ACTION HAD NO VISIBLE EFFECT — the screen did not change after "
@@ -697,6 +843,19 @@ class BaseAgent(ABC):
                     "tokens_total": self.total_tokens,
                     "cost_total": f"${self.total_cost:.6f}",
                 }
+
+            if self.extract_fields:
+                yield {"type": "status", "message": "Extracting result fields..."}
+                try:
+                    final_screen = self._capture_screen()
+                    extracted = self._read_screen(final_screen)
+                    yield {"type": "extraction_result", "fields": extracted}
+                except Exception as exc:
+                    logger.warning("Post-loop extraction failed: %s", exc)
+                    yield {
+                        "type": "extraction_result",
+                        "fields": {f: "extraction failed" for f in self.extract_fields},
+                    }
 
             yield {
                 "type": "complete",

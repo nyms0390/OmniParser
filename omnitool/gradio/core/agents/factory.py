@@ -31,6 +31,7 @@ def create_agent(
     provider: Optional[str] = None,
     azure_endpoint: Optional[str] = None,
     gta1_url: Optional[str] = None,
+    extract_fields: Optional[list] = None,
     **kwargs,
 ) -> BaseAgent:
     """Factory function — returns the right BaseAgent subclass for *model_name*.
@@ -96,6 +97,7 @@ def create_agent(
         platform=platform,
         max_steps=max_steps,
         context_n=context_n,
+        extract_fields=extract_fields or None,
     )
 
     if agent_type == "OmniAgent":
@@ -116,6 +118,7 @@ def create_agent(
         )
         return GTAAgent(
             gta1_client=GTA1Client(base_url=resolved_gta1_url),
+            omniparser_client=omniparser_client,
             **common,
         )
 

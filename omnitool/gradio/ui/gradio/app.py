@@ -42,6 +42,7 @@ from omnitool.gradio.app import AppState, FileHandler, validate_api_key
 from omnitool.gradio.ui.gradio.components import (
     render_image,
     format_action_result,
+    format_extraction_result,
     format_grounding,
     format_ledger,
     format_parsed_screen,
@@ -166,6 +167,13 @@ class GradioApp:
                         )
                     with gr.Column(scale=1):
                         submit_button = gr.Button("Send")
+
+                with gr.Row():
+                    extract_fields_input = gr.Textbox(
+                        label="Extract fields after task (optional)",
+                        placeholder="e.g. price, status, error message",
+                        show_label=True,
+                    )
             
             # Capture initial screenshot on app load (non-blocking)
             interface.load(
@@ -195,6 +203,7 @@ class GradioApp:
                     platform_dropdown,
                     context_n_slider,
                     max_steps_slider,
+                    extract_fields_input,
                 ],
                 outputs=[
                     chatbot,
@@ -266,6 +275,7 @@ class GradioApp:
         platform: str,
         context_n: int,
         max_steps: int,
+        extract_fields_raw: str,
     ) -> Generator:
         """Handle submit button click.
         
@@ -314,6 +324,9 @@ class GradioApp:
             except ValueError:
                 agent_mode = AgentMode.INTERACTIVE
             
+            # Parse extract_fields from comma-separated input.
+            extract_fields = [f.strip() for f in extract_fields_raw.split(",") if f.strip()]
+
             # Prepare orchestrator kwargs
             orchestrator_kwargs = {
                 "model_name": model_name,
@@ -326,6 +339,7 @@ class GradioApp:
                 "mode": agent_mode,
                 "platform": platform,
                 "context_n": context_n,
+                "extract_fields": extract_fields,
             }
             
             # Add Azure endpoint if using Azure provider
@@ -337,6 +351,7 @@ class GradioApp:
             # Stream sampling loop updates to the chatbot
             status = "Running..."
             is_first_screen = True  # Auto-expand the initial screen capture
+            loop_complete = False
             for update in self.orchestrator.run():
                 update_type = update.get("type", "")
                 
@@ -428,9 +443,29 @@ class GradioApp:
                         f"Cost: {update.get('total_cost')}"
                     )
                     history.append({"role": "assistant", "content": status})
+                    loop_complete = True
                     yield history, "", status, state
+                    # Don't return here — extraction_result event may follow.
+
+                elif update_type == "screen_reading":
+                    fields = update.get("fields", {})
+                    if fields:
+                        history.append({
+                            "role": "assistant",
+                            "content": format_extraction_result(fields),
+                        })
+                    yield history, "", status, state
+
+                elif update_type == "extraction_result":
+                    fields = update.get("fields", {})
+                    if fields:
+                        history.append({
+                            "role": "assistant",
+                            "content": format_extraction_result(fields),
+                        })
+                    yield history, "", "Extraction complete", state
                     return
-                
+
                 elif update_type == "error":
                     status = f"[ERROR]: {update.get('message')}"
                     history.append({"role": "assistant", "content": status})
@@ -438,9 +473,10 @@ class GradioApp:
                     return
             
             # Loop ended without explicit complete/error (hit max_steps)
-            status = f"[WARN] Stopped after {self.orchestrator.step_count} steps (max reached)"
-            history.append({"role": "assistant", "content": status})
-            yield history, "", status, state
+            if not loop_complete:
+                status = f"[WARN] Stopped after {self.orchestrator.step_count} steps (max reached)"
+                history.append({"role": "assistant", "content": status})
+                yield history, "", status, state
         
         except Exception as e:
             error_msg = f"Execution failed: {str(e)}"

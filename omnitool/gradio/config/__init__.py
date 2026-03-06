@@ -35,6 +35,8 @@ from omnitool.gradio.config.prompts import (
     PLANNER_SYSTEM_PROMPT,
     REFLECT_PROMPT,
     TASK_PARSE_PROMPT,
+    EXTRACTION_SYSTEM_PROMPT,
+    EXTRACTION_USER_PROMPT,
 )
 from omnitool.gradio.config.settings import (
     Settings,
@@ -74,6 +76,8 @@ __all__ = [
     "PLANNER_SYSTEM_PROMPT",
     "REFLECT_PROMPT",
     "TASK_PARSE_PROMPT",
+    "EXTRACTION_SYSTEM_PROMPT",
+    "EXTRACTION_USER_PROMPT",
     # OCR
     "OCR_CONFIG",
     "get_ocr_config",

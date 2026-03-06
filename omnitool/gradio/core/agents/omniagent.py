@@ -51,9 +51,9 @@ class OmniAgent(BaseAgent):
         super().__init__(
             model_name, llm_client, state, tools_collection, save_folder,
             mode=mode, platform=platform, max_steps=max_steps,
-            context_n=context_n, output_callback=output_callback, **kwargs,
+            context_n=context_n, output_callback=output_callback,
+            omniparser_client=omniparser_client, **kwargs,
         )
-        self.omniparser_client = omniparser_client
 
     # ------------------------------------------------------------------
     # Template hook implementations
@@ -74,8 +74,8 @@ class OmniAgent(BaseAgent):
             if not screenshot_b64:
                 raise ValueError("No screenshot data from ComputerTool")
 
-            result = self.omniparser_client.parse_screenshot(screenshot_b64)
-            som_b64 = result.get("labeled_screenshot_base64", "")
+            parsed = self._parse_screen(screenshot_b64)
+            som_b64 = parsed.get("som_image_base64", "")
 
             screen_width, screen_height = 1920, 1080
             if som_b64:
@@ -88,7 +88,7 @@ class OmniAgent(BaseAgent):
             return {
                 "raw_image_base64": screenshot_b64,
                 "som_image_base64": som_b64,
-                "parsed_content_list": result.get("parsed_content_list", []),
+                "parsed_content_list": parsed.get("parsed_content_list", []),
                 "screen_width": screen_width,
                 "screen_height": screen_height,
             }
@@ -125,7 +125,7 @@ class OmniAgent(BaseAgent):
 
         return prepared
 
-    def _parse_response(
+    def _parse_tool_calls(
         self,
         response_text: str,
         parsed_screen: Dict[str, Any],

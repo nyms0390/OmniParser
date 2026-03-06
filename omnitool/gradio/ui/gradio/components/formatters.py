@@ -232,6 +232,33 @@ def format_ledger(ledger_text: str) -> str:
     )
 
 
+def format_extraction_result(fields: dict) -> str:
+    """Format extracted result fields as a collapsible HTML table.
+
+    Args:
+        fields: Mapping of field name to extracted value string.
+
+    Returns:
+        HTML string with a ``<details>`` block (open by default).
+    """
+    rows = "".join(
+        f'<tr>'
+        f'<td style="padding: 4px 10px 4px 0; font-weight: bold; white-space: nowrap;">'
+        f'{html.escape(str(k))}</td>'
+        f'<td style="padding: 4px 0;">{html.escape(str(v))}</td>'
+        f'</tr>'
+        for k, v in fields.items()
+    )
+    return (
+        '<details open style="margin: 6px 0;">'
+        "<summary>[Result] Extracted fields</summary>"
+        '<table style="font-size: 0.9em; border-collapse: collapse; margin: 6px 0;">'
+        f"{rows}"
+        "</table>"
+        "</details>"
+    )
+
+
 __all__ = [
     "render_image",
     "format_parsed_screen",
@@ -241,4 +268,5 @@ __all__ = [
     "format_action_result",
     "format_plan",
     "format_ledger",
+    "format_extraction_result",
 ]

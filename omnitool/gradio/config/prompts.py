@@ -5,6 +5,14 @@ Prompts are kept in one place for:
 - Easy maintenance and iteration
 - Platform extensibility via registry
 - Injection safety (screen_info in user messages, not system prompt)
+
+Prompt order mirrors the workflow:
+  1. Infrastructure (platform registry, thinking variants)
+  2. Agent system prompts  — used every step (VLM / Anthropic / GTA1)
+  3. Orchestration init    — pre-loop, one-time (planner, task parse, plan)
+  4. Per-step loop         — REFLECT
+  5. Post-loop             — result extraction
+  6. Builder functions     — assemblers that combine the above
 """
 
 from dataclasses import dataclass
@@ -12,7 +20,7 @@ from typing import Dict
 
 
 # ---------------------------------------------------------------------------
-# Platform prompt registry
+# 1. Platform prompt registry
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -74,8 +82,10 @@ THINKING_INSTRUCTION_R1 = (
 
 
 # ---------------------------------------------------------------------------
-# VLM system prompt template
+# 2. Agent system prompts — used every step of the action loop
 # ---------------------------------------------------------------------------
+
+# VLM system prompt (OmniAgent / OpenAI-compatible, SOM box IDs)
 # Placeholders: {platform_description}, {interaction_constraints},
 #               {thinking_instruction}
 #
@@ -110,7 +120,8 @@ Output format:
     "Reasoning": str, # concise summary of what you see on screen, what history tells you, and why you chose this action.
     "Next Action": "action_type, action description" | "None" # one action at a time, describe it briefly.
     "Box ID": n, # required for left_click, right_click, double_click, hover, type — omit for scroll_up, scroll_down, wait
-    "value": "xxx" # required when action is type; omit for all other actions
+    "value": "xxx", # required when action is type; omit for all other actions
+    "read_fields": ["field1", "field2"] # optional — include ONLY when the current screen shows a value you need for a later step
 }}
 ```
 
@@ -137,7 +148,16 @@ Another Example:
 ```json
 {{
     "Reasoning": "No element matching 'Submit' is visible in screen elements. The SOM image shows the page is cut off — button is likely below the fold. Scrolling down.",
-    "Next Action": "scroll_down, look for Submit button",
+    "Next Action": "scroll_down, look for Submit button"
+}}
+```
+
+Another Example (reading screen values for a later step):
+```json
+{{
+    "Reasoning": "The order confirmation page is showing. I need to capture the confirmation number and total before navigating away.",
+    "Next Action": "None",
+    "read_fields": ["confirmation_number", "order_total"]
 }}
 ```
 
@@ -153,10 +173,7 @@ IMPORTANT NOTES:
 """
 
 
-# ---------------------------------------------------------------------------
 # Anthropic (Claude) system prompt
-# ---------------------------------------------------------------------------
-
 ANTHROPIC_SYSTEM_PROMPT = """\
 {platform_description}
 You are an intelligent computer use assistant.
@@ -170,10 +187,9 @@ message. Use them for accurate targeting.
 """
 
 
-# ---------------------------------------------------------------------------
-# GTA1 system prompt
-# ---------------------------------------------------------------------------
-
+# GTA1 system prompt (raw screenshot + natural-language grounding)
+# Placeholders: {platform_description}, {interaction_constraints},
+#               {thinking_instruction}
 GTA1_SYSTEM_PROMPT = """\
 {platform_description}
 You are able to use a mouse and keyboard to interact with the computer based on the given task and screenshot.
@@ -199,7 +215,8 @@ Output format:
 {{
     "Reasoning": str, # concise summary of what you see on screen, what history tells you, and why you chose this action.
     "Next Action": "action_type, description of the target element" | "None" # one action at a time.
-    "value": "xxx" # required when action is type; omit for all other actions
+    "value": "xxx", # required when action is type; omit for all other actions
+    "read_fields": ["field1", "field2"] # optional — include ONLY when the current screen shows a value you need for a later step
 }}
 ```
 
@@ -228,6 +245,15 @@ Another Example:
 }}
 ```
 
+Another Example (reading screen values for a later step):
+```json
+{{
+    "Reasoning": "The order confirmation page is showing. I need to capture the confirmation number before navigating away.",
+    "Next Action": "None",
+    "read_fields": ["confirmation_number", "order_total"]
+}}
+```
+
 IMPORTANT NOTES:
 1. You should only give a single action at a time.
 {thinking_instruction}
@@ -241,9 +267,10 @@ IMPORTANT NOTES:
 
 
 # ---------------------------------------------------------------------------
-# Planner system prompt — shared by Plan-init and Reflect LLM calls
+# 3. Orchestration init — pre-loop, runs once at the start
 # ---------------------------------------------------------------------------
 
+# Shared system prompt for all planner LLM calls (plan generation & reflect).
 PLANNER_SYSTEM_PROMPT = """\
 You are an expert computer automation planner.
 Your role is to analyze tasks and screen state to plan or evaluate \
@@ -251,11 +278,29 @@ the progress of automated computer interactions.
 Provide clear, structured responses in the requested JSON format.\
 """
 
+# Task mode: parse raw user input / checklist into structured steps (first call).
+TASK_PARSE_PROMPT = """\
+The user has provided the following task description or checklist:
 
-# ---------------------------------------------------------------------------
-# Orchestrated-mode prompts
-# ---------------------------------------------------------------------------
+{user_text}
 
+Convert it into a structured JSON array of steps, each with a verification hint that \
+describes how to confirm the step is complete. Example format:
+
+```json
+[
+  {{
+    "id": 1,
+    "step": "Concise description of what to do",
+    "verification_hint": "What you would see/check to confirm this step is done"
+  }}
+]
+```
+
+Keep each step concise and actionable. Output only valid JSON. Start directly.\
+"""
+
+# Orchestrator / Task mode: generate the initial action plan.
 PLAN_PROMPT = """\
 Please devise a step-by-step plan for the following task: {task}
 
@@ -276,6 +321,11 @@ Output a JSON array where each element describes one step and how to verify it. 
 ```
 Keep steps concise and actionable. Output only valid JSON. Start directly.\
 """
+
+
+# ---------------------------------------------------------------------------
+# 4. Per-step loop — runs before each action in orchestrator / task mode
+# ---------------------------------------------------------------------------
 
 REFLECT_PROMPT = """\
 Recall we are working on the following request:
@@ -316,31 +366,39 @@ Please output an answer in pure JSON format according to the following schema. T
 """
 
 
+# ---------------------------------------------------------------------------
+# 5. Post-loop — result extraction after the action loop completes
+# ---------------------------------------------------------------------------
 
-TASK_PARSE_PROMPT = """\
-The user has provided the following task description or checklist:
+EXTRACTION_SYSTEM_PROMPT = """\
+You are a precise screen reader assistant. Your job is to extract specific information \
+from a screenshot of a computer screen. Use both the visual image and any parsed screen \
+elements provided. Copy values exactly as they appear on screen.\
+"""
 
-{user_text}
+EXTRACTION_USER_PROMPT = """\
+Extract the following fields from the current screen: {fields_json}
 
-Convert it into a structured JSON array of steps, each with a verification hint that \
-describes how to confirm the step is complete. Example format:
+{ocr_block}\
+Please output an answer in pure JSON format according to the following schema. \
+The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, \
+AND DO NOT DEVIATE FROM THIS SCHEMA:
 
-```json
-[
-  {{
-    "id": 1,
-    "step": "Concise description of what to do",
-    "verification_hint": "What you would see/check to confirm this step is done"
-  }}
-]
-```
+    {{
+        "<field_name>": "<exact value as shown on screen, or null if not visible>"
+    }}
 
-Keep each step concise and actionable. Output only valid JSON. Start directly.\
+Example — if asked for {{"price", "status"}}:
+
+    {{
+        "price": "€12.99",
+        "status": "In stock"
+    }}\
 """
 
 
 # ---------------------------------------------------------------------------
-# Helper: build a fully-assembled VLM system prompt
+# 6. Builder functions — assemble fully-rendered prompts from templates above
 # ---------------------------------------------------------------------------
 
 def build_vlm_system_prompt(
@@ -382,6 +440,7 @@ def build_anthropic_system_prompt(platform: str = "windows") -> str:
         platform_description=pp.description,
         interaction_constraints=pp.constraints,
     )
+
 
 def build_gta1_system_prompt(
     platform: str = "windows",

@@ -68,12 +68,14 @@ class GTAAgent(BaseAgent):
         max_steps: int = 20,
         context_n: int = 15,
         output_callback=None,
+        omniparser_client=None,
         **kwargs,
     ):
         super().__init__(
             model_name, llm_client, state, tools_collection, save_folder,
             mode=mode, platform=platform, max_steps=max_steps,
-            context_n=context_n, output_callback=output_callback, **kwargs,
+            context_n=context_n, output_callback=output_callback,
+            omniparser_client=omniparser_client, **kwargs,
         )
         self.gta1_client = gta1_client
 
@@ -147,7 +149,7 @@ class GTAAgent(BaseAgent):
 
         return prepared
 
-    def _parse_response(
+    def _parse_tool_calls(
         self,
         response_text: str,
         parsed_screen: Dict[str, Any],
