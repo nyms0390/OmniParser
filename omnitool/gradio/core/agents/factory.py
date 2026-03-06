@@ -4,7 +4,7 @@ Agent factory — creates the appropriate BaseAgent subclass from model config.
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from omnitool.gradio.clients import BaseLLMClient, get_llm_client
 from omnitool.gradio.clients.external.gta1 import GTA1Client
@@ -31,7 +31,7 @@ def create_agent(
     provider: Optional[str] = None,
     azure_endpoint: Optional[str] = None,
     gta1_url: Optional[str] = None,
-    extract_fields: Optional[list] = None,
+    extract_fields: Optional[Dict[str, str]] = None,
     **kwargs,
 ) -> BaseAgent:
     """Factory function — returns the right BaseAgent subclass for *model_name*.

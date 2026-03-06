@@ -63,7 +63,7 @@ class BaseAgent(ABC):
         max_steps: int = 20,
         context_n: int = 15,
         output_callback=None,
-        extract_fields: Optional[List[str]] = None,
+        extract_fields: Optional[Dict[str, str]] = None,
         omniparser_client: Optional[OmniParserClient] = None,
         **kwargs,
     ):
@@ -134,7 +134,7 @@ class BaseAgent(ABC):
         self,
         response_text: str,
         parsed_screen: Dict[str, Any],
-    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
         """Parse LLM response into tool calls and optional read_fields.
 
         Calls the agent-specific :meth:`_parse_tool_calls` hook, then extracts
@@ -146,13 +146,13 @@ class BaseAgent(ABC):
         """
         tool_calls = self._parse_tool_calls(response_text, parsed_screen)
 
-        read_fields: List[str] = []
+        read_fields: Dict[str, str] = {}
         try:
             json_str = self._extract_data(response_text, "json")
             data = json.loads(json_str)
-            raw = data.get("read_fields", [])
-            if isinstance(raw, list):
-                read_fields = [str(f) for f in raw if f]
+            raw = data.get("read_fields", {})
+            if isinstance(raw, dict):
+                read_fields = {str(k): str(v) for k, v in raw.items() if k}
         except Exception:
             pass
 
@@ -462,7 +462,7 @@ class BaseAgent(ABC):
     def _read_screen(
         self,
         parsed_screen: Dict[str, Any],
-        fields: Optional[List[str]] = None,
+        fields: Optional[Dict[str, str]] = None,
     ) -> Dict[str, str]:
         """Read specific fields from the current screen using the VLM.
 
@@ -472,7 +472,11 @@ class BaseAgent(ABC):
 
         Args:
             parsed_screen: Screen data dict from :meth:`_capture_screen`.
-            fields: Field names to read.  Defaults to ``self.extract_fields``.
+            fields: ``{field_name: constraint}`` mapping.  The constraint is a
+                natural-language instruction to the extraction LLM (e.g.
+                ``"4 digits number"`` or ``"2 decimal places"``).  An empty
+                string means no special constraint.  Defaults to
+                ``self.extract_fields``.
 
         Returns:
             ``{field: value}`` dict.  Values are ``"null"`` when not visible or
@@ -480,7 +484,9 @@ class BaseAgent(ABC):
         """
         import json as _json
 
-        fields = fields if fields is not None else (self.extract_fields or [])
+        fields = fields if fields is not None else (self.extract_fields or {})
+        if not fields:
+            return {}
         fallback = {f: "extraction failed" for f in fields}
 
         # Pick best available screenshot; run OmniParser for SOM when possible.
@@ -506,9 +512,16 @@ class BaseAgent(ABC):
             if ocr_text else ""
         )
 
+        # Build per-field block: "- field_name: constraint" or just "- field_name"
+        fields_lines = []
+        for name, constraint in fields.items():
+            line = f"- {name}: {constraint}" if constraint else f"- {name}"
+            fields_lines.append(line)
+        fields_block = "\n".join(fields_lines)
+
         user_text = EXTRACTION_USER_PROMPT.format(
             ocr_block=ocr_block,
-            fields_json=_json.dumps(fields),
+            fields_block=fields_block,
         )
 
         # Build multimodal message.
@@ -531,7 +544,6 @@ class BaseAgent(ABC):
             raw = self._extract_data(response.content, "json") or response.content
             result = _json.loads(raw)
             if isinstance(result, dict):
-                # Ensure every requested field is present.
                 return {f: str(result.get(f, "null")) for f in fields}
             return fallback
         except Exception as exc:

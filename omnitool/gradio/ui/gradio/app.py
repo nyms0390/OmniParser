@@ -22,7 +22,7 @@ import base64
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Generator, Tuple
+from typing import Dict, Generator, Tuple
 
 import gradio as gr
 from PIL import Image
@@ -171,7 +171,8 @@ class GradioApp:
                 with gr.Row():
                     extract_fields_input = gr.Textbox(
                         label="Extract fields after task (optional)",
-                        placeholder="e.g. price, status, error message",
+                        placeholder="e.g. price: 2 decimal places\nstatus\nunified_number: 4 digits",
+                        lines=3,
                         show_label=True,
                     )
             
@@ -324,8 +325,17 @@ class GradioApp:
             except ValueError:
                 agent_mode = AgentMode.INTERACTIVE
             
-            # Parse extract_fields from comma-separated input.
-            extract_fields = [f.strip() for f in extract_fields_raw.split(",") if f.strip()]
+            # Parse extract_fields — supports "field: constraint" per line or plain names.
+            extract_fields: Dict[str, str] = {}
+            for line in extract_fields_raw.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                if ":" in line:
+                    name, _, constraint = line.partition(":")
+                    extract_fields[name.strip()] = constraint.strip()
+                else:
+                    extract_fields[line] = ""
 
             # Prepare orchestrator kwargs
             orchestrator_kwargs = {

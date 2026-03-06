@@ -121,7 +121,7 @@ Output format:
     "Next Action": "action_type, action description" | "None" # one action at a time, describe it briefly.
     "Box ID": n, # required for left_click, right_click, double_click, hover, type — omit for scroll_up, scroll_down, wait
     "value": "xxx", # required when action is type; omit for all other actions
-    "read_fields": ["field1", "field2"] # optional — include ONLY when the current screen shows a value you need for a later step
+    "read_fields": {{"field": "constraint"}} # optional — include ONLY when the current screen shows a value you need for a later step. Use natural language constraints, e.g. "4 digits", "2 decimal places". Omit entirely when not reading.
 }}
 ```
 
@@ -157,7 +157,7 @@ Another Example (reading screen values for a later step):
 {{
     "Reasoning": "The order confirmation page is showing. I need to capture the confirmation number and total before navigating away.",
     "Next Action": "None",
-    "read_fields": ["confirmation_number", "order_total"]
+    "read_fields": {{"confirmation_number": "alphanumeric, 8 characters", "order_total": "2 decimal places"}}
 }}
 ```
 
@@ -216,7 +216,7 @@ Output format:
     "Reasoning": str, # concise summary of what you see on screen, what history tells you, and why you chose this action.
     "Next Action": "action_type, description of the target element" | "None" # one action at a time.
     "value": "xxx", # required when action is type; omit for all other actions
-    "read_fields": ["field1", "field2"] # optional — include ONLY when the current screen shows a value you need for a later step
+    "read_fields": {{"field": "constraint"}} # optional — include ONLY when the current screen shows a value you need for a later step. Use natural language constraints, e.g. "4 digits", "2 decimal places". Omit entirely when not reading.
 }}
 ```
 
@@ -250,7 +250,7 @@ Another Example (reading screen values for a later step):
 {{
     "Reasoning": "The order confirmation page is showing. I need to capture the confirmation number before navigating away.",
     "Next Action": "None",
-    "read_fields": ["confirmation_number", "order_total"]
+    "read_fields": {{"confirmation_number": "alphanumeric, 8 characters", "order_total": "2 decimal places"}}
 }}
 ```
 
@@ -377,7 +377,9 @@ elements provided. Copy values exactly as they appear on screen.\
 """
 
 EXTRACTION_USER_PROMPT = """\
-Extract the following fields from the current screen: {fields_json}
+Extract the following fields from the current screen:
+
+{fields_block}
 
 {ocr_block}\
 Please output an answer in pure JSON format according to the following schema. \
@@ -385,13 +387,13 @@ The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, 
 AND DO NOT DEVIATE FROM THIS SCHEMA:
 
     {{
-        "<field_name>": "<exact value as shown on screen, or null if not visible>"
+        "<field_name>": "<value as shown on screen, satisfying the constraint, or null if not visible>"
     }}
 
-Example — if asked for {{"price", "status"}}:
+Example — if asked for price (2 decimal places) and status:
 
     {{
-        "price": "€12.99",
+        "price": "12.99",
         "status": "In stock"
     }}\
 """
