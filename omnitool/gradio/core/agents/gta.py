@@ -68,7 +68,6 @@ class GTAAgent(BaseAgent):
         max_steps: int = 20,
         context_n: int = 15,
         output_callback=None,
-        screenshot_max_width: int = SCREENSHOT_MAX_WIDTH,
         **kwargs,
     ):
         super().__init__(
@@ -77,7 +76,6 @@ class GTAAgent(BaseAgent):
             context_n=context_n, output_callback=output_callback, **kwargs,
         )
         self.gta1_client = gta1_client
-        self.screenshot_max_width = screenshot_max_width
 
     # ------------------------------------------------------------------
     # ------------------------------------------------------------------
@@ -99,20 +97,31 @@ class GTAAgent(BaseAgent):
             if not screenshot_b64:
                 raise ValueError("No screenshot data from ComputerTool")
 
+            # Read original dimensions before any resizing.
+            orig_width, orig_height = 1920, 1080
+            try:
+                orig_img = Image.open(BytesIO(base64.b64decode(screenshot_b64)))
+                orig_width, orig_height = orig_img.size
+            except Exception as exc:
+                logger.warning("Could not read original image dimensions: %s", exc)
+
             screenshot_b64 = self._resize_b64(screenshot_b64, self.screenshot_max_width)
 
-            # Read dimensions from the (possibly resized) image
-            screen_width, screen_height = 1920, 1080
+            # Read dimensions of the (possibly resized) image sent to the VLM.
+            screen_width, screen_height = orig_width, orig_height
             try:
-                img = Image.open(BytesIO(base64.b64decode(screenshot_b64)))
-                screen_width, screen_height = img.size
+                resized_img = Image.open(BytesIO(base64.b64decode(screenshot_b64)))
+                screen_width, screen_height = resized_img.size
             except Exception as exc:
-                logger.warning("Could not read image dimensions: %s", exc)
+                logger.warning("Could not read resized image dimensions: %s", exc)
 
             return {
                 "raw_image_base64": screenshot_b64,
                 "screen_width": screen_width,
                 "screen_height": screen_height,
+                # Original resolution needed to scale GTA1 coords back to screen space.
+                "orig_screen_width": orig_width,
+                "orig_screen_height": orig_height,
             }
         except Exception as e:
             logger.error("Screen capture failed: %s", e)
@@ -165,7 +174,7 @@ class GTAAgent(BaseAgent):
 
         # Split "action_type, description of target"
         parts = next_action.split(",", 1)
-        action_type = parts[0].strip()
+        action_type = parts[0].strip().lower()
         grounding_desc = parts[1].strip() if len(parts) > 1 else ""
 
         # For positional actions, record the grounding instruction; _ground() will resolve it.
@@ -188,7 +197,7 @@ class GTAAgent(BaseAgent):
         ):
             tool_calls.append({"tool": "computer", "action": action_type})
         else:
-            logger.warning("Unknown GTA1 action type: %s", action_type)
+            logger.warning("Unknown GTA1 action type (after alias lookup): %r", action_type)
 
         return tool_calls
 
@@ -213,26 +222,46 @@ class GTAAgent(BaseAgent):
         grounding_log: List[Dict[str, Any]] = []
         image_b64 = parsed_screen.get("raw_image_base64", "")
 
+        # Scale factors to convert GTA1 coords (resized image space) → screen space.
+        resized_w = parsed_screen.get("screen_width", 1)
+        resized_h = parsed_screen.get("screen_height", 1)
+        orig_w = parsed_screen.get("orig_screen_width", resized_w)
+        orig_h = parsed_screen.get("orig_screen_height", resized_h)
+        scale_x = orig_w / resized_w if resized_w else 1.0
+        scale_y = orig_h / resized_h if resized_h else 1.0
+
         for tc in tool_calls:
             instruction = tc.get("grounding_instruction")
             if instruction:
-                coordinate = self._resolve_coordinate(image_b64, instruction)
+                # raw_coord is in resized-image space (what GTA1 received).
+                raw_coord = self._resolve_coordinate(image_b64, instruction)
+
+                # Crosshair is drawn on the resized image shown in the UI.
                 annotated_b64 = (
-                    self._draw_crosshair(image_b64, coordinate[0], coordinate[1])
-                    if coordinate and image_b64
+                    self._draw_crosshair(image_b64, raw_coord[0], raw_coord[1])
+                    if raw_coord and image_b64
                     else ""
                 )
+
+                # screen_coord is scaled to actual screen resolution for the click.
+                screen_coord = (
+                    [round(raw_coord[0] * scale_x), round(raw_coord[1] * scale_y)]
+                    if raw_coord else None
+                )
+                if screen_coord and (scale_x != 1.0 or scale_y != 1.0):
+                    logger.debug("Coordinate scaled to screen space: %s", screen_coord)
+
                 grounding_log.append({
                     "instruction": instruction,
-                    "coordinate": coordinate,
+                    "coordinate": screen_coord,
                     "annotated_image_b64": annotated_b64,
-                    "success": coordinate is not None,
+                    "success": screen_coord is not None,
                 })
-                if coordinate:
+                if screen_coord:
                     resolved.append({
                         "tool": "computer",
                         "action": "mouse_move",
-                        "coordinate": coordinate,
+                        "coordinate": screen_coord,
                     })
                 # Drop the entry silently if grounding failed
             else:
