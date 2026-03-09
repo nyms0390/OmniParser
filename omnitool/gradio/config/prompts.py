@@ -119,9 +119,9 @@ Output format:
 {{
     "Reasoning": str, # concise summary of what you see on screen, what history tells you, and why you chose this action.
     "Next Action": "action_type, action description" | "None" # one action at a time, describe it briefly.
-    "Box ID": n, # required for left_click, right_click, double_click, hover, type — omit for scroll_up, scroll_down, wait
-    "value": "xxx", # required when action is type; omit for all other actions
-    "read_fields": {{"field": "constraint"}} # optional — include ONLY when the current screen shows a value you need for a later step. Use natural language constraints, e.g. "4 digits", "2 decimal places". Omit entirely when not reading.
+    "Box ID": n, # required for left_click, right_click, double_click, hover, type
+    "value": "xxx" | null, # required when action is type
+    "read_fields": {{"field": "constraint"}} | null # when you want to capture screen values for later steps, describe the field and its constraint.
 }}
 ```
 
@@ -130,7 +130,9 @@ One Example:
 {{
     "Reasoning": "Box 3 is an interactive icon ('Chrome browser') on the desktop. No previous actions. Opening Chrome by double-clicking Box 3.",
     "Next Action": "double_click, open Chrome browser",
-    "Box ID": 3
+    "Box ID": 3,
+    "value": null,
+    "read_fields": null
 }}
 ```
 
@@ -140,7 +142,8 @@ Another Example:
     "Reasoning": "Box 0 is the browser address bar. Previous action clicked address bar and screen changed. Typing the target URL.",
     "Next Action": "type, enter URL",
     "Box ID": 0,
-    "value": "https://github.com"
+    "value": "https://github.com",
+    "read_fields": null
 }}
 ```
 
@@ -148,7 +151,10 @@ Another Example:
 ```json
 {{
     "Reasoning": "No element matching 'Submit' is visible in screen elements. The SOM image shows the page is cut off — button is likely below the fold. Scrolling down.",
-    "Next Action": "scroll_down, look for Submit button"
+    "Next Action": "scroll_down, look for Submit button",
+    "Box ID": null,
+    "value": null,
+    "read_fields": null
 }}
 ```
 
@@ -157,6 +163,8 @@ Another Example (reading screen values for a later step):
 {{
     "Reasoning": "The order confirmation page is showing. I need to capture the confirmation number and total before navigating away.",
     "Next Action": "None",
+    "Box ID": null,
+    "value": null,
     "read_fields": {{"confirmation_number": "alphanumeric, 8 characters", "order_total": "2 decimal places"}}
 }}
 ```
@@ -215,8 +223,8 @@ Output format:
 {{
     "Reasoning": str, # concise summary of what you see on screen, what history tells you, and why you chose this action.
     "Next Action": "action_type, description of the target element" | "None" # one action at a time.
-    "value": "xxx", # required when action is type; omit for all other actions
-    "read_fields": {{"field": "constraint"}} # optional — include ONLY when the current screen shows a value you need for a later step. Use natural language constraints, e.g. "4 digits", "2 decimal places". Omit entirely when not reading.
+    "value": "xxx", # required when action is type
+    "read_fields": {{"field": "constraint"}} | null, # when you want to capture screen values for later steps, describe the field and its constraint.
 }}
 ```
 
@@ -224,7 +232,9 @@ One Example:
 ```json
 {{
     "Reasoning": "The Firefox browser icon is visible in the taskbar at the bottom of the screen. No previous actions. Launching Firefox.",
-    "Next Action": "double_click, the Firefox browser icon in the taskbar at the bottom"
+    "Next Action": "double_click, the Firefox browser icon in the taskbar at the bottom",
+    "value": null,
+    "read_fields": null
 }}
 ```
 
@@ -233,7 +243,8 @@ Another Example:
 {{
     "Reasoning": "The browser address bar is visible at the top. Previous action opened the browser and screen changed. Typing the target URL.",
     "Next Action": "type, the browser address bar at the top of the window",
-    "value": "https://github.com"
+    "value": "https://github.com",
+    "read_fields": null
 }}
 ```
 
@@ -241,7 +252,9 @@ Another Example:
 ```json
 {{
     "Reasoning": "The Submit button is not visible. The page appears to have more content below. Scrolling down.",
-    "Next Action": "scroll_down, look for Submit button below the fold"
+    "Next Action": "scroll_down, look for Submit button below the fold",
+    "value": null,
+    "read_fields": null
 }}
 ```
 
@@ -250,6 +263,7 @@ Another Example (reading screen values for a later step):
 {{
     "Reasoning": "The order confirmation page is showing. I need to capture the confirmation number before navigating away.",
     "Next Action": "None",
+    "value": null,
     "read_fields": {{"confirmation_number": "alphanumeric, 8 characters", "order_total": "2 decimal places"}}
 }}
 ```
@@ -332,11 +346,7 @@ Recall we are working on the following request:
 
 {task}
 
-{checklist_section}
-
-Here is a summary of the most recent actions taken:
-{recent_actions}
-
+{working_memory_section}\
 To make progress on the request, please answer the following questions, including necessary reasoning:
 
     - Is the request fully satisfied? (True if complete, or False if the original request has yet to be SUCCESSFULLY and FULLY addressed)
@@ -364,8 +374,6 @@ Please output an answer in pure JSON format according to the following schema. T
         ]
     }}
 """
-
-
 # ---------------------------------------------------------------------------
 # 5. Post-loop — result extraction after the action loop completes
 # ---------------------------------------------------------------------------
@@ -376,7 +384,7 @@ from a screenshot of a computer screen. Use both the visual image and any parsed
 elements provided. Copy values exactly as they appear on screen.\
 """
 
-EXTRACTION_USER_PROMPT = """\
+EXTRACTION_PROMPT = """\
 Extract the following fields from the current screen:
 
 {fields_block}

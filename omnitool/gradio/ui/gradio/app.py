@@ -233,22 +233,22 @@ class GradioApp:
             computer_tool = self.tools.get_tool("computer")
             if not computer_tool:
                 logger.warning("ComputerTool not available in tools collection")
-                return [{"role": "system", "content": "Initial screenshot: ComputerTool not available"}]
+                return [{"role": "assistant", "content": "Initial screenshot: ComputerTool not available"}]
             
             screenshot_result = computer_tool.run("screenshot")
             screenshot_base64 = screenshot_result.base64_image
             
             if not screenshot_base64:
                 logger.warning("Screenshot returned but no image data")
-                return [{"role": "system", "content": "Initial screenshot: No image data available"}]
+                return [{"role": "assistant", "content": "Initial screenshot: No image data available"}]
             
             img_html = render_image(screenshot_base64, hint=True)
-            return [{"role": "system", "content": f"Initial desktop state:\n\n{img_html}"}]
+            return [{"role": "assistant", "content": f"Initial desktop state:\n\n{img_html}"}]
         
         except Exception as e:
             error_msg = f"Failed to capture initial screenshot: {str(e)}"
             logger.error(error_msg)
-            return [{"role": "system", "content": error_msg}]
+            return [{"role": "assistant", "content": error_msg}]
     
     def on_model_change(self, model_name: str) -> Tuple:
         """Handle model selection change.
@@ -444,18 +444,6 @@ class GradioApp:
                     if reply_msg:
                         history.append({"role": "assistant", "content": reply_msg})
                     yield history, "", "Agent finished", state
-                
-                elif update_type == "complete":
-                    status = (
-                        f"[OK] Complete - "
-                        f"Steps: {update.get('total_steps')}, "
-                        f"Tokens: {update.get('total_tokens')}, "
-                        f"Cost: {update.get('total_cost')}"
-                    )
-                    history.append({"role": "assistant", "content": status})
-                    loop_complete = True
-                    yield history, "", status, state
-                    # Don't return here — extraction_result event may follow.
 
                 elif update_type == "screen_reading":
                     fields = update.get("fields", {})
@@ -468,13 +456,30 @@ class GradioApp:
 
                 elif update_type == "extraction_result":
                     fields = update.get("fields", {})
+                    collected_facts = update.get("collected_facts", {})
                     if fields:
                         history.append({
                             "role": "assistant",
                             "content": format_extraction_result(fields),
                         })
+                    if collected_facts:
+                        history.append({
+                            "role": "assistant",
+                            "content": "**Collected facts (mid-loop readings)**\n" + format_extraction_result(collected_facts),
+                        })
                     yield history, "", "Extraction complete", state
-                    return
+                
+                elif update_type == "complete":
+                    status = (
+                        f"[OK] Complete - "
+                        f"Steps: {update.get('total_steps')}, "
+                        f"Tokens: {update.get('total_tokens')}, "
+                        f"Cost: {update.get('total_cost')}"
+                    )
+                    history.append({"role": "assistant", "content": status})
+                    loop_complete = True
+                    yield history, "", status, state
+                    return  # End of execution
 
                 elif update_type == "error":
                     status = f"[ERROR]: {update.get('message')}"

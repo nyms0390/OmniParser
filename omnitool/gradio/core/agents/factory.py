@@ -28,6 +28,7 @@ def create_agent(
     platform: str = "windows",
     max_steps: int = 20,
     context_n: int = 15,
+    action_delay: float = 1.5,
     provider: Optional[str] = None,
     azure_endpoint: Optional[str] = None,
     gta1_url: Optional[str] = None,
@@ -97,6 +98,7 @@ def create_agent(
         platform=platform,
         max_steps=max_steps,
         context_n=context_n,
+        action_delay=action_delay,
         extract_fields=extract_fields or None,
     )
 

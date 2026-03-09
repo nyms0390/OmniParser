@@ -17,10 +17,12 @@ import hashlib
 import json
 import logging
 import re
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from dataclasses import dataclass, field
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from PIL import Image
@@ -30,7 +32,7 @@ from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import (
     AgentMode,
     EXTRACTION_SYSTEM_PROMPT,
-    EXTRACTION_USER_PROMPT,
+    EXTRACTION_PROMPT,
     PLAN_PROMPT,
     PLANNER_SYSTEM_PROMPT,
     REFLECT_PROMPT,
@@ -41,6 +43,27 @@ from omnitool.gradio.core.agents.checklist import Checklist
 from omnitool.gradio.app.state import AppState
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class WorkingMemory:
+    """Unified container for all transient agent state during a single run.
+
+    Attributes:
+        task: The user's task string.
+        facts: Key-value pairs read from screen mid-loop via ``read_fields``.
+        ledger: Latest reflect output (raw JSON string).
+        checklist: Task plan with per-step statuses.
+        trajectory: Ordered list of step data dicts (action history).
+        parsed_screen: Most recent captured screen state.
+    """
+
+    task: Optional[str] = None
+    facts: Dict[str, str] = field(default_factory=dict)
+    ledger: Optional[str] = None
+    checklist: Optional["Checklist"] = None
+    trajectory: List[Dict[str, Any]] = field(default_factory=list)
+    parsed_screen: Optional[Dict[str, Any]] = None
 
 
 class BaseAgent(ABC):
@@ -62,6 +85,7 @@ class BaseAgent(ABC):
         platform: str = "windows",
         max_steps: int = 20,
         context_n: int = 15,
+        action_delay: float = 1.5,
         output_callback=None,
         extract_fields: Optional[Dict[str, str]] = None,
         omniparser_client: Optional[OmniParserClient] = None,
@@ -77,6 +101,7 @@ class BaseAgent(ABC):
         self.platform = platform
         self.max_steps = max_steps
         self.context_n = context_n
+        self.action_delay = action_delay
         self.output_callback = output_callback
         self.extract_fields = extract_fields
         self.omniparser_client = omniparser_client
@@ -93,12 +118,7 @@ class BaseAgent(ABC):
         self.total_cost = 0.0
 
         # Orchestration state
-        self.plan_text: Optional[str] = None
-        self.ledger: Optional[str] = None
-        self.trajectory: List[Dict[str, Any]] = []
-        self._task: Optional[str] = None
-        self.checklist: Optional[Checklist] = None
-        self.parsed_screen: Optional[Dict[str, Any]] = None
+        self.working_memory = WorkingMemory()
 
     # ------------------------------------------------------------------
     # Abstract template hooks
@@ -280,8 +300,8 @@ class BaseAgent(ABC):
         initial_screen: Optional[Dict[str, Any]] = None,
     ) -> Checklist:
         """Generate an initial plan via an extra LLM call (ORCHESTRATED init)."""
-        self._task = messages[0]["content"] if messages else ""
-        plan_prompt = PLAN_PROMPT.format(task=self._task)
+        self.working_memory.task = messages[0]["content"] if messages else ""
+        plan_prompt = PLAN_PROMPT.format(task=self.working_memory.task)
         plan_messages = copy.deepcopy(messages)
 
         if initial_screen:
@@ -317,12 +337,12 @@ class BaseAgent(ABC):
 
     def _load_task_checklist(self, messages: List[Dict[str, Any]]) -> Checklist:
         """Build a Checklist from the user's task message (TASK init)."""
-        self._task = messages[0]["content"] if messages else ""
-        checklist = Checklist.from_user_text(self._task)
+        self.working_memory.task = messages[0]["content"] if messages else ""
+        checklist = Checklist.from_user_text(self.working_memory.task)
 
-        raw_lines = [ln for ln in self._task.splitlines() if ln.strip()]
+        raw_lines = [ln for ln in self.working_memory.task.splitlines() if ln.strip()]
         if len(checklist.items) == 1 and len(raw_lines) > 2:
-            parse_prompt = TASK_PARSE_PROMPT.format(user_text=self._task)
+            parse_prompt = TASK_PARSE_PROMPT.format(user_text=self.working_memory.task)
             parse_messages = copy.deepcopy(messages)
             parse_messages.append({"role": "user", "content": parse_prompt})
             try:
@@ -344,12 +364,21 @@ class BaseAgent(ABC):
         checklist: Optional[Checklist],
     ) -> Tuple[str, Optional[Checklist]]:
         """Run the Reflect LLM call and update checklist statuses."""
-        recent_actions_text = self._format_recent_actions()
-        checklist_section = checklist.to_prompt_text() if checklist else ""
+        wm = self.working_memory
+        parts = []
+        if checklist:
+            parts.append(checklist.to_prompt_text())
+        if wm.facts:
+            facts_lines = "\n".join(f"- {k}: {v}" for k, v in wm.facts.items())
+            parts.append(f"Data collected so far:\n{facts_lines}")
+        recent_actions = self._format_recent_actions()
+        if recent_actions and recent_actions != "(no actions taken yet)":
+            parts.append(f"Recent actions:\n{recent_actions}")
+        working_memory_section = ("\n\n".join(parts) + "\n\n") if parts else ""
+
         ledger_prompt = REFLECT_PROMPT.format(
-            task=self._task or "",
-            checklist_section=checklist_section,
-            recent_actions=recent_actions_text,
+            task=self.working_memory.task or "",
+            working_memory_section=working_memory_section,
         )
         ledger_messages = copy.deepcopy(messages)
         ledger_messages.append({"role": "user", "content": ledger_prompt})
@@ -519,7 +548,7 @@ class BaseAgent(ABC):
             fields_lines.append(line)
         fields_block = "\n".join(fields_lines)
 
-        user_text = EXTRACTION_USER_PROMPT.format(
+        user_text = EXTRACTION_PROMPT.format(
             ocr_block=ocr_block,
             fields_block=fields_block,
         )
@@ -536,12 +565,11 @@ class BaseAgent(ABC):
         messages = [{"role": "user", "content": content}]
 
         try:
-            response = self.llm_client.chat(
+            response_text, _ = self.llm_client.generate(
                 messages=messages,
-                system=EXTRACTION_SYSTEM_PROMPT,
-                model=self.model_name,
+                system_prompt=EXTRACTION_SYSTEM_PROMPT,
             )
-            raw = self._extract_data(response.content, "json") or response.content
+            raw = self._extract_data(response_text, "json") or response_text
             result = _json.loads(raw)
             if isinstance(result, dict):
                 return {f: str(result.get(f, "null")) for f in fields}
@@ -572,9 +600,10 @@ class BaseAgent(ABC):
         return {"action": primary_action, "coordinate": coordinate}
 
     def _format_recent_actions(self, n: int = 5) -> str:
-        if not self.trajectory:
+        trajectory = self.working_memory.trajectory
+        if not trajectory:
             return "(no actions taken yet)"
-        recent = self.trajectory[-n:]
+        recent = trajectory[-n:]
         lines = []
         for entry in recent:
             info = self._extract_primary_action(entry.get("tool_calls", []))
@@ -588,9 +617,10 @@ class BaseAgent(ABC):
         return "\n".join(lines)
 
     def _detect_repeated_actions(self, threshold: int = 3) -> bool:
-        if len(self.trajectory) < threshold:
+        trajectory = self.working_memory.trajectory
+        if len(trajectory) < threshold:
             return False
-        recent = self.trajectory[-threshold:]
+        recent = trajectory[-threshold:]
         infos = [self._extract_primary_action(e.get("tool_calls", [])) for e in recent]
         actions = [i["action"] for i in infos]
         if len(set(actions)) != 1:
@@ -616,9 +646,9 @@ class BaseAgent(ABC):
             "tool_calls": plan_response.get("tool_calls", []),
             "tokens": plan_response.get("metadata", {}).get("tokens"),
             "cost": plan_response.get("cost"),
-            "ledger": self.ledger,
+            "ledger": self.working_memory.ledger,
         }
-        self.trajectory.append(step_data)
+        self.working_memory.trajectory.append(step_data)
         trajectory_file = self.save_folder / "trajectory.json"
         try:
             with open(trajectory_file, "a") as f:
@@ -642,38 +672,38 @@ class BaseAgent(ABC):
             system_prompt = self._get_system_prompt()
 
             yield {"type": "status", "message": "Capturing initial screen..."}
-            self.parsed_screen = self._capture_screen()
+            self.working_memory.parsed_screen = self._capture_screen()
             yield {
                 "type": "parsed_screen",
-                "som_image_base64": self.parsed_screen.get("som_image_base64", ""),
-                "raw_image_base64": self.parsed_screen.get("raw_image_base64", ""),
-                "screen_info": str(self.parsed_screen.get("parsed_content_list", [])),
+                "som_image_base64": self.working_memory.parsed_screen.get("som_image_base64", ""),
+                "raw_image_base64": self.working_memory.parsed_screen.get("raw_image_base64", ""),
+                "screen_info": str(self.working_memory.parsed_screen.get("parsed_content_list", [])),
             }
 
             # ---- INIT (mode-specific, runs once) ----
             if self.mode == AgentMode.ORCHESTRATED:
                 yield {"type": "status", "message": "Generating plan..."}
-                self.checklist = self._generate_plan(
-                    self.state.chat.messages, initial_screen=self.parsed_screen
+                self.working_memory.checklist = self._generate_plan(
+                    self.state.chat.messages, initial_screen=self.working_memory.parsed_screen
                 )
-                self.plan_text = self.checklist.to_prompt_text()
+                plan_text = self.working_memory.checklist.to_prompt_text()
                 self.state.chat.add_message(
-                    "assistant", json.dumps(self.checklist.to_dict())
+                    "assistant", json.dumps(self.working_memory.checklist.to_dict())
                 )
                 yield {
                     "type": "plan",
-                    "plan_text": self.plan_text,
-                    "checklist": self.checklist.to_dict(),
+                    "plan_text": plan_text,
+                    "checklist": self.working_memory.checklist.to_dict(),
                 }
 
             elif self.mode == AgentMode.TASK:
                 yield {"type": "status", "message": "Loading task checklist..."}
-                self.checklist = self._load_task_checklist(self.state.chat.messages)
-                self.plan_text = self.checklist.to_prompt_text()
+                self.working_memory.checklist = self._load_task_checklist(self.state.chat.messages)
+                plan_text = self.working_memory.checklist.to_prompt_text()
                 yield {
                     "type": "plan",
-                    "plan_text": self.plan_text,
-                    "checklist": self.checklist.to_dict(),
+                    "plan_text": plan_text,
+                    "checklist": self.working_memory.checklist.to_dict(),
                 }
 
             # ---- Main loop ----
@@ -687,20 +717,20 @@ class BaseAgent(ABC):
                     and self.step_count > 1
                 ):
                     yield {"type": "status", "message": "Reflecting..."}
-                    self.ledger, self.checklist = self._reflect(
-                        self.state.chat.messages, self.checklist
+                    self.working_memory.ledger, self.working_memory.checklist = self._reflect(
+                        self.state.chat.messages, self.working_memory.checklist
                     )
-                    self.state.chat.add_message("assistant", self.ledger)
+                    self.state.chat.add_message("assistant", self.working_memory.ledger)
                     yield {
                         "type": "ledger",
-                        "ledger_text": self.ledger,
-                        "checklist": self.checklist.to_dict() if self.checklist else None,
+                        "ledger_text": self.working_memory.ledger,
+                        "checklist": self.working_memory.checklist.to_dict() if self.working_memory.checklist else None,
                     }
 
                     try:
-                        ledger_json = json.loads(self.ledger)
+                        ledger_json = json.loads(self.working_memory.ledger)
                         task_done = ledger_json.get("is_request_satisfied", {}).get("answer")
-                        checklist_done = self.checklist and self.checklist.all_done()
+                        checklist_done = self.working_memory.checklist and self.working_memory.checklist.all_done()
                         if task_done or checklist_done:
                             yield {"type": "assistant_reply", "message": "Task completed."}
                             break
@@ -726,8 +756,8 @@ class BaseAgent(ABC):
                 yield {"type": "status", "message": f"Step {self.step_count}: Planning..."}
 
                 context_messages = list(self.state.chat.get_last_n_messages(self.context_n))
-                if self.checklist:
-                    active = self.checklist.get_active()
+                if self.working_memory.checklist:
+                    active = self.working_memory.checklist.get_active()
                     if active:
                         context_messages.append({
                             "role": "user",
@@ -737,7 +767,7 @@ class BaseAgent(ABC):
                             ),
                         })
 
-                prepared_messages = self._format_messages(context_messages, self.parsed_screen)
+                prepared_messages = self._format_messages(context_messages, self.working_memory.parsed_screen)
                 response_text, metadata = self.llm_client.generate(
                     messages=prepared_messages,
                     system_prompt=system_prompt,
@@ -756,8 +786,8 @@ class BaseAgent(ABC):
                     metadata={"tokens": tokens, "cost": cost},
                 )
 
-                tool_calls, read_fields = self._parse_response(response_text, self.parsed_screen)
-                tool_calls, grounding_log = self._ground(tool_calls, self.parsed_screen)
+                tool_calls, read_fields = self._parse_response(response_text, self.working_memory.parsed_screen)
+                tool_calls, grounding_log = self._ground(tool_calls, self.working_memory.parsed_screen)
 
                 if grounding_log:
                     yield {"type": "grounding", "events": grounding_log}
@@ -805,10 +835,12 @@ class BaseAgent(ABC):
                         "base64_image": tool_base64_image,
                     }
 
-                self._save_trajectory_step(self.parsed_screen, plan_response)
+                self._save_trajectory_step(self.working_memory.parsed_screen, plan_response)
 
                 # ---- VERIFY ----
                 yield {"type": "status", "message": "Verifying action effect..."}
+                if self.action_delay > 0:
+                    time.sleep(self.action_delay)
                 screen_after = self._capture_screen()
                 yield {
                     "type": "parsed_screen",
@@ -817,13 +849,14 @@ class BaseAgent(ABC):
                     "screen_info": str(screen_after.get("parsed_content_list", [])),
                 }
 
-                verify = self._verify_step(tool_results, self.parsed_screen, screen_after)
+                verify = self._verify_step(tool_results, self.working_memory.parsed_screen, screen_after)
 
                 # ---- READ_FIELDS (mid-loop screen reading) ----
                 if read_fields:
                     yield {"type": "status", "message": f"Reading screen fields: {read_fields}"}
                     try:
                         reading = self._read_screen(screen_after, fields=read_fields)
+                        self.working_memory.facts.update(reading)
                         self.state.chat.add_message(
                             "system",
                             f"<screen_reading>\n{json.dumps(reading, indent=2)}\n</screen_reading>",
@@ -848,7 +881,7 @@ class BaseAgent(ABC):
                     }
                     break
 
-                self.parsed_screen = screen_after
+                self.working_memory.parsed_screen = screen_after
                 yield {
                     "type": "progress",
                     "step": self.step_count,
@@ -861,13 +894,20 @@ class BaseAgent(ABC):
                 try:
                     final_screen = self._capture_screen()
                     extracted = self._read_screen(final_screen)
-                    yield {"type": "extraction_result", "fields": extracted}
                 except Exception as exc:
                     logger.warning("Post-loop extraction failed: %s", exc)
-                    yield {
-                        "type": "extraction_result",
-                        "fields": {f: "extraction failed" for f in self.extract_fields},
-                    }
+                    extracted = {f: "extraction failed" for f in self.extract_fields}
+                yield {
+                    "type": "extraction_result",
+                    "fields": extracted,
+                    "collected_facts": self.working_memory.facts,
+                }
+            elif self.working_memory.facts:
+                yield {
+                    "type": "extraction_result",
+                    "fields": {},
+                    "collected_facts": self.working_memory.facts,
+                }
 
             yield {
                 "type": "complete",
