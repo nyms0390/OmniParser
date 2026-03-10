@@ -138,7 +138,6 @@ class BaseAgent(ABC):
     def _format_messages(
         self,
         messages: List[Dict[str, Any]],
-        parsed_screen: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         """Prepare messages for the LLM plan call."""
 
@@ -146,14 +145,12 @@ class BaseAgent(ABC):
     def _parse_tool_calls(
         self,
         response_text: str,
-        parsed_screen: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         """Extract tool_calls from an LLM response string (agent-specific)."""
 
     def _parse_response(
         self,
         response_text: str,
-        parsed_screen: Dict[str, Any],
     ) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
         """Parse LLM response into tool calls and optional read_fields.
 
@@ -164,7 +161,7 @@ class BaseAgent(ABC):
             ``(tool_calls, read_fields)`` — ``read_fields`` is empty when the
             model did not request a screen read on this step.
         """
-        tool_calls = self._parse_tool_calls(response_text, parsed_screen)
+        tool_calls = self._parse_tool_calls(response_text)
 
         read_fields: Dict[str, str] = {}
         try:
@@ -185,7 +182,6 @@ class BaseAgent(ABC):
     def _ground(
         self,
         tool_calls: List[Dict[str, Any]],
-        parsed_screen: Dict[str, Any],
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Resolve any pending grounding in tool_calls (e.g. natural-language → coordinates).
 
@@ -294,16 +290,13 @@ class BaseAgent(ABC):
     def _parse_checklist(self, raw_json: str) -> Checklist:
         return Checklist.from_llm_json(raw_json)
 
-    def _generate_plan(
-        self,
-        messages: List[Dict[str, Any]],
-        initial_screen: Optional[Dict[str, Any]] = None,
-    ) -> Checklist:
+    def _generate_plan(self, messages: List[Dict[str, Any]]) -> Checklist:
         """Generate an initial plan via an extra LLM call (ORCHESTRATED init)."""
         self.working_memory.task = messages[0]["content"] if messages else ""
         plan_prompt = PLAN_PROMPT.format(task=self.working_memory.task)
         plan_messages = copy.deepcopy(messages)
 
+        initial_screen = self.working_memory.parsed_screen
         if initial_screen:
             img_b64 = (
                 initial_screen.get("som_image_base64")
@@ -358,16 +351,12 @@ class BaseAgent(ABC):
 
         return checklist
 
-    def _reflect(
-        self,
-        messages: List[Dict[str, Any]],
-        checklist: Optional[Checklist],
-    ) -> Tuple[str, Optional[Checklist]]:
-        """Run the Reflect LLM call and update checklist statuses."""
+    def _reflect(self, messages: List[Dict[str, Any]]) -> None:
+        """Run the Reflect LLM call; updates working_memory.ledger and .checklist in place."""
         wm = self.working_memory
         parts = []
-        if checklist:
-            parts.append(checklist.to_prompt_text())
+        if wm.checklist:
+            parts.append(wm.checklist.to_prompt_text())
         if wm.facts:
             facts_lines = "\n".join(f"- {k}: {v}" for k, v in wm.facts.items())
             parts.append(f"Data collected so far:\n{facts_lines}")
@@ -377,7 +366,7 @@ class BaseAgent(ABC):
         working_memory_section = ("\n\n".join(parts) + "\n\n") if parts else ""
 
         ledger_prompt = REFLECT_PROMPT.format(
-            task=self.working_memory.task or "",
+            task=wm.task or "",
             working_memory_section=working_memory_section,
         )
         ledger_messages = copy.deepcopy(messages)
@@ -388,23 +377,20 @@ class BaseAgent(ABC):
             system_prompt=PLANNER_SYSTEM_PROMPT,
         )
         self.update_token_usage(metadata.get("tokens", 0))
-        ledger = self._extract_data(response_text, "json")
+        wm.ledger = self._extract_data(response_text, "json")
 
-        if checklist:
+        if wm.checklist:
             try:
-                ledger_json = json.loads(ledger)
+                ledger_json = json.loads(wm.ledger)
                 updates = ledger_json.get("checklist_updates", [])
                 if updates:
-                    checklist.apply_updates(updates)
+                    wm.checklist.apply_updates(updates)
             except (json.JSONDecodeError, TypeError):
                 pass
-
-        return ledger, checklist
 
     def _verify_step(
         self,
         tool_results: List[Dict[str, Any]],
-        screen_before: Optional[Dict[str, Any]] = None,
         screen_after: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Post-Act verification (no LLM call)."""
@@ -425,7 +411,7 @@ class BaseAgent(ABC):
             "has_error": has_error,
             "error_detail": error_detail,
             "is_repeated": self._detect_repeated_actions(threshold=5),
-            "screen_unchanged": self._compare_screens(screen_before, screen_after),
+            "screen_unchanged": self._compare_screens(self.working_memory.parsed_screen, screen_after),
         }
 
     @staticmethod
@@ -633,15 +619,11 @@ class BaseAgent(ABC):
                     return False
         return True
 
-    def _save_trajectory_step(
-        self,
-        parsed_screen: Dict[str, Any],
-        plan_response: Dict[str, Any],
-    ):
+    def _save_trajectory_step(self, plan_response: Dict[str, Any]):
         step_data = {
             "step": self.step_count,
             "timestamp": datetime.now().isoformat(),
-            "screen_info": str(parsed_screen.get("parsed_content_list", [])),
+            "screen_info": str(self.working_memory.parsed_screen.get("parsed_content_list", []) if self.working_memory.parsed_screen else []),
             "agent_response": plan_response.get("response_text", ""),
             "tool_calls": plan_response.get("tool_calls", []),
             "tokens": plan_response.get("metadata", {}).get("tokens"),
@@ -684,7 +666,7 @@ class BaseAgent(ABC):
             if self.mode == AgentMode.ORCHESTRATED:
                 yield {"type": "status", "message": "Generating plan..."}
                 self.working_memory.checklist = self._generate_plan(
-                    self.state.chat.messages, initial_screen=self.working_memory.parsed_screen
+                    self.state.chat.messages
                 )
                 plan_text = self.working_memory.checklist.to_prompt_text()
                 self.state.chat.add_message(
@@ -717,9 +699,7 @@ class BaseAgent(ABC):
                     and self.step_count > 1
                 ):
                     yield {"type": "status", "message": "Reflecting..."}
-                    self.working_memory.ledger, self.working_memory.checklist = self._reflect(
-                        self.state.chat.messages, self.working_memory.checklist
-                    )
+                    self._reflect(self.state.chat.messages)
                     self.state.chat.add_message("assistant", self.working_memory.ledger)
                     yield {
                         "type": "ledger",
@@ -767,7 +747,7 @@ class BaseAgent(ABC):
                             ),
                         })
 
-                prepared_messages = self._format_messages(context_messages, self.working_memory.parsed_screen)
+                prepared_messages = self._format_messages(context_messages)
                 response_text, metadata = self.llm_client.generate(
                     messages=prepared_messages,
                     system_prompt=system_prompt,
@@ -786,8 +766,8 @@ class BaseAgent(ABC):
                     metadata={"tokens": tokens, "cost": cost},
                 )
 
-                tool_calls, read_fields = self._parse_response(response_text, self.working_memory.parsed_screen)
-                tool_calls, grounding_log = self._ground(tool_calls, self.working_memory.parsed_screen)
+                tool_calls, read_fields = self._parse_response(response_text)
+                tool_calls, grounding_log = self._ground(tool_calls)
 
                 if grounding_log:
                     yield {"type": "grounding", "events": grounding_log}
@@ -835,7 +815,7 @@ class BaseAgent(ABC):
                         "base64_image": tool_base64_image,
                     }
 
-                self._save_trajectory_step(self.working_memory.parsed_screen, plan_response)
+                self._save_trajectory_step(plan_response)
 
                 # ---- VERIFY ----
                 yield {"type": "status", "message": "Verifying action effect..."}
@@ -849,7 +829,7 @@ class BaseAgent(ABC):
                     "screen_info": str(screen_after.get("parsed_content_list", [])),
                 }
 
-                verify = self._verify_step(tool_results, self.working_memory.parsed_screen, screen_after)
+                verify = self._verify_step(tool_results, screen_after)
 
                 # ---- READ_FIELDS (mid-loop screen reading) ----
                 if read_fields:

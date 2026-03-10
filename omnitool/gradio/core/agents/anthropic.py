@@ -99,10 +99,10 @@ class AnthropicAgent(BaseAgent):
     def _format_messages(
         self,
         messages: List[Dict[str, Any]],
-        parsed_screen: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         """Element list as plain text (no SOM image) → LLM messages."""
         prepared = [self._strip_images(msg) for msg in messages]
+        parsed_screen = self.working_memory.parsed_screen or {}
         screen_info_text = str(parsed_screen.get("parsed_content_list", []))
         prepared.append({
             "role": "user",
@@ -116,7 +116,6 @@ class AnthropicAgent(BaseAgent):
     def _parse_tool_calls(
         self,
         response_text: str,
-        parsed_screen: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         """Anthropic tool_use blocks are handled by the SDK/executor layer."""
         return []

@@ -119,7 +119,7 @@ Output format:
 {{
     "Reasoning": str, # concise summary of what you see on screen, what history tells you, and why you chose this action.
     "Next Action": "action_type, action description" | "None" # one action at a time, describe it briefly.
-    "Box ID": n, # required for left_click, right_click, double_click, hover, type
+    "Box ID": n | null, # required for left_click, right_click, double_click, hover, type
     "value": "xxx" | null, # required when action is type
     "read_fields": {{"field": "constraint"}} | null # when you want to capture screen values for later steps, describe the field and its constraint.
 }}
@@ -223,7 +223,7 @@ Output format:
 {{
     "Reasoning": str, # concise summary of what you see on screen, what history tells you, and why you chose this action.
     "Next Action": "action_type, description of the target element" | "None" # one action at a time.
-    "value": "xxx", # required when action is type
+    "value": "xxx" | null, # required when action is type
     "read_fields": {{"field": "constraint"}} | null, # when you want to capture screen values for later steps, describe the field and its constraint.
 }}
 ```

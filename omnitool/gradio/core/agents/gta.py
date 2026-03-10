@@ -132,10 +132,10 @@ class GTAAgent(BaseAgent):
     def _format_messages(
         self,
         messages: List[Dict[str, Any]],
-        parsed_screen: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         """Raw screenshot → LLM messages (no element list, no SOM image)."""
         prepared = [self._strip_images(msg) for msg in messages]
+        parsed_screen = self.working_memory.parsed_screen or {}
 
         raw_b64 = parsed_screen.get("raw_image_base64", "")
         if raw_b64:
@@ -152,7 +152,6 @@ class GTAAgent(BaseAgent):
     def _parse_tool_calls(
         self,
         response_text: str,
-        parsed_screen: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         """JSON → pending tool_calls (positional actions carry a ``grounding_instruction``).
 
@@ -206,7 +205,6 @@ class GTAAgent(BaseAgent):
     def _ground(
         self,
         tool_calls: List[Dict[str, Any]],
-        parsed_screen: Dict[str, Any],
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Resolve ``grounding_instruction`` entries into pixel coordinates via GTA1.
 
@@ -222,6 +220,7 @@ class GTAAgent(BaseAgent):
         """
         resolved: List[Dict[str, Any]] = []
         grounding_log: List[Dict[str, Any]] = []
+        parsed_screen = self.working_memory.parsed_screen or {}
         image_b64 = parsed_screen.get("raw_image_base64", "")
 
         # Scale factors to convert GTA1 coords (resized image space) → screen space.

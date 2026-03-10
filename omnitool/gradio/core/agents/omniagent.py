@@ -99,10 +99,10 @@ class OmniAgent(BaseAgent):
     def _format_messages(
         self,
         messages: List[Dict[str, Any]],
-        parsed_screen: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         """Compact element list + SOM image → LLM messages."""
         prepared = [self._strip_images(msg) for msg in messages]
+        parsed_screen = self.working_memory.parsed_screen or {}
 
         compact = self.compact_screen_elements(
             parsed_screen.get("parsed_content_list", []),
@@ -130,7 +130,6 @@ class OmniAgent(BaseAgent):
     def _parse_tool_calls(
         self,
         response_text: str,
-        parsed_screen: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         """JSON → Box ID → pixel centroid → tool_calls."""
         tool_calls: List[Dict[str, Any]] = []
@@ -146,6 +145,7 @@ class OmniAgent(BaseAgent):
         if not next_action or next_action == "None":
             return tool_calls
 
+        parsed_screen = self.working_memory.parsed_screen or {}
         parsed_content_list = parsed_screen.get("parsed_content_list", [])
         screen_width = parsed_screen.get("screen_width", 1920)
         screen_height = parsed_screen.get("screen_height", 1080)

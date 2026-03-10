@@ -343,7 +343,7 @@ class GradioApp:
                 "state": state,
                 "tools_collection": self.tools,
                 "omniparser_client": self.omniparser_client,
-                "save_folder": Path(self.settings.run_folder),
+                "save_folder": state.session.run_folder,
                 "max_steps": max_steps,
                 "provider": provider,
                 "mode": agent_mode,
