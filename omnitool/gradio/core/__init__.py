@@ -6,8 +6,6 @@ from omnitool.gradio.core.agents import (
     GTAAgent,
     OmniAgent,
     create_agent,
-    get_agent_info,
-    get_available_agents,
 )
 from omnitool.gradio.core.agents.checklist import Checklist, ChecklistItem
 from omnitool.gradio.core.tools import (
@@ -25,8 +23,6 @@ __all__ = [
     "AnthropicAgent",
     "GTAAgent",
     "create_agent",
-    "get_available_agents",
-    "get_agent_info",
     # Checklist
     "Checklist",
     "ChecklistItem",

@@ -4,53 +4,55 @@ Settings UI components.
 
 from typing import List
 
-from omnitool.gradio.config import MODEL_CONFIG, get_all_model_names
+from omnitool.gradio.config import get_all_model_names, get_supported_providers
+
+
+AGENT_CHOICES = ["OmniAgent", "GTAAgent", "AnthropicAgent"]
+DEFAULT_AGENT = "OmniAgent"
+DEFAULT_MODEL = "gpt-4o"
+
+
+def get_agent_choices() -> List[str]:
+    """Return available agent types for the UI dropdown."""
+    return AGENT_CHOICES
 
 
 def get_model_choices() -> List[str]:
-    """Get list of available model choices.
-    
-    Returns:
-        List of model display names
-    """
+    """Return all registered model IDs for the UI dropdown."""
     return get_all_model_names()
 
 
 def get_provider_options_for_model(model_name: str) -> List[str]:
-    """Get available provider options for a model.
-    
+    """Return provider strings for *model_name* (for the provider dropdown).
+
     Args:
-        model_name: Model display name
-        
+        model_name: Model ID (key in LLM_MODELS)
+
     Returns:
-        List of provider options (provider names as strings)
+        List of provider name strings, or empty list if model not found.
     """
-    config = MODEL_CONFIG.get(model_name, {})
-    providers = config.get('provider')
-    
-    # Provider field is now a list of APIProvider enums
-    if isinstance(providers, list):
-        # Convert APIProvider enums to strings
-        return [str(p) for p in providers]
-    
-    # Fallback for single provider (shouldn't happen with new schema)
-    return [str(providers)] if providers else []
+    try:
+        return get_supported_providers(model_name)
+    except ValueError:
+        return []
 
 
 def create_settings_panel() -> dict:
-    """Create settings panel configuration.
-    
-    Returns:
-        Dictionary with settings panel configuration
-    """
+    """Return default settings panel configuration."""
     return {
+        "agent_choices": get_agent_choices(),
+        "default_agent": DEFAULT_AGENT,
         "model_choices": get_model_choices(),
-        "default_model": "omniparser + gpt-4o",
+        "default_model": DEFAULT_MODEL,
     }
 
 
 __all__ = [
+    "get_agent_choices",
     "get_model_choices",
     "get_provider_options_for_model",
     "create_settings_panel",
+    "AGENT_CHOICES",
+    "DEFAULT_AGENT",
+    "DEFAULT_MODEL",
 ]

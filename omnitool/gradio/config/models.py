@@ -1,202 +1,248 @@
 """
-Model configuration registry mapping model names to agent types, LLM clients, and pricing.
+Model and provider configuration registries.
+
+Three concerns are now separated:
+- PROVIDER_CONFIG : API endpoint overrides (only providers that need a non-SDK-managed base URL)
+- LLM_MODELS      : per-model capabilities, generation defaults, and pricing
+- OCR_CONFIG      : OCR backend configuration (unchanged)
+
+Agent type is selected in the UI and passed directly to the factory — it is NOT stored here.
+
+Pricing structure (Option C — per-provider overrides):
+    "pricing": {
+        "_default": {"input": <$/1M>, "output": <$/1M>},
+        "<provider>": {"input": ..., "output": ...},   # only when it differs from _default
+    }
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from omnitool.gradio.config.enums import APIProvider
 
 
-# Pricing format: {token_type: "total"|"separate", cost_per_1m: float or dict}
-# For separate token types (Anthropic), cost_per_1m is dict: {input: float, output: float}
-MODEL_CONFIG: Dict[str, Dict[str, Any]] = {
-    # GPT-4o Standard (OpenAI and Azure)
-    "omniparser + gpt-4o": {
+# ---------------------------------------------------------------------------
+# Provider configuration
+#
+# Only providers that require an explicit base_url override are listed.
+# Providers not listed here have their endpoints managed by their SDK:
+#   azure     → endpoint comes from settings.azure_endpoint
+#   anthropic → SDK-managed
+#   bedrock   → SDK-managed
+#   vertex    → SDK-managed
+#   groq      → SDK-managed
+# ---------------------------------------------------------------------------
+
+PROVIDER_CONFIG: Dict[str, str] = {
+    APIProvider.OPENAI:    "https://api.openai.com/v1",
+    APIProvider.DASHSCOPE: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+}
+
+
+# ---------------------------------------------------------------------------
+# LLM model registry
+#
+# Keys are short model IDs used in the UI and factory (e.g. "gpt-4o").
+# Fields:
+#   internal_name       : exact model string sent to the API
+#   supported_providers : APIProvider values the model is available through
+#   pricing             : per-provider cost metadata (input/output USD per 1M tokens)
+#                         "_default" is the fallback; add a provider key only when
+#                         that provider's pricing differs from the default.
+#   max_tokens          : upper bound on generated tokens
+#   temperature         : default sampling temperature
+# ---------------------------------------------------------------------------
+
+LLM_MODELS: Dict[str, Dict[str, Any]] = {
+    "gpt-4o": {
         "internal_name": "gpt-4o-2024-11-20",
-        "agent_type": "OmniAgent",
-        "llm_client": "openai",
-        "provider": [APIProvider.OPENAI, APIProvider.AZURE],
-        "provider_base_url": "https://api.openai.com/v1",
+        "supported_providers": [APIProvider.OPENAI],
         "pricing": {
-            "token_type": "total",
-            "cost_per_1m": 2.5,  # USD per 1M tokens
+            "_default": {"input": 2.50, "output": 10.00},
         },
         "max_tokens": 4096,
         "temperature": 0.0,
-        "supports_images": True,
     },
-    # O1 Standard (OpenAI)
-    "omniparser + o1": {
+    "gpt-4.1": {
+        "internal_name": "gpt-4.1",
+        "supported_providers": [APIProvider.AZURE, APIProvider.OPENAI],
+        "pricing": {
+            "_default": {"input": 1.00, "output": 4.00},
+        },
+        "max_tokens": 4096,
+        "temperature": 0.0,
+    },
+    "gpt-5.1-codex": {
+        "internal_name": "gpt-5.1-codex",
+        "supported_providers": [APIProvider.AZURE, APIProvider.OPENAI],
+        "pricing": {
+            "_default": {"input": 1.25, "output": 10.00},
+        },
+        "max_tokens": 4096,
+        "temperature": 0.0,
+    },
+    "gpt-5.2": {
+        "internal_name": "gpt-5.2",
+        "supported_providers": [APIProvider.AZURE, APIProvider.OPENAI],
+        "pricing": {
+            "_default": {"input": 1.75, "output": 14.00},
+        },
+        "max_tokens": 4096,
+        "temperature": 0.0,
+    },
+    "o1": {
         "internal_name": "o1",
-        "agent_type": "OmniAgent",
-        "llm_client": "openai",
-        "provider": [APIProvider.OPENAI],
-        "provider_base_url": "https://api.openai.com/v1",
+        "supported_providers": [APIProvider.OPENAI],
         "pricing": {
-            "token_type": "total",
-            "cost_per_1m": 15.0,  # USD per 1M tokens
+            "_default": {"input": 15.00, "output": 60.00},
         },
         "max_tokens": 4096,
         "temperature": 0.0,
-        "supports_images": True,
     },
-    # O3-Mini (OpenAI)
-    "omniparser + o3-mini": {
+    "o3-mini": {
         "internal_name": "o3-mini",
-        "agent_type": "OmniAgent",
-        "llm_client": "openai",
-        "provider": [APIProvider.OPENAI],
-        "provider_base_url": "https://api.openai.com/v1",
+        "supported_providers": [APIProvider.OPENAI],
         "pricing": {
-            "token_type": "total",
-            "cost_per_1m": 1.1,  # USD per 1M tokens
+            "_default": {"input": 1.10, "output": 4.40},
         },
         "max_tokens": 4096,
         "temperature": 0.0,
-        "supports_images": True,
     },
-    # Qwen 2.5 VL (DashScope/Aliyun)
-    "omniparser + qwen2.5vl": {
+    "qwen2.5vl": {
         "internal_name": "qwen2.5-vl-72b-instruct",
-        "agent_type": "OmniAgent",
-        "llm_client": "openai",  # Uses OpenAI-compatible API
-        "provider": [APIProvider.DASHSCOPE],
-        "provider_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "supported_providers": [APIProvider.DASHSCOPE],
         "pricing": {
-            "token_type": "total",
-            "cost_per_1m": 2.2,  # USD per 1M tokens
+            "_default": {"input": 2.20, "output": 2.20},
         },
-        "max_tokens": 2048,  # Qwen has lower max tokens
+        "max_tokens": 2048,
         "temperature": 0.0,
-        "supports_images": True,
     },
-    # DeepSeek R1 (Groq)
-    "omniparser + R1": {
+    "deepseek-r1": {
         "internal_name": "deepseek-r1-distill-llama-70b",
-        "agent_type": "OmniAgent",
-        "llm_client": "groq",
-        "provider": [APIProvider.GROQ],
-        "provider_base_url": None,  # Groq manages its own base URL
+        "supported_providers": [APIProvider.GROQ],
         "pricing": {
-            "token_type": "total",
-            "cost_per_1m": 0.99,  # USD per 1M tokens
+            "_default": {"input": 0.75, "output": 0.99},
         },
         "max_tokens": 4096,
-        "temperature": 0.6,  # Groq R1 uses different temperature
-        "supports_images": False,  # R1 doesn't support images
+        "temperature": 0.6,
     },
-    # GTA1 + GPT-4o (raw screenshot + GTA1 grounding, no OmniParser)
-    "gta1 + gpt-4o": {
-        "internal_name": "gpt-4o-2024-11-20",
-        "agent_type": "GTAAgent",
-        "llm_client": "openai",
-        "provider": [APIProvider.OPENAI],
-        "provider_base_url": "https://api.openai.com/v1",
-        "gta1_url": None,  # falls back to GTA1_URL env var or http://localhost:8002
+    "deepseek-V3.2": {
+        "internal_name": "deepseek-V3.2",
+        "supported_providers": [APIProvider.AZURE],
         "pricing": {
-            "token_type": "total",
-            "cost_per_1m": 2.5,
+            "_default": {"input": 0.58, "output": 1.68},
         },
         "max_tokens": 4096,
         "temperature": 0.0,
-        "supports_images": True,
     },
-    # Claude 3.5 Sonnet (Anthropic, Bedrock, Vertex)
-    "claude-3-5-sonnet-20241022": {
+    "claude-3-5-sonnet": {
         "internal_name": "claude-3-5-sonnet-20241022",
-        "agent_type": "AnthropicAgent",
-        "llm_client": "anthropic",
-        "provider": [APIProvider.ANTHROPIC, APIProvider.BEDROCK, APIProvider.VERTEX],
-        "provider_base_url": None,  # Anthropic SDK manages base URL
+        "supported_providers": [
+            APIProvider.ANTHROPIC, APIProvider.BEDROCK, APIProvider.VERTEX,
+        ],
         "pricing": {
-            "token_type": "separate",
-            "cost_per_1m": {
-                "input": 3.0,      # USD per 1M input tokens
-                "output": 15.0,    # USD per 1M output tokens
-            },
+            "_default": {"input": 3.00, "output": 15.00},
+            "bedrock":  {"input": 3.37, "output": 16.88},
         },
         "max_tokens": 4096,
         "temperature": 0.0,
-        "supports_images": True,
     },
 }
 
 
-# OCR Backend Configuration Registry
-# Extensible configuration for different OCR backends
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def get_llm_config(model_name: str) -> Dict[str, Any]:
+    """Return the LLM_MODELS entry for *model_name*.
+
+    Raises:
+        ValueError: If *model_name* is not registered.
+    """
+    if model_name not in LLM_MODELS:
+        raise ValueError(
+            f"Unknown model: {model_name!r}. "
+            f"Available models: {list(LLM_MODELS)}"
+        )
+    return LLM_MODELS[model_name]
+
+
+def get_provider_config(provider: str) -> Optional[str]:
+    """Return the base_url for *provider*, or None if SDK-managed.
+
+    Args:
+        provider: APIProvider value (or plain string).
+    """
+    return PROVIDER_CONFIG.get(provider)
+
+
+def get_all_model_names() -> List[str]:
+    """Return all registered model IDs (for UI dropdowns)."""
+    return list(LLM_MODELS)
+
+
+def get_supported_providers(model_name: str) -> List[str]:
+    """Return provider strings for *model_name* (for UI provider dropdown)."""
+    cfg = get_llm_config(model_name)
+    return [str(p) for p in cfg["supported_providers"]]
+
+
+def get_pricing(model_name: str, provider: str) -> Dict[str, float]:
+    """Return ``{"input": <$/1M>, "output": <$/1M>}`` for *model_name* + *provider*.
+
+    Falls back to the ``"_default"`` entry when no provider-specific override exists.
+    Returns zeros if the model has no pricing entry at all.
+
+    Args:
+        model_name: Model ID from LLM_MODELS (e.g. "gpt-4o").
+        provider:   Active provider string (e.g. "openai", "azure").
+    """
+    try:
+        pricing = get_llm_config(model_name).get("pricing", {})
+    except ValueError:
+        return {"input": 0.0, "output": 0.0}
+    return pricing.get(provider) or pricing.get("_default") or {"input": 0.0, "output": 0.0}
+
+
+# ---------------------------------------------------------------------------
+# OCR backend configuration (unchanged)
+# ---------------------------------------------------------------------------
+
 OCR_CONFIG: Dict[str, Dict[str, Any]] = {
     "easyocr": {
         "backend_class": "EasyOCRBackend",
         "language": "en",
-        "use_gpu": None,  # None = auto-detect, True/False = explicit
-        "backend_config": {
-            # EasyOCR-specific parameters passed to reader.readtext()
-            # Common options: detail (0=simple, 1=detailed), paragraph (bool)
-        },
+        "use_gpu": None,
+        "backend_config": {},
     },
     "paddleocr": {
         "backend_class": "PaddleOCRBackend",
         "language": "en",
-        "use_gpu": None,  # None = auto-detect, True/False = explicit
+        "use_gpu": None,
         "backend_config": {
-            # PaddleOCR 3.x initialization parameters
-            # Note: 2.x parameters like use_angle_cls, use_dilation, det_db_score_mode are not supported in 3.x
-            "text_threshold": 0.5,                    # Confidence threshold for text detection
-            "text_recognition_batch_size": 1024,      # Batch size for text recognition (formerly rec_batch_num in 2.x)
-            "text_detection_batch_size": 1024,        # Batch size for text detection (formerly max_batch_size in 2.x)
-            # For GPU version via API: set use_gpu=True and provide api_url in backend_config
-            # "api_url": "http://localhost:8001"  # GPU API server endpoint (port 8001 default for OCR API)
+            "text_threshold": 0.5,
+            "text_recognition_batch_size": 1024,
+            "text_detection_batch_size": 1024,
         },
     },
 }
 
 
 def get_ocr_config(backend: str) -> Dict[str, Any]:
-    """Get configuration for a specific OCR backend.
-    
-    Args:
-        backend: Backend name (e.g., 'easyocr', 'paddleocr')
-        
-    Returns:
-        OCR backend configuration dictionary
-        
+    """Return OCR backend configuration.
+
     Raises:
-        ValueError: If backend not found in OCR_CONFIG
+        ValueError: If *backend* is not registered.
     """
-    backend_lower = backend.lower()
-    if backend_lower not in OCR_CONFIG:
+    key = backend.lower()
+    if key not in OCR_CONFIG:
         raise ValueError(
-            f"Unknown OCR backend: {backend}. "
-            f"Available backends: {list(OCR_CONFIG.keys())}"
+            f"Unknown OCR backend: {backend!r}. "
+            f"Available backends: {list(OCR_CONFIG)}"
         )
-    return OCR_CONFIG[backend_lower]
+    return OCR_CONFIG[key]
 
 
-def get_all_ocr_backends() -> list[str]:
-    """Get list of all available OCR backends."""
-    return list(OCR_CONFIG.keys())
-
-
-def get_model_config(model_name: str) -> Dict[str, Any]:
-    """Get configuration for a specific model.
-    
-    Args:
-        model_name: Display name of the model (key in MODEL_CONFIG)
-        
-    Returns:
-        Model configuration dictionary
-        
-    Raises:
-        ValueError: If model_name not found in MODEL_CONFIG
-    """
-    if model_name not in MODEL_CONFIG:
-        raise ValueError(f"Unknown model: {model_name}. Available models: {list(MODEL_CONFIG.keys())}")
-    return MODEL_CONFIG[model_name]
-
-
-def get_all_model_names() -> list[str]:
-    """Get list of all available model display names."""
-    return list(MODEL_CONFIG.keys())
-
-
-
+def get_all_ocr_backends() -> List[str]:
+    """Return all registered OCR backend names."""
+    return list(OCR_CONFIG)

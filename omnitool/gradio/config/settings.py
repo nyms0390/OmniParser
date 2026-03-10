@@ -5,6 +5,7 @@ Application settings loader with priority: CLI args > YAML config > environment 
 import argparse
 import os
 import yaml
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -13,24 +14,25 @@ from typing import Any, Dict, Optional
 @dataclass
 class Settings:
     """Application settings container."""
-    
+
     # API Keys (from environment only per user requirements)
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     groq_api_key: str = ""
     dashscope_api_key: str = ""
-    
+
     # Azure endpoint
     azure_endpoint: str = ""
-    
+
     # Service URLs
     omniparser_url: str = "http://localhost:8000"
     windows_host_url: str = "http://localhost:5000"
     paddleocr_url: str = "http://localhost:8001"
-    
+    gta1_url: str = "http://localhost:8002"
+
     # Google Cloud settings (for Vertex AI)
     cloud_ml_region: str = "us-central1"
-    
+
     # App settings
     run_folder: str = "./runs"
     config_file: Optional[str] = None
@@ -42,42 +44,49 @@ def create_argument_parser() -> argparse.ArgumentParser:
         description="OmniParser Gradio Interface",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    
+
     parser.add_argument(
         "--run_folder",
         type=str,
         default="./runs",
         help="Base folder for output runs",
     )
-    
+
     parser.add_argument(
         "--omniparser_server_url",
         type=str,
         default="http://localhost:8000",
         help="OmniParser server URL",
     )
-    
+
     parser.add_argument(
         "--windows_host_url",
         type=str,
         default="http://localhost:5000",
         help="Windows host URL",
     )
-    
+
     parser.add_argument(
         "--paddleocr_url",
         type=str,
         default="http://localhost:8001",
         help="PaddleOCR API server URL",
     )
-    
+
+    parser.add_argument(
+        "--gta1_url",
+        type=str,
+        default="http://localhost:8002",
+        help="GTA1 server URL",
+    )
+
     parser.add_argument(
         "--config-file",
         type=str,
         default=None,
         help="Path to YAML config file (optional)",
     )
-    
+
     parser.add_argument(
         "--log-level",
         type=str,
@@ -85,54 +94,56 @@ def create_argument_parser() -> argparse.ArgumentParser:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level (default: INFO)",
     )
-    
+
     parser.add_argument(
         "--log-file",
         type=str,
         default=None,
         help="Optional log file path (default: omniparser_app.log)",
     )
-    
+
     return parser
 
 
 def load_yaml_config(config_path: str) -> Dict[str, Any]:
     """Load configuration from YAML file.
-    
+
     Args:
         config_path: Path to YAML config file
-        
+
     Returns:
         Configuration dictionary
-        
+
     Raises:
         FileNotFoundError: If config file doesn't exist
         yaml.YAMLError: If YAML parsing fails
     """
-    import yaml
-    
+
     config_file = Path(config_path)
     if not config_file.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
-    
+
     with open(config_file, 'r') as f:
         config = yaml.safe_load(f) or {}
-    
+
     return config
 
 
-def load_settings(args: Optional[argparse.Namespace] = None, config_file_path: Optional[str] = None) -> Settings:
+def load_settings(
+    args: Optional[argparse.Namespace] = None,
+    config_file_path: Optional[str] = None,
+) -> Settings:
     """Load settings with priority: CLI args > YAML config > environment variables.
-    
+
     Args:
         args: Parsed CLI arguments (optional)
         config_file_path: Path to YAML config file (optional, can also come from args)
-        
+
     Returns:
         Settings object with loaded configuration
     """
     settings = Settings()
-    
+
     # Step 1: Load defaults from environment variables
     settings.openai_api_key = os.getenv("OPENAI_API_KEY", "")
     settings.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "")
@@ -143,12 +154,13 @@ def load_settings(args: Optional[argparse.Namespace] = None, config_file_path: O
     settings.omniparser_url = os.getenv("OMNIPARSER_URL", "http://localhost:8000")
     settings.windows_host_url = os.getenv("WINDOWS_HOST_URL", "http://localhost:5000")
     settings.paddleocr_url = os.getenv("PADDLEOCR_URL", "http://localhost:8001")
+    settings.gta1_url = os.getenv("GTA1_URL", "http://localhost:8002")
     settings.run_folder = os.getenv("RUN_FOLDER", "./runs")
-    
+
     # Step 2: Load from YAML config file (if provided)
     yaml_config = {}
     config_path = config_file_path or (args.config_file if args else None)
-    
+
     if config_path:
         try:
             yaml_config = load_yaml_config(config_path)
@@ -169,13 +181,15 @@ def load_settings(args: Optional[argparse.Namespace] = None, config_file_path: O
                 settings.windows_host_url = yaml_config["windows_host_url"]
             if "paddleocr_url" in yaml_config:
                 settings.paddleocr_url = yaml_config["paddleocr_url"]
+            if "gta1_url" in yaml_config:
+                settings.gta1_url = yaml_config["gta1_url"]
             if "cloud_ml_region" in yaml_config:
                 settings.cloud_ml_region = yaml_config["cloud_ml_region"]
             if "run_folder" in yaml_config:
                 settings.run_folder = yaml_config["run_folder"]
         except (FileNotFoundError, yaml.YAMLError) as e:
             print(f"Warning: Failed to load config file: {e}")
-    
+
     # Step 3: Override with CLI arguments (highest priority)
     if args:
         if args.run_folder:
@@ -184,9 +198,11 @@ def load_settings(args: Optional[argparse.Namespace] = None, config_file_path: O
             settings.omniparser_url = args.omniparser_server_url
         if args.windows_host_url:
             settings.windows_host_url = args.windows_host_url
-        if hasattr(args, 'paddleocr_url') and args.paddleocr_url:
+        if args.paddleocr_url:
             settings.paddleocr_url = args.paddleocr_url
-    
+        if args.gta1_url:
+            settings.gta1_url = args.gta1_url
+
     return settings
 
 

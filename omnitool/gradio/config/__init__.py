@@ -16,10 +16,14 @@ from omnitool.gradio.config.constants import (
 )
 from omnitool.gradio.config.enums import AgentMode, APIProvider
 from omnitool.gradio.config.models import (
-    MODEL_CONFIG,
-    OCR_CONFIG,
+    PROVIDER_CONFIG,
+    LLM_MODELS,
+    get_llm_config,
+    get_provider_config,
     get_all_model_names,
-    get_model_config,
+    get_supported_providers,
+    get_pricing,
+    OCR_CONFIG,
     get_ocr_config,
     get_all_ocr_backends,
 )
@@ -62,9 +66,13 @@ __all__ = [
     "AgentMode",
     "APIProvider",
     # Models
-    "MODEL_CONFIG",
-    "get_model_config",
+    "PROVIDER_CONFIG",
+    "LLM_MODELS",
+    "get_llm_config",
+    "get_provider_config",
     "get_all_model_names",
+    "get_supported_providers",
+    "get_pricing",
     # Prompts
     "PLATFORM_PROMPTS",
     "PlatformPrompt",

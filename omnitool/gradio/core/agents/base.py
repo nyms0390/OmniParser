@@ -37,7 +37,8 @@ from omnitool.gradio.config import (
     PLANNER_SYSTEM_PROMPT,
     REFLECT_PROMPT,
     TASK_PARSE_PROMPT,
-    get_model_config,
+    get_llm_config,
+    get_pricing,
 )
 from omnitool.gradio.core.agents.checklist import Checklist
 from omnitool.gradio.app.state import AppState
@@ -89,9 +90,11 @@ class BaseAgent(ABC):
         output_callback=None,
         extract_fields: Optional[Dict[str, str]] = None,
         omniparser_client: Optional[OmniParserClient] = None,
+        provider: Optional[str] = None,
         **kwargs,
     ):
         self.model_name = model_name
+        self.provider = provider or ""
         self.llm_client = llm_client
         self.state = state
         self.tools_collection = tools_collection
@@ -106,11 +109,11 @@ class BaseAgent(ABC):
         self.extract_fields = extract_fields
         self.omniparser_client = omniparser_client
 
-        # Model config for cost calculation
+        # LLM config for cost calculation
         try:
-            self.model_config = get_model_config(model_name)
+            self.llm_config = get_llm_config(model_name)
         except ValueError:
-            self.model_config = {}
+            self.llm_config = {}
 
         # Usage tracking
         self.step_count = 0
@@ -214,28 +217,20 @@ class BaseAgent(ABC):
 
     def _calculate_cost(self, metadata: Dict[str, Any]) -> float:
         """Calculate cost in USD from LLM response metadata."""
-        if not self.model_config:
+        if not self.llm_config:
             return 0.0
-        pricing = self.model_config.get("pricing", {})
-        token_type = pricing.get("token_type", "total")
+        rates = get_pricing(self.model_name, self.provider)
         try:
-            if token_type == "total":
-                tokens = metadata.get("tokens", 0)
-                cost_per_1m = pricing.get("cost_per_1m", 0)
-                return (tokens * cost_per_1m) / 1_000_000
-            elif token_type == "separate":
-                input_tokens = metadata.get("input_tokens", 0)
-                output_tokens = metadata.get("output_tokens", 0)
-                cost_per_1m = pricing.get("cost_per_1m", {})
-                input_cost = (input_tokens * cost_per_1m.get("input", 0)) / 1_000_000
-                output_cost = (output_tokens * cost_per_1m.get("output", 0)) / 1_000_000
-                return input_cost + output_cost
+            input_tokens = metadata.get("input_tokens", 0)
+            output_tokens = metadata.get("output_tokens", 0)
+            input_cost = (input_tokens * rates.get("input", 0.0)) / 1_000_000
+            output_cost = (output_tokens * rates.get("output", 0.0)) / 1_000_000
+            return input_cost + output_cost
         except Exception:
-            pass
-        return 0.0
+            return 0.0
 
     def get_cost_metadata(self) -> Dict[str, Any]:
-        return self.model_config.get("pricing", {})
+        return get_pricing(self.model_name, self.provider)
 
     @staticmethod
     def _strip_images(msg: Dict[str, Any]) -> Dict[str, Any]:
@@ -411,7 +406,9 @@ class BaseAgent(ABC):
             "has_error": has_error,
             "error_detail": error_detail,
             "is_repeated": self._detect_repeated_actions(threshold=5),
-            "screen_unchanged": self._compare_screens(self.working_memory.parsed_screen, screen_after),
+            "screen_unchanged": self._compare_screens(
+                self.working_memory.parsed_screen, screen_after
+            ),
         }
 
     @staticmethod
@@ -623,7 +620,10 @@ class BaseAgent(ABC):
         step_data = {
             "step": self.step_count,
             "timestamp": datetime.now().isoformat(),
-            "screen_info": str(self.working_memory.parsed_screen.get("parsed_content_list", []) if self.working_memory.parsed_screen else []),
+            "screen_info": str(
+                self.working_memory.parsed_screen.get("parsed_content_list", [])
+                if self.working_memory.parsed_screen else []
+            ),
             "agent_response": plan_response.get("response_text", ""),
             "tool_calls": plan_response.get("tool_calls", []),
             "tokens": plan_response.get("metadata", {}).get("tokens"),
@@ -659,7 +659,9 @@ class BaseAgent(ABC):
                 "type": "parsed_screen",
                 "som_image_base64": self.working_memory.parsed_screen.get("som_image_base64", ""),
                 "raw_image_base64": self.working_memory.parsed_screen.get("raw_image_base64", ""),
-                "screen_info": str(self.working_memory.parsed_screen.get("parsed_content_list", [])),
+                "screen_info": str(
+                    self.working_memory.parsed_screen.get("parsed_content_list", [])
+                ),
             }
 
             # ---- INIT (mode-specific, runs once) ----
@@ -704,13 +706,19 @@ class BaseAgent(ABC):
                     yield {
                         "type": "ledger",
                         "ledger_text": self.working_memory.ledger,
-                        "checklist": self.working_memory.checklist.to_dict() if self.working_memory.checklist else None,
+                        "checklist": (
+                            self.working_memory.checklist.to_dict()
+                            if self.working_memory.checklist else None
+                        ),
                     }
 
                     try:
                         ledger_json = json.loads(self.working_memory.ledger)
                         task_done = ledger_json.get("is_request_satisfied", {}).get("answer")
-                        checklist_done = self.working_memory.checklist and self.working_memory.checklist.all_done()
+                        checklist_done = (
+                            self.working_memory.checklist
+                            and self.working_memory.checklist.all_done()
+                        )
                         if task_done or checklist_done:
                             yield {"type": "assistant_reply", "message": "Task completed."}
                             break
@@ -727,7 +735,10 @@ class BaseAgent(ABC):
                             self.state.chat.add_message("system", corrective_hint)
                             yield {
                                 "type": "status",
-                                "message": f"Loop detected — injecting corrective hint: {suggestion or loop_reason}",
+                                "message": (
+                                    "Loop detected — injecting corrective hint: "
+                                    + (suggestion or loop_reason)
+                                ),
                             }
                     except (json.JSONDecodeError, TypeError):
                         pass
@@ -743,7 +754,10 @@ class BaseAgent(ABC):
                             "role": "user",
                             "content": (
                                 f"Current checklist step [{active.id}]: {active.step}"
-                                + (f" — {active.verification_hint}" if active.verification_hint else "")
+                                + (
+                                    f" — {active.verification_hint}"
+                                    if active.verification_hint else ""
+                                )
                             ),
                         })
 
@@ -857,7 +871,10 @@ class BaseAgent(ABC):
                 if verify["is_repeated"]:
                     yield {
                         "type": "assistant_reply",
-                        "message": "Stopping — repeated identical action detected with no progress.",
+                        "message": (
+                            "Stopping — repeated identical action detected "
+                            "with no progress."
+                        ),
                     }
                     break
 

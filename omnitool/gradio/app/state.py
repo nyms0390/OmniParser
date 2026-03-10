@@ -28,7 +28,7 @@ class SessionState:
     session_id: str  # Timestamp-based unique ID
     run_folder: Path  # Where artifacts are stored
     created_at: datetime = field(default_factory=datetime.now)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
@@ -42,11 +42,12 @@ class SessionState:
 class ChatState:
     """Conversation state."""
     messages: List[Dict[str, Any]] = field(default_factory=list)  # Full message history with roles
-    chatbot_messages: List[tuple] = field(default_factory=list)  # UI-friendly (user_msg, bot_msg) tuples
-    
+    # UI-friendly (user_msg, bot_msg) tuples
+    chatbot_messages: List[tuple] = field(default_factory=list)
+
     def add_message(self, role: str, content: str, metadata: Optional[Dict[str, Any]] = None):
         """Add a message to history.
-        
+
         Args:
             role: 'user' or 'assistant'
             content: Message content
@@ -60,12 +61,12 @@ class ChatState:
         if metadata:
             message["metadata"] = metadata
         self.messages.append(message)
-    
+
     def clear(self):
         """Clear all messages."""
         self.messages = []
         self.chatbot_messages = []
-    
+
     def get_last_n_messages(self, n: int) -> List[Dict[str, Any]]:
         """Get last n messages."""
         return self.messages[-n:] if len(self.messages) >= n else self.messages
@@ -77,18 +78,18 @@ class AuthState:
     provider: AuthProvider = AuthProvider.OPENAI
     auth_validated: bool = False
     provider_api_keys: Dict[AuthProvider, str] = field(default_factory=dict)
-    
+
     def get_api_key(self, provider: Optional[AuthProvider] = None) -> str:
         """Get API key for a provider from environment variables.
-        
+
         Args:
             provider: The provider to get key for (defaults to self.provider)
-            
+
         Returns:
             API key string (empty if not set)
         """
         target_provider = provider or self.provider
-        
+
         # Map providers to environment variable names
         env_var_map = {
             AuthProvider.OPENAI: "OPENAI_API_KEY",
@@ -96,16 +97,16 @@ class AuthState:
             AuthProvider.GROQ: "GROQ_API_KEY",
             AuthProvider.DASHSCOPE: "DASHSCOPE_API_KEY",
         }
-        
+
         env_var = env_var_map.get(target_provider)
         if not env_var:
             return ""
-        
+
         return os.getenv(env_var, "")
-    
+
     def set_provider(self, provider: AuthProvider):
         """Set active authentication provider.
-        
+
         Args:
             provider: The provider to use
         """
@@ -118,16 +119,16 @@ class FileState:
     """File management state."""
     uploaded_files: List[Path] = field(default_factory=list)
     output_folder: Optional[Path] = None
-    
+
     def add_file(self, file_path: Path):
         """Add uploaded file."""
         if file_path not in self.uploaded_files:
             self.uploaded_files.append(file_path)
-    
+
     def clear_files(self):
         """Clear uploaded files list."""
         self.uploaded_files = []
-    
+
     def get_files(self) -> List[Path]:
         """Get list of uploaded files."""
         return self.uploaded_files.copy()
@@ -142,7 +143,7 @@ class AgentState:
     model: str = ""
     plan: Optional[str] = None  # For orchestrated agents
     ledger: Optional[str] = None  # For orchestrated agents
-    
+
     def reset(self):
         """Reset agent state for new execution."""
         self.step_count = 0
@@ -163,10 +164,10 @@ class ConfigState:
 
 class AppState:
     """Main application state container managing all state aspects."""
-    
+
     def __init__(self, run_folder: Path):
         """Initialize application state.
-        
+
         Args:
             run_folder: Base folder for runs (session will create subdirectory)
         """
@@ -176,44 +177,48 @@ class AppState:
         self.files = FileState(output_folder=self.session.run_folder)
         self.agent = AgentState()
         self.config = ConfigState()
-    
+
     @staticmethod
     def _create_session(base_run_folder: Path) -> SessionState:
         """Create a new session with timestamp-based folder.
-        
+
         Args:
             base_run_folder: Base folder for all runs
-            
+
         Returns:
             SessionState with new run folder created
         """
         base_path = Path(base_run_folder)
         base_path.mkdir(parents=True, exist_ok=True)
-        
+
         # Create timestamped session folder
         session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_folder = base_path / session_id
         run_folder.mkdir(parents=True, exist_ok=True)
-        
+
         return SessionState(
             session_id=session_id,
             run_folder=run_folder,
             created_at=datetime.now(),
         )
-    
-    def initialize_default_config(self, model_choices: List[str], provider_options: Dict[str, List[str]]):
+
+    def initialize_default_config(
+        self,
+        model_choices: List[str],
+        provider_options: Dict[str, List[str]],
+    ):
         """Initialize configuration state.
-        
+
         Args:
             model_choices: List of available model names
             provider_options: Dict mapping models to available providers
         """
         self.config.model_choices = model_choices
         self.config.provider_options = provider_options
-    
+
     def reset_session(self, run_folder: Path):
         """Reset state for new session.
-        
+
         Args:
             run_folder: New run folder path
         """
@@ -223,10 +228,10 @@ class AppState:
         self.files.output_folder = self.session.run_folder
         self.agent.reset()
         self.auth.auth_validated = False
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert state to dictionary for debugging/logging.
-        
+
         Returns:
             Dictionary representation of state
         """

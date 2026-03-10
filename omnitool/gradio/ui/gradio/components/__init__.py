@@ -15,7 +15,14 @@ from omnitool.gradio.ui.gradio.components.formatters import (
     format_raw_screen,
     format_thinking,
 )
-from omnitool.gradio.ui.gradio.components.settings import create_settings_panel, get_model_choices, get_provider_options_for_model
+from omnitool.gradio.ui.gradio.components.settings import (
+    create_settings_panel,
+    get_agent_choices,
+    get_model_choices,
+    get_provider_options_for_model,
+    DEFAULT_AGENT,
+    DEFAULT_MODEL,
+)
 
 __all__ = [
     "render_image",
@@ -31,7 +38,10 @@ __all__ = [
     "format_plan",
     "format_ledger",
     "format_extraction_result",
+    "get_agent_choices",
     "get_model_choices",
     "get_provider_options_for_model",
+    "DEFAULT_AGENT",
+    "DEFAULT_MODEL",
     "create_settings_panel",
 ]
