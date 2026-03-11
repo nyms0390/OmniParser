@@ -66,13 +66,14 @@ LLM_MODELS: Dict[str, Dict[str, Any]] = {
         "internal_name": "gpt-4.1",
         "supported_providers": [APIProvider.AZURE, APIProvider.OPENAI],
         "pricing": {
-            "_default": {"input": 1.00, "output": 4.00},
+            "_default": {"input": 2.00, "output": 8.00},
         },
         "max_tokens": 4096,
         "temperature": 0.0,
     },
     "gpt-5.1-codex": {
         "internal_name": "gpt-5.1-codex",
+        "api_mode": "responses",
         "supported_providers": [APIProvider.AZURE, APIProvider.OPENAI],
         "pricing": {
             "_default": {"input": 1.25, "output": 10.00},

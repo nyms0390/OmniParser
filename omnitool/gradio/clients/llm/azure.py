@@ -87,7 +87,9 @@ class AzureOpenAIClient(BaseLLMClient):
             "model": self.model,
             "messages": prepared_messages,
             "temperature": kwargs.get("temperature", self.kwargs.get("temperature")),
-            "max_tokens": kwargs.get("max_tokens", self.kwargs.get("max_tokens")),
+            "max_completion_tokens": kwargs.get(
+                "max_tokens", self.kwargs.get("max_tokens")
+            ),
         }
 
         # Remove None values

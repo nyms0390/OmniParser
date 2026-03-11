@@ -60,7 +60,7 @@ class OmniAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def _capture_screen(self) -> Dict[str, Any]:
-        """Screenshot + OmniParser → {raw_image_base64, som_image_base64, parsed_content_list, ...}."""
+        """Screenshot + OmniParser → screen dict with image and element data."""
         try:
             computer_tool = self.tools_collection.get_tool("computer")
             if not computer_tool:
@@ -190,37 +190,3 @@ class OmniAgent(BaseAgent):
     def _get_system_prompt(self) -> str:
         is_thinking = "r1" in self.model_name.lower()
         return build_vlm_system_prompt(self.platform, is_thinking)
-
-    # ------------------------------------------------------------------
-    # Screen element formatting
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def compact_screen_elements(
-        parsed_content_list: list,
-        screen_width: int = 1920,
-        screen_height: int = 1080,
-    ) -> str:
-        """Return a compact, ID-indexed summary of detected screen elements.
-
-        Each line includes the pixel centroid ``(cx, cy)`` calculated from the
-        normalised bounding box so the LLM can reason about element positions.
-        """
-        if not parsed_content_list:
-            return "(no elements)"
-        lines = []
-        for idx, elem in enumerate(parsed_content_list):
-            elem_type = elem.get("type", "unknown")
-            interactive = elem.get("interactivity", False)
-            content = elem.get("content") or ""
-
-            bbox = elem.get("bbox")
-            if bbox and len(bbox) == 4:
-                cx = int((bbox[0] + bbox[2]) / 2 * screen_width)
-                cy = int((bbox[1] + bbox[3]) / 2 * screen_height)
-                pos = f" @ ({cx}, {cy})px"
-            else:
-                pos = ""
-
-            lines.append(f'{idx}: {elem_type}, interactive={interactive}{pos}, "{content}"')
-        return "\n".join(lines)

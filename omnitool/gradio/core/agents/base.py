@@ -517,7 +517,11 @@ class BaseAgent(ABC):
         # Build OCR context block from structured screen info when available.
         ocr_text = parsed_screen.get("screen_info", "")
         if not ocr_text and content_list:
-            ocr_text = "\n".join(str(item) for item in content_list)
+            ocr_text = self.compact_screen_elements(
+                content_list,
+                screen_width=parsed_screen.get("screen_width", 1920),
+                screen_height=parsed_screen.get("screen_height", 1080),
+            )
 
         ocr_block = (
             f"Parsed screen elements (OCR):\n{ocr_text}\n\n"
@@ -560,6 +564,36 @@ class BaseAgent(ABC):
         except Exception as exc:
             logger.warning("Result extraction failed: %s", exc)
             return fallback
+
+    @staticmethod
+    def compact_screen_elements(
+        parsed_content_list: list,
+        screen_width: int = 1920,
+        screen_height: int = 1080,
+    ) -> str:
+        """Return a compact, ID-indexed summary of detected screen elements.
+
+        Each line includes the pixel centroid ``(cx, cy)`` calculated from the
+        normalised bounding box so the LLM can reason about element positions.
+        """
+        if not parsed_content_list:
+            return "(no elements)"
+        lines = []
+        for idx, elem in enumerate(parsed_content_list):
+            elem_type = elem.get("type", "unknown")
+            interactive = elem.get("interactivity", False)
+            content = elem.get("content") or ""
+            bbox = elem.get("bbox")
+            if bbox and len(bbox) == 4:
+                cx = int((bbox[0] + bbox[2]) / 2 * screen_width)
+                cy = int((bbox[1] + bbox[3]) / 2 * screen_height)
+                pos = f" @ ({cx}, {cy})px"
+            else:
+                pos = ""
+            lines.append(
+                f'{idx}: {elem_type}, interactive={interactive}{pos}, "{content}"'
+            )
+        return "\n".join(lines)
 
     @staticmethod
     def _format_tool_result(tool_name: str, output: str, error: str) -> str:

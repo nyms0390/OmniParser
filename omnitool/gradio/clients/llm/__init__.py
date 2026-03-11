@@ -11,6 +11,7 @@ from .anthropic import AnthropicClient
 from .azure import AzureOpenAIClient
 from .groq import GroqClient
 from .openai import OpenAIClient
+from .openai_responses import OpenAIResponsesClient
 
 
 def get_llm_client(
@@ -18,6 +19,7 @@ def get_llm_client(
     model: str,
     api_key: str | None = None,
     base_url: Optional[str] = None,
+    api_mode: str = "chat",
     **kwargs
 ) -> BaseLLMClient:
     """Factory function to create LLM client for given provider.
@@ -27,6 +29,7 @@ def get_llm_client(
         model: Model name
         api_key: API key for authentication (not required for Azure)
         base_url: Optional base URL (for OpenAI-compatible APIs)
+        api_mode: API mode — 'chat' (default) or 'responses' (Responses API)
         **kwargs: Additional provider-specific arguments
 
     Returns:
@@ -38,6 +41,13 @@ def get_llm_client(
     provider_lower = provider.lower()
 
     if provider_lower in [APIProvider.OPENAI, "openai"]:
+        if api_mode == "responses":
+            return OpenAIResponsesClient(
+                model=model,
+                api_key=api_key,
+                base_url=base_url or "https://api.openai.com/v1",
+                **kwargs
+            )
         return OpenAIClient(
             api_key=api_key,
             model=model,
@@ -47,6 +57,13 @@ def get_llm_client(
 
     elif provider_lower in [APIProvider.DASHSCOPE, "dashscope"]:
         # DashScope uses OpenAI-compatible API
+        if api_mode == "responses":
+            return OpenAIResponsesClient(
+                model=model,
+                api_key=api_key,
+                base_url=base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                **kwargs
+            )
         return OpenAIClient(
             api_key=api_key,
             model=model,
@@ -89,6 +106,12 @@ def get_llm_client(
 
     elif provider_lower in [APIProvider.AZURE, "azure"]:
         azure_endpoint = kwargs.pop("azure_endpoint", None)
+        if api_mode == "responses":
+            return OpenAIResponsesClient(
+                model=model,
+                azure_endpoint=azure_endpoint,
+                **kwargs
+            )
         return AzureOpenAIClient(
             model=model,
             azure_endpoint=azure_endpoint,
@@ -134,6 +157,7 @@ def get_llm_client_for_model(
 __all__ = [
     "BaseLLMClient",
     "OpenAIClient",
+    "OpenAIResponsesClient",
     "GroqClient",
     "AnthropicClient",
     "AzureOpenAIClient",

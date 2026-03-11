@@ -135,44 +135,22 @@ def _create_llm_client(
         groq                       → Groq SDK
     """
     internal_name = llm_cfg["internal_name"]
+    api_mode = llm_cfg.get("api_mode", "chat")
     generation_kwargs = {
         k: llm_cfg[k] for k in ("temperature", "max_tokens") if k in llm_cfg
     }
 
+    kwargs = dict(
+        provider=provider,
+        model=internal_name,
+        api_key=api_key,
+        api_mode=api_mode,
+        **generation_kwargs,
+    )
+
     if provider in ("openai", "dashscope"):
-        return get_llm_client(
-            provider=provider,
-            model=internal_name,
-            api_key=api_key,
-            base_url=get_provider_config(provider),
-            **generation_kwargs,
-        )
+        kwargs["base_url"] = get_provider_config(provider)
+    elif provider == "azure" and azure_endpoint:
+        kwargs["azure_endpoint"] = azure_endpoint
 
-    elif provider == "azure":
-        kwargs = {
-            "provider": "azure",
-            "model": internal_name,
-            **generation_kwargs,
-        }
-        if azure_endpoint:
-            kwargs["azure_endpoint"] = azure_endpoint
-        return get_llm_client(**kwargs)
-
-    elif provider in ("anthropic", "bedrock", "vertex"):
-        return get_llm_client(
-            provider=provider,
-            model=internal_name,
-            api_key=api_key,
-            **generation_kwargs,
-        )
-
-    elif provider == "groq":
-        return get_llm_client(
-            provider="groq",
-            model=internal_name,
-            api_key=api_key,
-            **generation_kwargs,
-        )
-
-    else:
-        raise ValueError(f"Unknown provider: {provider!r}")
+    return get_llm_client(**kwargs)

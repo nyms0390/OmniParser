@@ -52,15 +52,52 @@ class OpenAIClient(BaseLLMClient):
         **kwargs
     ) -> Tuple[str, Dict[str, Any]]:
         """Generate response using OpenAI API.
-        
+
         Args:
             messages: Conversation messages
             system_prompt: System prompt
             **kwargs: Generation parameters (temperature, max_tokens, etc)
-            
+
         Returns:
             (response_text, metadata)
         """
-        return self._generate_openai_compatible(
-            messages, system_prompt, provider_name="openai", **kwargs
-        )
+        # Prepare messages
+        prepared_messages = self._process_messages(messages)
+
+        # Add system prompt if provided
+        if system_prompt:
+            prepared_messages.insert(0, {
+                "role": "system",
+                "content": system_prompt,
+            })
+
+        # Prepare generation parameters
+        generation_params = {
+            "model": self.model,
+            "messages": prepared_messages,
+            "temperature": kwargs.get("temperature", self.kwargs.get("temperature")),
+            "max_completion_tokens": kwargs.get(
+                "max_tokens", self.kwargs.get("max_tokens")
+            ),
+        }
+
+        # Remove None values
+        generation_params = {k: v for k, v in generation_params.items() if v is not None}
+
+        try:
+            response = self.client.chat.completions.create(**generation_params)
+
+            response_text = response.choices[0].message.content
+
+            metadata = {
+                "tokens": response.usage.total_tokens,
+                "input_tokens": response.usage.prompt_tokens,
+                "output_tokens": response.usage.completion_tokens,
+                "model": self.model,
+                "provider": "openai",
+            }
+
+            return response_text, metadata
+
+        except Exception as e:
+            raise Exception(f"OpenAI API call failed: {str(e)}")
