@@ -41,6 +41,8 @@ from omnitool.gradio.config.prompts import (
     TASK_PARSE_PROMPT,
     EXTRACTION_SYSTEM_PROMPT,
     EXTRACTION_PROMPT,
+    CLIPBOARD_COORD_SYSTEM_PROMPT,
+    CLIPBOARD_COORD_PROMPT,
 )
 from omnitool.gradio.config.settings import (
     Settings,
@@ -86,6 +88,8 @@ __all__ = [
     "TASK_PARSE_PROMPT",
     "EXTRACTION_SYSTEM_PROMPT",
     "EXTRACTION_PROMPT",
+    "CLIPBOARD_COORD_SYSTEM_PROMPT",
+    "CLIPBOARD_COORD_PROMPT",
     # OCR
     "OCR_CONFIG",
     "get_ocr_config",

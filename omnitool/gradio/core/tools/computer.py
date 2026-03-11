@@ -95,6 +95,8 @@ class ComputerTool(BaseTool):
                 return self._wait()
             elif action == "left_press":
                 return self._left_press()
+            elif action == "read_clipboard":
+                return self._read_clipboard()
             else:
                 return ToolResult(error=f"Unknown action: {action}")
         
@@ -431,6 +433,28 @@ class ComputerTool(BaseTool):
             return ToolResult(output="Performed left_press")
         except Exception as e:
             return ToolResult(error=f"Left press failed: {str(e)}")
+
+    def _read_clipboard(self) -> ToolResult:
+        """Read the current clipboard text from the Windows host.
+
+        Executes ``pyperclip.paste()`` remotely and returns the clipboard
+        content as ``ToolResult.output``.
+
+        Returns:
+            ToolResult with clipboard text in ``output``, or an error message.
+        """
+        try:
+            logger.debug("Reading clipboard via pyperclip")
+            result = self.windows_host_client.execute_command(
+                ["python", "-c", "import pyperclip; print(pyperclip.paste())"],
+                shell=False,
+                parse_output=True,
+            )
+            text = str(result).strip() if result is not None else ""
+            logger.debug("Clipboard content length: %d chars", len(text))
+            return ToolResult(output=text)
+        except Exception as e:
+            return ToolResult(error=f"read_clipboard failed: {str(e)}")
     
     # ------------------------------------------------------------------
     # Helpers
@@ -476,6 +500,6 @@ class ComputerTool(BaseTool):
                 "screenshot, left_click, right_click, double_click, "
                 "middle_click, mouse_move, left_click_drag, type, key, "
                 "cursor_position, scroll_up, scroll_down, hover, wait, "
-                "left_press"
+                "left_press, read_clipboard"
             ),
         }

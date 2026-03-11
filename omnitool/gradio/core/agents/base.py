@@ -33,6 +33,8 @@ from omnitool.gradio.config import (
     AgentMode,
     EXTRACTION_SYSTEM_PROMPT,
     EXTRACTION_PROMPT,
+    CLIPBOARD_COORD_SYSTEM_PROMPT,
+    CLIPBOARD_COORD_PROMPT,
     PLAN_PROMPT,
     PLANNER_SYSTEM_PROMPT,
     REFLECT_PROMPT,
@@ -258,7 +260,10 @@ class BaseAgent(ABC):
         results: List[Dict[str, Any]] = []
         for tool_call in tool_calls:
             tool_name = tool_call.get("tool")
+            action = tool_call.get("action", "")
+            label = f"{tool_name}.{action}" if action else tool_name
             if not self.tools_collection.has_tool(tool_name):
+                logger.info("ACT [%s] FAILED — tool not found", label)
                 results.append({
                     "tool": tool_name,
                     "status": "error",
@@ -272,9 +277,15 @@ class BaseAgent(ABC):
                     if k not in ("tool", "action")
                 }
                 result = tool.run(tool_call.get("action"), **tool_kwargs)
+                if hasattr(result, "error") and result.error:
+                    logger.info("ACT [%s] FAILED — %s", label, result.error)
+                else:
+                    logger.info("ACT [%s] OK", label)
+                logger.debug("ACT [%s] output: %s", label, getattr(result, "output", result))
                 results.append({"tool": tool_name, "status": "success", "result": result})
             except Exception as exc:
                 logger.error("Tool execution failed for %s: %s", tool_name, exc)
+                logger.info("ACT [%s] FAILED — %s", label, exc)
                 results.append({"tool": tool_name, "status": "error", "error": str(exc)})
         return results
 
@@ -517,15 +528,15 @@ class BaseAgent(ABC):
         # Build OCR context block from structured screen info when available.
         ocr_text = parsed_screen.get("screen_info", "")
         if not ocr_text and content_list:
-            ocr_text = self.compact_screen_elements(
+            compact = self.compact_screen_elements(
                 content_list,
                 screen_width=parsed_screen.get("screen_width", 1920),
                 screen_height=parsed_screen.get("screen_height", 1080),
             )
 
         ocr_block = (
-            f"Parsed screen elements (OCR):\n{ocr_text}\n\n"
-            if ocr_text else ""
+            f"Parsed screen elements (OCR):\n{compact}\n\n"
+            if compact else ocr_text
         )
 
         # Build per-field block: "- field_name: constraint" or just "- field_name"
@@ -564,6 +575,138 @@ class BaseAgent(ABC):
         except Exception as exc:
             logger.warning("Result extraction failed: %s", exc)
             return fallback
+
+    def _read_fields_via_clipboard(
+        self,
+        parsed_screen: Dict[str, Any],
+        fields: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, str]:
+        """Extract field values by drag-selecting screen regions and reading the clipboard.
+
+        Asks the LLM (in one call) for the pixel bounding box of every requested
+        field, then for each field:
+
+        1. Moves the mouse to the top-left corner of the bounding box.
+        2. Drag-selects to the bottom-right corner (text selection).
+        3. Presses Ctrl+C to copy the selection.
+        4. Reads the clipboard via the ``read_clipboard`` computer-tool action.
+
+        This yields exact on-screen text rather than a VLM interpretation, making
+        it more reliable for structured data fields (numbers, IDs, codes, etc.).
+
+        Args:
+            parsed_screen: Screen data dict from :meth:`_capture_screen`.
+                Must contain at least ``raw_image_base64``.
+            fields: ``{field_name: description}`` mapping.  Description is passed
+                to the LLM to help locate the field (e.g. ``"4-digit order ID"``).
+                Defaults to ``self.extract_fields``.
+
+        Returns:
+            ``{field: value}`` dict.  Values are ``"null"`` when coordinates are
+            zero/missing, or ``"extraction failed"`` on unexpected errors.
+        """
+        import json as _json
+
+        fields = fields if fields is not None else (self.extract_fields or {})
+        if not fields:
+            return {}
+
+        fallback = {f: "extraction failed" for f in fields}
+        raw_b64 = parsed_screen.get("raw_image_base64", "")
+        if not raw_b64:
+            logger.warning("_read_fields_via_clipboard: no screenshot available")
+            return fallback
+
+        # --- Step 1: ask LLM for bounding boxes of all fields in one shot ---
+        fields_lines = [
+            f"- {name}: {desc}" if desc else f"- {name}"
+            for name, desc in fields.items()
+        ]
+        fields_block = "\n".join(fields_lines)
+
+        coord_message: List[Any] = [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{raw_b64}"},
+            },
+            {
+                "type": "text",
+                "text": CLIPBOARD_COORD_PROMPT.format(fields_block=fields_block),
+            },
+        ]
+
+        try:
+            response_text, _ = self.llm_client.generate(
+                messages=[{"role": "user", "content": coord_message}],
+                system_prompt=CLIPBOARD_COORD_SYSTEM_PROMPT,
+            )
+            raw_json = self._extract_data(response_text, "json") or response_text
+            coord_map: Dict[str, Any] = _json.loads(raw_json)
+        except Exception as exc:
+            logger.warning(
+                "_read_fields_via_clipboard: coordinate LLM call failed: %s", exc
+            )
+            return fallback
+
+        # --- Step 2: for each field, drag-select and read clipboard ---
+        results: Dict[str, str] = {}
+
+        for field_name in fields:
+            box = coord_map.get(field_name)
+            if not isinstance(box, dict):
+                logger.warning(
+                    "_read_fields_via_clipboard: no bbox for field %r", field_name
+                )
+                results[field_name] = "null"
+                continue
+
+            x1 = int(box.get("x1", 0))
+            y1 = int(box.get("y1", 0))
+            x2 = int(box.get("x2", 0))
+            y2 = int(box.get("y2", 0))
+
+            if x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0:
+                logger.debug(
+                    "_read_fields_via_clipboard: zero bbox for field %r — field not visible",
+                    field_name,
+                )
+                results[field_name] = "null"
+                continue
+
+            try:
+                # Move mouse to start of selection area
+                self.tools_collection.run(
+                    "computer", "mouse_move", coordinate=(x1, y1)
+                )
+                # Drag to end of selection area (selects the text)
+                self.tools_collection.run(
+                    "computer", "left_click_drag", coordinate=(x2, y2)
+                )
+                # Copy selection to clipboard
+                self.tools_collection.run("computer", "key", text="ctrl+c")
+                # Read clipboard on the remote host
+                clip_result = self.tools_collection.run("computer", "read_clipboard")
+
+                if clip_result.error:
+                    logger.warning(
+                        "_read_fields_via_clipboard: clipboard read error for %r: %s",
+                        field_name,
+                        clip_result.error,
+                    )
+                    results[field_name] = "extraction failed"
+                else:
+                    value = (clip_result.output or "").strip()
+                    results[field_name] = value if value else "null"
+
+            except Exception as exc:
+                logger.warning(
+                    "_read_fields_via_clipboard: error extracting field %r: %s",
+                    field_name,
+                    exc,
+                )
+                results[field_name] = "extraction failed"
+
+        return results
 
     @staticmethod
     def compact_screen_elements(
@@ -680,6 +823,7 @@ class BaseAgent(ABC):
     def run(self) -> Generator[Dict[str, Any], None, None]:
         """Main agentic loop — observe → reflect → plan → act → verify."""
         try:
+            logger.info("Agent START — model=%s mode=%s", self.model_name, self.mode.value)
             yield {
                 "type": "status",
                 "message": f"Starting execution with {self.model_name} ({self.mode.value} mode)...",
@@ -689,6 +833,9 @@ class BaseAgent(ABC):
 
             yield {"type": "status", "message": "Capturing initial screen..."}
             self.working_memory.parsed_screen = self._capture_screen()
+            _sw = self.working_memory.parsed_screen.get("screen_width", "?")
+            _sh = self.working_memory.parsed_screen.get("screen_height", "?")
+            logger.info("Screen capture OK — %sx%s", _sw, _sh)
             yield {
                 "type": "parsed_screen",
                 "som_image_base64": self.working_memory.parsed_screen.get("som_image_base64", ""),
@@ -704,6 +851,8 @@ class BaseAgent(ABC):
                 self.working_memory.checklist = self._generate_plan(
                     self.state.chat.messages
                 )
+                _n_steps = len(self.working_memory.checklist.items)
+                logger.info("Plan generated OK — %d steps", _n_steps)
                 plan_text = self.working_memory.checklist.to_prompt_text()
                 self.state.chat.add_message(
                     "assistant", json.dumps(self.working_memory.checklist.to_dict())
@@ -717,6 +866,8 @@ class BaseAgent(ABC):
             elif self.mode == AgentMode.TASK:
                 yield {"type": "status", "message": "Loading task checklist..."}
                 self.working_memory.checklist = self._load_task_checklist(self.state.chat.messages)
+                _n_steps = len(self.working_memory.checklist.items)
+                logger.info("Task checklist loaded OK — %d steps", _n_steps)
                 plan_text = self.working_memory.checklist.to_prompt_text()
                 yield {
                     "type": "plan",
@@ -754,12 +905,17 @@ class BaseAgent(ABC):
                             and self.working_memory.checklist.all_done()
                         )
                         if task_done or checklist_done:
+                            logger.info(
+                                "Reflect OK — task complete (task_done=%s checklist_done=%s)",
+                                task_done, checklist_done,
+                            )
                             yield {"type": "assistant_reply", "message": "Task completed."}
                             break
 
                         if ledger_json.get("is_in_loop", {}).get("answer"):
                             loop_reason = ledger_json["is_in_loop"].get("reason", "")
                             suggestion = ledger_json.get("next_step_hint", {}).get("answer", "")
+                            logger.info("Reflect OK — loop detected: %s", loop_reason)
                             corrective_hint = (
                                 f"LOOP DETECTED: {loop_reason} "
                                 "You MUST try a different action or target. "
@@ -774,6 +930,8 @@ class BaseAgent(ABC):
                                     + (suggestion or loop_reason)
                                 ),
                             }
+                        else:
+                            logger.info("Reflect OK — continuing")
                     except (json.JSONDecodeError, TypeError):
                         pass
 
@@ -805,6 +963,19 @@ class BaseAgent(ABC):
                 cost = self._calculate_cost(metadata)
                 self.update_cost(cost)
 
+                tool_calls, read_fields = self._parse_response(response_text)
+                tool_calls, grounding_log = self._ground(tool_calls)
+
+                logger.info(
+                    "Plan OK — tokens=%d cost=$%.6f tool_calls=%d",
+                    tokens, cost, len(tool_calls),
+                )
+                logger.debug("Plan response: %s", response_text)
+
+                if grounding_log:
+                    logger.info("Grounding OK — %d coordinate(s) resolved", len(grounding_log))
+                    yield {"type": "grounding", "events": grounding_log}
+
                 if response_text:
                     yield {"type": "thinking", "response_text": response_text}
 
@@ -814,12 +985,6 @@ class BaseAgent(ABC):
                     metadata={"tokens": tokens, "cost": cost},
                 )
 
-                tool_calls, read_fields = self._parse_response(response_text)
-                tool_calls, grounding_log = self._ground(tool_calls)
-
-                if grounding_log:
-                    yield {"type": "grounding", "events": grounding_log}
-
                 plan_response = {
                     "response_text": response_text,
                     "tool_calls": tool_calls,
@@ -828,6 +993,7 @@ class BaseAgent(ABC):
                 }
 
                 if not tool_calls:
+                    logger.info("Plan OK — no tool calls, stopping loop")
                     yield {"type": "assistant_reply", "message": response_text}
                     break
 
@@ -878,6 +1044,8 @@ class BaseAgent(ABC):
                 }
 
                 verify = self._verify_step(tool_results, screen_after)
+                _changed = not verify["screen_unchanged"]
+                logger.info("Verify OK — screen_changed=%s has_error=%s", _changed, verify["has_error"])
 
                 # ---- READ_FIELDS (mid-loop screen reading) ----
                 if read_fields:
@@ -889,6 +1057,8 @@ class BaseAgent(ABC):
                             "system",
                             f"<screen_reading>\n{json.dumps(reading, indent=2)}\n</screen_reading>",
                         )
+                        logger.info("Read fields OK — %s", list(reading.keys()))
+                        logger.debug("Read fields values: %s", reading)
                         yield {"type": "screen_reading", "fields": reading}
                     except Exception as exc:
                         logger.warning("Mid-loop screen reading failed: %s", exc)
@@ -921,12 +1091,14 @@ class BaseAgent(ABC):
                 }
 
             if self.extract_fields:
-                yield {"type": "status", "message": "Extracting result fields..."}
+                yield {"type": "status", "message": "Extracting result fields via clipboard..."}
                 try:
                     final_screen = self._capture_screen()
-                    extracted = self._read_screen(final_screen)
+                    extracted = self._read_fields_via_clipboard(final_screen)
+                    logger.info("Extraction OK — fields: %s", list(extracted.keys()))
+                    logger.debug("Extraction values: %s", extracted)
                 except Exception as exc:
-                    logger.warning("Post-loop extraction failed: %s", exc)
+                    logger.warning("Post-loop clipboard extraction failed: %s", exc)
                     extracted = {f: "extraction failed" for f in self.extract_fields}
                 yield {
                     "type": "extraction_result",
@@ -940,6 +1112,10 @@ class BaseAgent(ABC):
                     "collected_facts": self.working_memory.facts,
                 }
 
+            logger.info(
+                "Agent COMPLETE — steps=%d tokens=%d cost=$%.6f",
+                self.step_count, self.total_tokens, self.total_cost,
+            )
             yield {
                 "type": "complete",
                 "total_steps": self.step_count,

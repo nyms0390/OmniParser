@@ -408,6 +408,45 @@ Example — if asked for price (2 decimal places) and status:
 
 
 # ---------------------------------------------------------------------------
+# 5b. Clipboard-based extraction — coordinate localisation prompts
+#
+# Used by BaseAgent._read_fields_via_clipboard() to ask the LLM where each
+# field lives on-screen so the agent can drag-select and copy via clipboard.
+# ---------------------------------------------------------------------------
+
+CLIPBOARD_COORD_SYSTEM_PROMPT = """\
+You are a screen coordinate assistant. Given a screenshot and a list of fields, \
+return the pixel bounding box of the on-screen area that contains each field's value. \
+Output pure JSON only — no explanation, no markdown.\
+"""
+
+CLIPBOARD_COORD_PROMPT = """\
+The screenshot is attached. Identify the pixel region containing the value of each \
+field listed below and return its bounding box.
+
+Fields to locate:
+{fields_block}
+
+Respond in pure JSON only. DO NOT OUTPUT ANYTHING OTHER THAN JSON:
+
+    {{
+        "<field_name>": {{"x1": <int>, "y1": <int>, "x2": <int>, "y2": <int>}}
+    }}
+
+- x1, y1 is the upper-left corner of the text area (pixels).
+- x2, y2 is the lower-right corner of the text area (pixels).
+- If a field is not visible, set all coordinates to 0.
+
+Example — two fields located on screen:
+
+    {{
+        "order_id": {{"x1": 120, "y1": 340, "x2": 280, "y2": 360}},
+        "total_price": {{"x1": 120, "y1": 380, "x2": 220, "y2": 400}}
+    }}\
+"""
+
+
+# ---------------------------------------------------------------------------
 # 6. Builder functions — assemble fully-rendered prompts from templates above
 # ---------------------------------------------------------------------------
 
