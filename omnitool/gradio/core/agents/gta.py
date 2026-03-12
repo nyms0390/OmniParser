@@ -179,13 +179,6 @@ class GTAAgent(BaseAgent):
         image_b64 = parsed_screen.get("raw_image_base64", "")
 
         # Scale factors to convert GTA1 coords (resized image space) → screen space.
-        resized_w = parsed_screen.get("resized_screen_width", 1)
-        resized_h = parsed_screen.get("resized_screen_height", 1)
-        orig_w = parsed_screen.get("screen_width", resized_w)
-        orig_h = parsed_screen.get("screen_height", resized_h)
-        scale_x = orig_w / resized_w if resized_w else 1.0
-        scale_y = orig_h / resized_h if resized_h else 1.0
-
         for tc in tool_calls:
             instruction = tc.get("grounding_instruction")
             if instruction:
@@ -200,12 +193,13 @@ class GTAAgent(BaseAgent):
                 )
 
                 # screen_coord is scaled to actual screen resolution for the click.
-                screen_coord = (
-                    [round(raw_coord[0] * scale_x), round(raw_coord[1] * scale_y)]
-                    if raw_coord else None
-                )
-                if screen_coord and (scale_x != 1.0 or scale_y != 1.0):
-                    logger.debug("Coordinate scaled to screen space: %s", screen_coord)
+                if raw_coord:
+                    sx, sy = self._scale_to_screen(raw_coord[0], raw_coord[1], parsed_screen)
+                    screen_coord = [sx, sy]
+                    if (sx, sy) != (raw_coord[0], raw_coord[1]):
+                        logger.debug("Coordinate scaled to screen space: %s", screen_coord)
+                else:
+                    screen_coord = None
 
                 grounding_log.append({
                     "instruction": instruction,

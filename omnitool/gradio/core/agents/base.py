@@ -615,6 +615,31 @@ class BaseAgent(ABC):
             logger.warning("_read_fields_via_ocr: extraction failed: %s", exc)
             return fallback
 
+    def _scale_to_screen(
+        self,
+        x: float,
+        y: float,
+        parsed_screen: Dict[str, Any],
+    ) -> tuple:
+        """Scale GTA1 coords (resized-image space) to actual screen space.
+
+        Args:
+            x: X coordinate in resized-image space.
+            y: Y coordinate in resized-image space.
+            parsed_screen: Screen dict with ``resized_screen_width/height``
+                and ``screen_width/height`` keys.
+
+        Returns:
+            ``(screen_x, screen_y)`` rounded to the nearest pixel.
+        """
+        resized_w = parsed_screen.get("resized_screen_width") or parsed_screen.get("screen_width", 1)
+        resized_h = parsed_screen.get("resized_screen_height") or parsed_screen.get("screen_height", 1)
+        screen_w = parsed_screen.get("screen_width", resized_w)
+        screen_h = parsed_screen.get("screen_height", resized_h)
+        sx = round(x * screen_w / resized_w) if resized_w else round(x)
+        sy = round(y * screen_h / resized_h) if resized_h else round(y)
+        return sx, sy
+
     def _read_field_via_clipboard(
         self,
         field_name: str,
@@ -662,12 +687,7 @@ class BaseAgent(ABC):
             return "null"
 
         # Scale from resized VLM image space back to actual screen coordinates.
-        resized_w = parsed_screen.get("resized_screen_width") or parsed_screen.get("screen_width", 1)
-        resized_h = parsed_screen.get("resized_screen_height") or parsed_screen.get("screen_height", 1)
-        screen_w = parsed_screen.get("screen_width", resized_w)
-        screen_h = parsed_screen.get("screen_height", resized_h)
-        x = round(rx * screen_w / resized_w)
-        y = round(ry * screen_h / resized_h)
+        x, y = self._scale_to_screen(rx, ry, parsed_screen)
 
         logger.debug(
             "_read_field_via_clipboard: %r grounded at resized (%s, %s) → screen (%s, %s)",
