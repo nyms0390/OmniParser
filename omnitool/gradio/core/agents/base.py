@@ -213,13 +213,16 @@ class BaseAgent(ABC):
         """
         tool_calls = self._parse_tool_calls(response_text)
 
-        read_fields: Dict[str, str] = {}
+        read_fields: Dict[str, Any] = {}
         try:
             json_str = self._extract_data(response_text, "json")
             data = json.loads(json_str)
             raw = data.get("read_fields", {})
             if isinstance(raw, dict):
-                read_fields = {str(k): str(v) for k, v in raw.items() if k}
+                read_fields = {
+                    str(k): v if isinstance(v, list) else str(v)
+                    for k, v in raw.items() if k
+                }
         except Exception:
             pass
 
@@ -534,8 +537,11 @@ class BaseAgent(ABC):
     ) -> Dict[str, str]:
         """Read multiple fields from the screen in a single VLM/OCR LLM call.
 
-        Sends the screenshot once with all requested fields, returning all
-        values in one round-trip.
+        .. deprecated::
+            LLM-based OCR extraction is no longer used in the main agentic loop.
+            Mid-loop ``read_fields`` values are now stored directly from the LLM
+            response, and post-loop correction uses :meth:`_correct_field_via_clipboard`.
+            This method is kept for compatibility only.
 
         Args:
             parsed_screen: Screen data dict from :meth:`_capture_screen`.
@@ -711,6 +717,56 @@ class BaseAgent(ABC):
             )
             return "extraction failed"
 
+    def _correct_field_via_clipboard(
+        self,
+        field_name: str,
+        ocr_value: Any,
+        parsed_screen: Dict[str, Any],
+    ) -> Any:
+        """Correct an LLM-extracted field value using GTA1 + triple-click + clipboard.
+
+        Uses the LLM-extracted value as the GTA1 grounding instruction to locate
+        the exact element on screen, then reads the true value from the clipboard.
+        Falls back to the original ``ocr_value`` per item if GTA1 fails.
+
+        Args:
+            field_name: Human-readable field identifier (for logging).
+            ocr_value: LLM-extracted value — either a ``str`` or a ``list`` for
+                multi-value fields.
+            parsed_screen: Screen data dict from :meth:`_capture_screen`.
+
+        Returns:
+            Corrected value as ``str`` (scalar) or ``list`` (for list inputs).
+        """
+        if isinstance(ocr_value, list):
+            corrected = []
+            for idx, item in enumerate(ocr_value):
+                item_str = str(item)
+                instruction = f'the element showing "{item_str}"'
+                result = self._read_field_via_clipboard(
+                    f"{field_name}[{idx}]", instruction, parsed_screen
+                )
+                corrected.append(
+                    result if result not in ("extraction failed", "null") else item_str
+                )
+            changed = sum(1 for a, b in zip(corrected, ocr_value) if str(a) != str(b))
+            logger.info(
+                "_correct_field_via_clipboard: %r corrected %d/%d items",
+                field_name, changed, len(ocr_value),
+            )
+            return corrected
+
+        ocr_str = str(ocr_value)
+        instruction = f'the element showing "{ocr_str}"'
+        result = self._read_field_via_clipboard(field_name, instruction, parsed_screen)
+        if result in ("extraction failed", "null"):
+            logger.debug(
+                "_correct_field_via_clipboard: %r correction failed, keeping OCR value",
+                field_name,
+            )
+            return ocr_str
+        return result
+
     def _read_fields(
         self,
         parsed_screen: Dict[str, Any],
@@ -718,9 +774,11 @@ class BaseAgent(ABC):
     ) -> Dict[str, str]:
         """Extract multiple field values from the screen.
 
-        Dispatches to :meth:`_read_field_via_clipboard` (GTA1 + triple-click)
-        when a ``gta1_client`` is available, otherwise falls back to
-        :meth:`_read_fields_via_ocr` (OmniParser OCR/VLM).
+        .. deprecated::
+            The main agentic loop no longer calls this method. Mid-loop values
+            come directly from the LLM response; post-loop correction uses
+            :meth:`_correct_field_via_clipboard`. This method is kept for
+            compatibility only.
 
         Args:
             parsed_screen: Screen data dict from :meth:`_capture_screen`.
@@ -1006,6 +1064,35 @@ class BaseAgent(ABC):
                 self.update_cost(cost)
 
                 tool_calls, read_fields = self._parse_response(response_text)
+
+                # ---- READ_FIELDS — process immediately with the screen LLM was viewing ----
+                if read_fields:
+                    new_fields = {k: v for k, v in read_fields.items() if k not in self.working_memory.facts}
+                    if new_fields:
+                        yield {"type": "status", "message": f"Storing screen fields: {list(new_fields.keys())}"}
+                        if self.gta1_client:
+                            corrected: Dict[str, Any] = {}
+                            for field_name, ocr_value in new_fields.items():
+                                try:
+                                    corrected[field_name] = self._correct_field_via_clipboard(
+                                        field_name, ocr_value, self.working_memory.parsed_screen
+                                    )
+                                except Exception as exc:
+                                    logger.warning("Field correction failed for '%s': %s", field_name, exc)
+                                    corrected[field_name] = ocr_value
+                            self.working_memory.facts.update(corrected)
+                            stored = corrected
+                        else:
+                            self.working_memory.facts.update(new_fields)
+                            stored = new_fields
+                        self.state.chat.add_message(
+                            "system",
+                            f"<screen_reading>\n{json.dumps(stored, indent=2)}\n</screen_reading>",
+                        )
+                        logger.info("Read fields OK — %s", list(stored.keys()))
+                        logger.debug("Read fields values: %s", stored)
+                        yield {"type": "screen_reading", "fields": stored}
+
                 tool_calls, grounding_log = self._ground(tool_calls)
 
                 logger.info(
@@ -1089,22 +1176,6 @@ class BaseAgent(ABC):
                 _changed = not verify["screen_unchanged"]
                 logger.info("Verify OK — screen_changed=%s has_error=%s", _changed, verify["has_error"])
 
-                # ---- READ_FIELDS (mid-loop screen reading) ----
-                if read_fields:
-                    yield {"type": "status", "message": f"Reading screen fields: {read_fields}"}
-                    try:
-                        reading = self._read_fields(screen_after, read_fields)
-                        self.working_memory.facts.update(reading)
-                        self.state.chat.add_message(
-                            "system",
-                            f"<screen_reading>\n{json.dumps(reading, indent=2)}\n</screen_reading>",
-                        )
-                        logger.info("Read fields OK — %s", list(reading.keys()))
-                        logger.debug("Read fields values: %s", reading)
-                        yield {"type": "screen_reading", "fields": reading}
-                    except Exception as exc:
-                        logger.warning("Mid-loop screen reading failed: %s", exc)
-
                 if verify["screen_unchanged"]:
                     hint = (
                         "ACTION HAD NO VISIBLE EFFECT — the screen did not change after "
@@ -1132,26 +1203,13 @@ class BaseAgent(ABC):
                     "cost_total": f"${self.total_cost:.6f}",
                 }
 
-            if self.extract_fields:
-                yield {"type": "status", "message": "Extracting result fields..."}
-                try:
-                    final_screen = self._capture_screen()
-                    extracted = self._read_fields(final_screen)
-                    logger.info("Extraction OK — fields: %s", list(extracted.keys()))
-                    logger.debug("Extraction values: %s", extracted)
-                except Exception as exc:
-                    logger.warning("Post-loop field extraction failed: %s", exc)
-                    extracted = {f: "extraction failed" for f in self.extract_fields}
+            if self.working_memory.facts:
+                facts = self.working_memory.facts
+                logger.info("Extraction OK — fields: %s", list(facts.keys()))
                 yield {
                     "type": "extraction_result",
-                    "fields": extracted,
-                    "collected_facts": self.working_memory.facts,
-                }
-            elif self.working_memory.facts:
-                yield {
-                    "type": "extraction_result",
-                    "fields": {},
-                    "collected_facts": self.working_memory.facts,
+                    "fields": facts,
+                    "collected_facts": facts,
                 }
 
             logger.info(
