@@ -28,17 +28,17 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 from PIL import Image
 
 from omnitool.gradio.clients.external.omniparser import OmniParserClient
+from omnitool.gradio.clients.external.gta1 import GTA1Client
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import (
     AgentMode,
     EXTRACTION_SYSTEM_PROMPT,
     EXTRACTION_PROMPT,
-    CLIPBOARD_COORD_SYSTEM_PROMPT,
-    CLIPBOARD_COORD_PROMPT,
     PLAN_PROMPT,
     PLANNER_SYSTEM_PROMPT,
     REFLECT_PROMPT,
     TASK_PARSE_PROMPT,
+    SCREENSHOT_MAX_WIDTH,
     get_llm_config,
     get_pricing,
 )
@@ -92,6 +92,7 @@ class BaseAgent(ABC):
         output_callback=None,
         extract_fields: Optional[Dict[str, str]] = None,
         omniparser_client: Optional[OmniParserClient] = None,
+        gta1_client: Optional[GTA1Client] = None,
         provider: Optional[str] = None,
         **kwargs,
     ):
@@ -110,6 +111,8 @@ class BaseAgent(ABC):
         self.output_callback = output_callback
         self.extract_fields = extract_fields
         self.omniparser_client = omniparser_client
+        self.gta1_client = gta1_client
+        self.screenshot_max_width = SCREENSHOT_MAX_WIDTH
 
         # LLM config for cost calculation
         try:
@@ -129,15 +132,57 @@ class BaseAgent(ABC):
     # Abstract template hooks
     # ------------------------------------------------------------------
 
-    @abstractmethod
     def _capture_screen(self) -> Dict[str, Any]:
-        """Capture the current screen state.
+        """Capture and resize the current screen.
+
+        Takes a screenshot, records the original dimensions, resizes the image
+        to :attr:`screenshot_max_width`, and returns a dict with both original
+        and resized dimensions.  Subclasses may override to augment this dict
+        (e.g. with OmniParser SOM data).
 
         Returns:
-            Dict with at minimum ``screen_width`` and ``screen_height``.
-            VLM/Anthropic variants add ``som_image_base64`` and
-            ``parsed_content_list``; GTA1 variant adds ``raw_image_base64``.
+            Dict with keys:
+            - ``raw_image_base64``: resized screenshot PNG (base64)
+            - ``screen_width``, ``screen_height``: actual screen dimensions
+            - ``resized_screen_width``, ``resized_screen_height``: VLM image dims
         """
+        computer_tool = self.tools_collection.get_tool("computer")
+        if not computer_tool:
+            raise ValueError("ComputerTool not available")
+
+        screenshot_result = computer_tool.run("screenshot")
+        if screenshot_result.error:
+            raise ValueError(f"Screenshot failed: {screenshot_result.error}")
+
+        screenshot_b64 = screenshot_result.base64_image
+        if not screenshot_b64:
+            raise ValueError("No screenshot data from ComputerTool")
+
+        # Read original (actual screen) dimensions before resizing.
+        screen_width, screen_height = 1920, 1080
+        try:
+            orig_img = Image.open(BytesIO(base64.b64decode(screenshot_b64)))
+            screen_width, screen_height = orig_img.size
+        except Exception as exc:
+            logger.warning("Could not read original image dimensions: %s", exc)
+
+        resized_b64 = self._resize_b64(screenshot_b64, self.screenshot_max_width)
+
+        # Read dimensions of the resized image sent to the VLM.
+        resized_w, resized_h = screen_width, screen_height
+        try:
+            resized_img = Image.open(BytesIO(base64.b64decode(resized_b64)))
+            resized_w, resized_h = resized_img.size
+        except Exception as exc:
+            logger.warning("Could not read resized image dimensions: %s", exc)
+
+        return {
+            "raw_image_base64": resized_b64,
+            "screen_width": screen_width,
+            "screen_height": screen_height,
+            "resized_screen_width": resized_w,
+            "resized_screen_height": resized_h,
+        }
 
     @abstractmethod
     def _format_messages(
@@ -482,27 +527,24 @@ class BaseAgent(ABC):
             logger.warning("OmniParser call failed during extraction: %s", exc)
             return {}
 
-    def _read_screen(
+    def _read_fields_via_ocr(
         self,
         parsed_screen: Dict[str, Any],
         fields: Optional[Dict[str, str]] = None,
     ) -> Dict[str, str]:
-        """Read specific fields from the current screen using the VLM.
+        """Read multiple fields from the screen in a single VLM/OCR LLM call.
 
-        Used both mid-loop (agent-requested ``read_fields``) and post-loop
-        (user-preset ``extract_fields``).  The VLM receives the screenshot image
-        plus any structured OCR text for improved precision.
+        Sends the screenshot once with all requested fields, returning all
+        values in one round-trip.
 
         Args:
             parsed_screen: Screen data dict from :meth:`_capture_screen`.
-            fields: ``{field_name: constraint}`` mapping.  The constraint is a
+            fields: ``{field_name: constraint}`` mapping. The constraint is a
                 natural-language instruction to the extraction LLM (e.g.
-                ``"4 digits number"`` or ``"2 decimal places"``).  An empty
-                string means no special constraint.  Defaults to
-                ``self.extract_fields``.
+                ``"4 digits number"``). Defaults to ``self.extract_fields``.
 
         Returns:
-            ``{field: value}`` dict.  Values are ``"null"`` when not visible or
+            ``{field: value}`` dict. Values are ``"null"`` when not visible or
             ``"extraction failed"`` if the LLM call errors.
         """
         import json as _json
@@ -527,6 +569,7 @@ class BaseAgent(ABC):
 
         # Build OCR context block from structured screen info when available.
         ocr_text = parsed_screen.get("screen_info", "")
+        compact = ""
         if not ocr_text and content_list:
             compact = self.compact_screen_elements(
                 content_list,
@@ -539,11 +582,10 @@ class BaseAgent(ABC):
             if compact else ocr_text
         )
 
-        # Build per-field block: "- field_name: constraint" or just "- field_name"
-        fields_lines = []
-        for name, constraint in fields.items():
-            line = f"- {name}: {constraint}" if constraint else f"- {name}"
-            fields_lines.append(line)
+        fields_lines = [
+            f"- {name}: {constraint}" if constraint else f"- {name}"
+            for name, constraint in fields.items()
+        ]
         fields_block = "\n".join(fields_lines)
 
         user_text = EXTRACTION_PROMPT.format(
@@ -551,7 +593,6 @@ class BaseAgent(ABC):
             fields_block=fields_block,
         )
 
-        # Build multimodal message.
         content: List[Any] = []
         if img_b64:
             content.append({
@@ -560,11 +601,9 @@ class BaseAgent(ABC):
             })
         content.append({"type": "text", "text": user_text})
 
-        messages = [{"role": "user", "content": content}]
-
         try:
             response_text, _ = self.llm_client.generate(
-                messages=messages,
+                messages=[{"role": "user", "content": content}],
                 system_prompt=EXTRACTION_SYSTEM_PROMPT,
             )
             raw = self._extract_data(response_text, "json") or response_text
@@ -573,140 +612,123 @@ class BaseAgent(ABC):
                 return {f: str(result.get(f, "null")) for f in fields}
             return fallback
         except Exception as exc:
-            logger.warning("Result extraction failed: %s", exc)
+            logger.warning("_read_fields_via_ocr: extraction failed: %s", exc)
             return fallback
 
-    def _read_fields_via_clipboard(
+    def _read_field_via_clipboard(
+        self,
+        field_name: str,
+        description: str,
+        parsed_screen: Dict[str, Any],
+    ) -> str:
+        """Extract a single field value using GTA1 + triple-click + clipboard.
+
+        Uses the GTA1 grounding model to locate the field's center point in
+        the resized VLM image, scales coordinates back to actual screen space,
+        triple-clicks to select the content, copies with Ctrl+C, and reads
+        from the clipboard.
+
+        Args:
+            field_name: Human-readable field identifier (for logging only).
+            description: Natural-language description passed to GTA1 for grounding.
+            parsed_screen: Screen data dict from :meth:`_capture_screen`.
+
+        Returns:
+            Stripped clipboard text, ``"null"`` when the field is not found or
+            empty, or ``"extraction failed"`` on unexpected errors.
+        """
+        raw_b64 = parsed_screen.get("raw_image_base64", "")
+        if not raw_b64:
+            logger.warning(
+                "_read_field_via_clipboard: no screenshot for %r", field_name
+            )
+            return "extraction failed"
+
+        try:
+            result = self.gta1_client.ground(raw_b64, description)
+            rx, ry = result["x"], result["y"]
+        except Exception as exc:
+            logger.warning(
+                "_read_field_via_clipboard: GTA1 grounding failed for %r: %s",
+                field_name, exc,
+            )
+            return "extraction failed"
+
+        if not rx and not ry:
+            logger.debug(
+                "_read_field_via_clipboard: zero coordinates for %r — field not visible",
+                field_name,
+            )
+            return "null"
+
+        # Scale from resized VLM image space back to actual screen coordinates.
+        resized_w = parsed_screen.get("resized_screen_width") or parsed_screen.get("screen_width", 1)
+        resized_h = parsed_screen.get("resized_screen_height") or parsed_screen.get("screen_height", 1)
+        screen_w = parsed_screen.get("screen_width", resized_w)
+        screen_h = parsed_screen.get("screen_height", resized_h)
+        x = round(rx * screen_w / resized_w)
+        y = round(ry * screen_h / resized_h)
+
+        logger.debug(
+            "_read_field_via_clipboard: %r grounded at resized (%s, %s) → screen (%s, %s)",
+            field_name, rx, ry, x, y,
+        )
+        try:
+            self.tools_collection.run("computer", "triple_click", coordinate=(x, y))
+            self.tools_collection.run("computer", "key", text="ctrl+c")
+            clip_result = self.tools_collection.run("computer", "read_clipboard")
+            if clip_result.error:
+                logger.warning(
+                    "_read_field_via_clipboard: clipboard read error for %r: %s",
+                    field_name, clip_result.error,
+                )
+                return "extraction failed"
+            value = (clip_result.output or "").strip()
+            return value if value else "null"
+        except Exception as exc:
+            logger.warning(
+                "_read_field_via_clipboard: error extracting %r: %s", field_name, exc
+            )
+            return "extraction failed"
+
+    def _read_fields(
         self,
         parsed_screen: Dict[str, Any],
         fields: Optional[Dict[str, str]] = None,
     ) -> Dict[str, str]:
-        """Extract field values by drag-selecting screen regions and reading the clipboard.
+        """Extract multiple field values from the screen.
 
-        Asks the LLM (in one call) for the pixel bounding box of every requested
-        field, then for each field:
-
-        1. Moves the mouse to the top-left corner of the bounding box.
-        2. Drag-selects to the bottom-right corner (text selection).
-        3. Presses Ctrl+C to copy the selection.
-        4. Reads the clipboard via the ``read_clipboard`` computer-tool action.
-
-        This yields exact on-screen text rather than a VLM interpretation, making
-        it more reliable for structured data fields (numbers, IDs, codes, etc.).
+        Dispatches to :meth:`_read_field_via_clipboard` (GTA1 + triple-click)
+        when a ``gta1_client`` is available, otherwise falls back to
+        :meth:`_read_fields_via_ocr` (OmniParser OCR/VLM).
 
         Args:
             parsed_screen: Screen data dict from :meth:`_capture_screen`.
-                Must contain at least ``raw_image_base64``.
-            fields: ``{field_name: description}`` mapping.  Description is passed
-                to the LLM to help locate the field (e.g. ``"4-digit order ID"``).
-                Defaults to ``self.extract_fields``.
+            fields: ``{field_name: description}`` mapping. Defaults to
+                ``self.extract_fields``.
 
         Returns:
-            ``{field: value}`` dict.  Values are ``"null"`` when coordinates are
-            zero/missing, or ``"extraction failed"`` on unexpected errors.
+            ``{field_name: value}`` dict.
         """
-        import json as _json
-
         fields = fields if fields is not None else (self.extract_fields or {})
         if not fields:
             return {}
 
-        fallback = {f: "extraction failed" for f in fields}
         raw_b64 = parsed_screen.get("raw_image_base64", "")
-        if not raw_b64:
-            logger.warning("_read_fields_via_clipboard: no screenshot available")
-            return fallback
+        use_clipboard = self.gta1_client is not None and bool(raw_b64)
 
-        # --- Step 1: ask LLM for bounding boxes of all fields in one shot ---
-        fields_lines = [
-            f"- {name}: {desc}" if desc else f"- {name}"
-            for name, desc in fields.items()
-        ]
-        fields_block = "\n".join(fields_lines)
+        if self.gta1_client is not None and not raw_b64:
+            logger.warning("_read_fields: no raw screenshot — falling back to OCR")
 
-        coord_message: List[Any] = [
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{raw_b64}"},
-            },
-            {
-                "type": "text",
-                "text": CLIPBOARD_COORD_PROMPT.format(fields_block=fields_block),
-            },
-        ]
-
-        try:
-            response_text, _ = self.llm_client.generate(
-                messages=[{"role": "user", "content": coord_message}],
-                system_prompt=CLIPBOARD_COORD_SYSTEM_PROMPT,
-            )
-            raw_json = self._extract_data(response_text, "json") or response_text
-            coord_map: Dict[str, Any] = _json.loads(raw_json)
-        except Exception as exc:
-            logger.warning(
-                "_read_fields_via_clipboard: coordinate LLM call failed: %s", exc
-            )
-            return fallback
-
-        # --- Step 2: for each field, drag-select and read clipboard ---
-        results: Dict[str, str] = {}
-
-        for field_name in fields:
-            box = coord_map.get(field_name)
-            if not isinstance(box, dict):
-                logger.warning(
-                    "_read_fields_via_clipboard: no bbox for field %r", field_name
+        if use_clipboard:
+            results: Dict[str, str] = {}
+            for field_name, description in fields.items():
+                results[field_name] = self._read_field_via_clipboard(
+                    field_name, description, parsed_screen
                 )
-                results[field_name] = "null"
-                continue
+            return results
 
-            x1 = int(box.get("x1", 0))
-            y1 = int(box.get("y1", 0))
-            x2 = int(box.get("x2", 0))
-            y2 = int(box.get("y2", 0))
-
-            if x1 == 0 and y1 == 0 and x2 == 0 and y2 == 0:
-                logger.debug(
-                    "_read_fields_via_clipboard: zero bbox for field %r — field not visible",
-                    field_name,
-                )
-                results[field_name] = "null"
-                continue
-
-            try:
-                # Move mouse to start of selection area
-                self.tools_collection.run(
-                    "computer", "mouse_move", coordinate=(x1, y1)
-                )
-                # Drag to end of selection area (selects the text)
-                self.tools_collection.run(
-                    "computer", "left_click_drag", coordinate=(x2, y2)
-                )
-                # Copy selection to clipboard
-                self.tools_collection.run("computer", "key", text="ctrl+c")
-                # Read clipboard on the remote host
-                clip_result = self.tools_collection.run("computer", "read_clipboard")
-
-                if clip_result.error:
-                    logger.warning(
-                        "_read_fields_via_clipboard: clipboard read error for %r: %s",
-                        field_name,
-                        clip_result.error,
-                    )
-                    results[field_name] = "extraction failed"
-                else:
-                    value = (clip_result.output or "").strip()
-                    results[field_name] = value if value else "null"
-
-            except Exception as exc:
-                logger.warning(
-                    "_read_fields_via_clipboard: error extracting field %r: %s",
-                    field_name,
-                    exc,
-                )
-                results[field_name] = "extraction failed"
-
-        return results
+        return self._read_fields_via_ocr(parsed_screen, fields)
 
     @staticmethod
     def compact_screen_elements(
@@ -1051,7 +1073,7 @@ class BaseAgent(ABC):
                 if read_fields:
                     yield {"type": "status", "message": f"Reading screen fields: {read_fields}"}
                     try:
-                        reading = self._read_screen(screen_after, fields=read_fields)
+                        reading = self._read_fields(screen_after, read_fields)
                         self.working_memory.facts.update(reading)
                         self.state.chat.add_message(
                             "system",
@@ -1091,14 +1113,14 @@ class BaseAgent(ABC):
                 }
 
             if self.extract_fields:
-                yield {"type": "status", "message": "Extracting result fields via clipboard..."}
+                yield {"type": "status", "message": "Extracting result fields..."}
                 try:
                     final_screen = self._capture_screen()
-                    extracted = self._read_fields_via_clipboard(final_screen)
+                    extracted = self._read_fields(final_screen)
                     logger.info("Extraction OK — fields: %s", list(extracted.keys()))
                     logger.debug("Extraction values: %s", extracted)
                 except Exception as exc:
-                    logger.warning("Post-loop clipboard extraction failed: %s", exc)
+                    logger.warning("Post-loop field extraction failed: %s", exc)
                     extracted = {f: "extraction failed" for f in self.extract_fields}
                 yield {
                     "type": "extraction_result",

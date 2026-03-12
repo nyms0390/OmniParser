@@ -9,11 +9,8 @@ Box ID → pixel coordinate resolution.
 import base64
 import json
 import logging
-from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-from PIL import Image
 
 from omnitool.gradio.clients.external.omniparser import OmniParserClient
 from omnitool.gradio.clients.llm.base import BaseLLMClient
@@ -60,41 +57,12 @@ class OmniAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def _capture_screen(self) -> Dict[str, Any]:
-        """Screenshot + OmniParser → screen dict with image and element data."""
-        try:
-            computer_tool = self.tools_collection.get_tool("computer")
-            if not computer_tool:
-                raise ValueError("ComputerTool not available")
-
-            screenshot_result = computer_tool.run("screenshot")
-            if screenshot_result.error:
-                raise ValueError(f"Screenshot failed: {screenshot_result.error}")
-
-            screenshot_b64 = screenshot_result.base64_image
-            if not screenshot_b64:
-                raise ValueError("No screenshot data from ComputerTool")
-
-            parsed = self._parse_screen(screenshot_b64)
-            som_b64 = parsed.get("som_image_base64", "")
-
-            screen_width, screen_height = 1920, 1080
-            if som_b64:
-                try:
-                    img = Image.open(BytesIO(base64.b64decode(som_b64)))
-                    screen_width, screen_height = img.size
-                except Exception as exc:
-                    logger.warning("Could not read image dimensions: %s", exc)
-
-            return {
-                "raw_image_base64": screenshot_b64,
-                "som_image_base64": som_b64,
-                "parsed_content_list": parsed.get("parsed_content_list", []),
-                "screen_width": screen_width,
-                "screen_height": screen_height,
-            }
-        except Exception as e:
-            logger.error("Screen capture failed: %s", e)
-            raise
+        """Screenshot + resize (base) + OmniParser → screen dict."""
+        screen = super()._capture_screen()
+        parsed = self._parse_screen(screen["raw_image_base64"])
+        screen["som_image_base64"] = parsed.get("som_image_base64", "")
+        screen["parsed_content_list"] = parsed.get("parsed_content_list", [])
+        return screen
 
     def _format_messages(
         self,

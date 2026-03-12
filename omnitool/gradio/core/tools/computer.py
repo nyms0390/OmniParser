@@ -73,6 +73,8 @@ class ComputerTool(BaseTool):
                 return self._right_click(kwargs)
             elif action == "double_click":
                 return self._double_click(kwargs)
+            elif action == "triple_click":
+                return self._triple_click(kwargs)
             elif action == "mouse_move":
                 return self._mouse_move(kwargs)
             elif action == "left_click_drag":
@@ -216,6 +218,37 @@ class ComputerTool(BaseTool):
         except Exception as e:
             return ToolResult(error=f"Right click failed: {str(e)}")
     
+    def _triple_click(self, kwargs: Dict) -> ToolResult:
+        """Triple click at optional coordinates to select a word or line.
+
+        Args:
+            kwargs: Optional 'coordinate' as (x, y) tuple
+
+        Returns:
+            ToolResult
+        """
+        try:
+            coordinate = kwargs.get("coordinate")
+            if coordinate:
+                if len(coordinate) != 2:
+                    return ToolResult(error="coordinate must be (x, y)")
+                x, y = coordinate
+                logger.debug("Triple clicking at (%s, %s)", x, y)
+                self.windows_host_client.execute_pyautogui_command(
+                    f"pyautogui.click({x}, {y}, clicks=3, interval=0.05)",
+                    parse_output=False,
+                )
+                return ToolResult(output=f"Triple clicked at ({x}, {y})")
+            else:
+                logger.debug("Triple clicking at current position")
+                self.windows_host_client.execute_pyautogui_command(
+                    "pyautogui.click(clicks=3, interval=0.05)",
+                    parse_output=False,
+                )
+                return ToolResult(output="Triple clicked at current position")
+        except Exception as e:
+            return ToolResult(error=f"Triple click failed: {str(e)}")
+
     def _double_click(self, kwargs: Dict) -> ToolResult:
         """Double click at optional coordinates.
         
@@ -497,7 +530,7 @@ class ComputerTool(BaseTool):
             "name": self.name,
             "description": self.description,
             "actions": (
-                "screenshot, left_click, right_click, double_click, "
+                "screenshot, left_click, right_click, double_click, triple_click, "
                 "middle_click, mouse_move, left_click_drag, type, key, "
                 "cursor_position, scroll_up, scroll_down, hover, wait, "
                 "left_press, read_clipboard"

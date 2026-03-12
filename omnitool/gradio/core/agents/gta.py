@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw
 
 from omnitool.gradio.clients.external.gta1 import GTA1Client
 from omnitool.gradio.clients.llm.base import BaseLLMClient
-from omnitool.gradio.config import AgentMode, SCREENSHOT_MAX_WIDTH, build_gta1_system_prompt
+from omnitool.gradio.config import AgentMode, build_gta1_system_prompt
 from omnitool.gradio.app.state import AppState
 
 from .base import BaseAgent
@@ -75,59 +75,14 @@ class GTAAgent(BaseAgent):
             model_name, llm_client, state, tools_collection, save_folder,
             mode=mode, platform=platform, max_steps=max_steps,
             context_n=context_n, output_callback=output_callback,
-            omniparser_client=omniparser_client, **kwargs,
+            omniparser_client=omniparser_client,
+            gta1_client=gta1_client, **kwargs,
         )
-        self.gta1_client = gta1_client
 
     # ------------------------------------------------------------------
     # ------------------------------------------------------------------
     # Template hook implementations
     # ------------------------------------------------------------------
-
-    def _capture_screen(self) -> Dict[str, Any]:
-        """Raw screenshot only — no OmniParser call."""
-        try:
-            computer_tool = self.tools_collection.get_tool("computer")
-            if not computer_tool:
-                raise ValueError("ComputerTool not available")
-
-            screenshot_result = computer_tool.run("screenshot")
-            if screenshot_result.error:
-                raise ValueError(f"Screenshot failed: {screenshot_result.error}")
-
-            screenshot_b64 = screenshot_result.base64_image
-            if not screenshot_b64:
-                raise ValueError("No screenshot data from ComputerTool")
-
-            # Read original dimensions before any resizing.
-            orig_width, orig_height = 1920, 1080
-            try:
-                orig_img = Image.open(BytesIO(base64.b64decode(screenshot_b64)))
-                orig_width, orig_height = orig_img.size
-            except Exception as exc:
-                logger.warning("Could not read original image dimensions: %s", exc)
-
-            screenshot_b64 = self._resize_b64(screenshot_b64, self.screenshot_max_width)
-
-            # Read dimensions of the (possibly resized) image sent to the VLM.
-            screen_width, screen_height = orig_width, orig_height
-            try:
-                resized_img = Image.open(BytesIO(base64.b64decode(screenshot_b64)))
-                screen_width, screen_height = resized_img.size
-            except Exception as exc:
-                logger.warning("Could not read resized image dimensions: %s", exc)
-
-            return {
-                "raw_image_base64": screenshot_b64,
-                "screen_width": screen_width,
-                "screen_height": screen_height,
-                # Original resolution needed to scale GTA1 coords back to screen space.
-                "orig_screen_width": orig_width,
-                "orig_screen_height": orig_height,
-            }
-        except Exception as e:
-            logger.error("Screen capture failed: %s", e)
-            raise
 
     def _format_messages(
         self,
@@ -224,10 +179,10 @@ class GTAAgent(BaseAgent):
         image_b64 = parsed_screen.get("raw_image_base64", "")
 
         # Scale factors to convert GTA1 coords (resized image space) → screen space.
-        resized_w = parsed_screen.get("screen_width", 1)
-        resized_h = parsed_screen.get("screen_height", 1)
-        orig_w = parsed_screen.get("orig_screen_width", resized_w)
-        orig_h = parsed_screen.get("orig_screen_height", resized_h)
+        resized_w = parsed_screen.get("resized_screen_width", 1)
+        resized_h = parsed_screen.get("resized_screen_height", 1)
+        orig_w = parsed_screen.get("screen_width", resized_w)
+        orig_h = parsed_screen.get("screen_height", resized_h)
         scale_x = orig_w / resized_w if resized_w else 1.0
         scale_y = orig_h / resized_h if resized_h else 1.0
 
