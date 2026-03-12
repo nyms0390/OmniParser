@@ -212,18 +212,17 @@ def get_pricing(model_name: str, provider: str) -> Dict[str, float]:
 OCR_CONFIG: Dict[str, Dict[str, Any]] = {
     "easyocr": {
         "backend_class": "EasyOCRBackend",
-        "language": "en",
+        "language": "ch",
         "use_gpu": None,
         "backend_config": {},
     },
     "paddleocr": {
         "backend_class": "PaddleOCRBackend",
-        "language": "en",
+        "language": "ch",
         "use_gpu": None,
         "backend_config": {
             "text_threshold": 0.5,
-            "text_recognition_batch_size": 1024,
-            "text_detection_batch_size": 1024,
+            "api_url": "http://localhost:8080/",
         },
     },
 }

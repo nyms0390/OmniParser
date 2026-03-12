@@ -163,7 +163,7 @@ class PaddleOCRBackend(BaseOCRBackend):
             import cv2
             _, buffer = cv2.imencode('.png', image)
             image_bytes = buffer.tobytes()
-            result = ocr.recognize(image_bytes, text_threshold=text_threshold)
+            result = ocr.recognize(image_bytes)
         else:
             # Local OCR processing with PaddleOCR 3.x
             # predict() returns a list of result objects, each dict-like

@@ -103,6 +103,7 @@ For each step, follow this process:
 1. Examine the SOM image to realize what's going on on the screen.
 2. Review the action history to assess what has already been done and whether it succeeded.
 3. Decide the single next action and, when required, the target Box ID.
+4. If you need to capture values from the screen, read them directly and set "read_fields" to a JSON object mapping each field name to its exact value as shown on screen.
 
 Your available "Next Action" only include:
 - type: types a string of text.
@@ -121,7 +122,7 @@ Output format:
     "Next Action": "action_type, action description" | "None" # one action at a time, describe it briefly.
     "Box ID": n | null, # required for left_click, right_click, double_click, hover, type
     "value": "xxx" | null, # required when action is type
-    "read_fields": {{"field": "constraint"}} | null # when you want to capture screen values for later steps, describe the field and its constraint.
+    "read_fields": {{"field": "exact value as shown on screen"}} | null # values you are capturing from the current screen; use null if nothing to capture.
 }}
 ```
 
@@ -161,11 +162,11 @@ Another Example:
 Another Example (reading screen values for a later step):
 ```json
 {{
-    "Reasoning": "The order confirmation page is showing. I need to capture the confirmation number and total before navigating away.",
+    "Reasoning": "The order confirmation page is showing. I can see the confirmation number and total. Capturing them before navigating away.",
     "Next Action": "None",
     "Box ID": null,
     "value": null,
-    "read_fields": {{"confirmation_number": "alphanumeric, 8 characters", "order_total": "2 decimal places"}}
+    "read_fields": {{"confirmation_number": "A1B2C3D4", "order_total": "29.99"}}
 }}
 ```
 
@@ -207,6 +208,7 @@ For each step, follow this process:
 1. Examine the screenshot to understand the current screen state.
 2. Review the action history to assess what has already been done and whether it succeeded.
 3. Decide the single next action and describe the exact UI element to target.
+4. If you need to capture values from the screen, read them directly and set "read_fields" to a JSON object mapping each field name to its exact value as shown on screen.
 
 Your available "Next Action" only include:
 - type: types a string of text into the currently focused field.
@@ -224,7 +226,7 @@ Output format:
     "Reasoning": str, # concise summary of what you see on screen, what history tells you, and why you chose this action.
     "Next Action": "action_type, description of the target element" | "None" # one action at a time.
     "value": "xxx" | null, # required when action is type
-    "read_fields": {{"field": "constraint"}} | null, # when you want to capture screen values for later steps, describe the field and its constraint.
+    "read_fields": {{"field": "exact value as shown on screen"}} | null, # values you are capturing from the current screen; use null if nothing to capture.
 }}
 ```
 
@@ -261,10 +263,10 @@ Another Example:
 Another Example (reading screen values for a later step):
 ```json
 {{
-    "Reasoning": "The order confirmation page is showing. I need to capture the confirmation number before navigating away.",
+    "Reasoning": "The order confirmation page is showing. I can see the confirmation number and total. Capturing them before navigating away.",
     "Next Action": "None",
     "value": null,
-    "read_fields": {{"confirmation_number": "alphanumeric, 8 characters", "order_total": "2 decimal places"}}
+    "read_fields": {{"confirmation_number": "A1B2C3D4", "order_total": "29.99"}}
 }}
 ```
 
