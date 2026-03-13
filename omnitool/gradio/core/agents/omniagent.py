@@ -72,7 +72,7 @@ class OmniAgent(BaseAgent):
         prepared = [self._strip_images(msg) for msg in messages]
         parsed_screen = self.working_memory.parsed_screen or {}
 
-        compact = self.compact_screen_elements(
+        compact = self._compact_screen_elements(
             parsed_screen.get("parsed_content_list", []),
             screen_width=parsed_screen.get("screen_width", 1920),
             screen_height=parsed_screen.get("screen_height", 1080),

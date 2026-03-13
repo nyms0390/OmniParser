@@ -32,8 +32,6 @@ from omnitool.gradio.clients.external.gta1 import GTA1Client
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import (
     AgentMode,
-    EXTRACTION_SYSTEM_PROMPT,
-    EXTRACTION_PROMPT,
     PLAN_PROMPT,
     PLANNER_SYSTEM_PROMPT,
     REFLECT_PROMPT,
@@ -129,7 +127,51 @@ class BaseAgent(ABC):
         self.working_memory = WorkingMemory()
 
     # ------------------------------------------------------------------
-    # Abstract template hooks
+    # Lifecycle & accounting
+    # ------------------------------------------------------------------
+
+    def reset(self):
+        """Reset all per-run counters to zero."""
+        self.step_count = 0
+        self.total_tokens = 0
+        self.total_cost = 0.0
+
+    def update_step_count(self):
+        """Increment the step counter by one."""
+        self.step_count += 1
+
+    def update_token_usage(self, tokens: int):
+        """Add *tokens* to the cumulative token count."""
+        self.total_tokens += tokens
+
+    def update_cost(self, cost: float):
+        """Add *cost* USD to the cumulative cost total."""
+        self.total_cost += cost
+
+    def _calculate_cost(self, metadata: Dict[str, Any]) -> float:
+        """Calculate cost in USD from LLM response metadata.
+
+        Args:
+            metadata: Dict returned by ``llm_client.generate()`` containing
+                ``"input_tokens"`` and ``"output_tokens"`` keys.
+
+        Returns:
+            Estimated cost in USD, or ``0.0`` when pricing is unavailable.
+        """
+        if not self.llm_config:
+            return 0.0
+        rates = get_pricing(self.model_name, self.provider)
+        try:
+            input_tokens = metadata.get("input_tokens", 0)
+            output_tokens = metadata.get("output_tokens", 0)
+            input_cost = (input_tokens * rates.get("input", 0.0)) / 1_000_000
+            output_cost = (output_tokens * rates.get("output", 0.0)) / 1_000_000
+            return input_cost + output_cost
+        except Exception:
+            return 0.0
+
+    # ------------------------------------------------------------------
+    # Template hooks
     # ------------------------------------------------------------------
 
     def _capture_screen(self) -> Dict[str, Any]:
@@ -189,14 +231,35 @@ class BaseAgent(ABC):
         self,
         messages: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Prepare messages for the LLM plan call."""
+        """Prepare context messages for the LLM plan call.
+
+        Subclasses inject the current screen (as an image and/or structured
+        text) and apply any agent-specific formatting before sending to the LLM.
+
+        Args:
+            messages: Raw conversation history from ``AppState.chat``.
+
+        Returns:
+            Transformed message list ready for ``llm_client.generate()``.
+        """
 
     @abstractmethod
     def _parse_tool_calls(
         self,
         response_text: str,
     ) -> List[Dict[str, Any]]:
-        """Extract tool_calls from an LLM response string (agent-specific)."""
+        """Extract tool calls from a raw LLM response string.
+
+        Agent-specific implementation: parses the JSON plan block and resolves
+        any symbolic references (e.g. Box IDs in OmniAgent) into concrete
+        ``{"tool": ..., "action": ..., ...}`` dicts.
+
+        Args:
+            response_text: Raw text returned by ``llm_client.generate()``.
+
+        Returns:
+            List of tool-call dicts, empty when no tools are requested.
+        """
 
     def _parse_response(
         self,
@@ -230,7 +293,11 @@ class BaseAgent(ABC):
 
     @abstractmethod
     def _get_system_prompt(self) -> str:
-        """Return the fully-rendered system prompt for this variant."""
+        """Return the fully-rendered system prompt for this agent variant.
+
+        Returns:
+            System prompt string to pass to ``llm_client.generate()``.
+        """
 
     def _ground(
         self,
@@ -248,43 +315,171 @@ class BaseAgent(ABC):
         return tool_calls, []
 
     # ------------------------------------------------------------------
-    # Shared utilities
+    # Image & screen utilities
     # ------------------------------------------------------------------
 
-    def update_step_count(self):
-        self.step_count += 1
+    @staticmethod
+    def _resize_b64(b64: str, max_width: int) -> str:
+        """Resize a base64 PNG to at most *max_width* pixels wide.
 
-    def update_token_usage(self, tokens: int):
-        self.total_tokens += tokens
+        Returns the original string unchanged if already within the limit or
+        if resizing fails for any reason.
 
-    def update_cost(self, cost: float):
-        self.total_cost += cost
+        Args:
+            b64: Base64-encoded PNG image.
+            max_width: Maximum output width in pixels.
 
-    def reset(self):
-        self.step_count = 0
-        self.total_tokens = 0
-        self.total_cost = 0.0
-
-    def _calculate_cost(self, metadata: Dict[str, Any]) -> float:
-        """Calculate cost in USD from LLM response metadata."""
-        if not self.llm_config:
-            return 0.0
-        rates = get_pricing(self.model_name, self.provider)
+        Returns:
+            Base64-encoded resized PNG, or the original *b64* on failure.
+        """
         try:
-            input_tokens = metadata.get("input_tokens", 0)
-            output_tokens = metadata.get("output_tokens", 0)
-            input_cost = (input_tokens * rates.get("input", 0.0)) / 1_000_000
-            output_cost = (output_tokens * rates.get("output", 0.0)) / 1_000_000
-            return input_cost + output_cost
-        except Exception:
-            return 0.0
+            img = Image.open(BytesIO(base64.b64decode(b64)))
+            if img.width <= max_width:
+                return b64
+            orig_w, orig_h = img.size
+            ratio = max_width / orig_w
+            img = img.resize((max_width, int(orig_h * ratio)), Image.Resampling.LANCZOS)
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            logger.debug("Screenshot resized %dx%d -> %dx%d", orig_w, orig_h, img.width, img.height)
+            return base64.b64encode(buf.getvalue()).decode("utf-8")
+        except Exception as exc:
+            logger.warning("Screenshot resize failed, using original: %s", exc)
+            return b64
 
-    def get_cost_metadata(self) -> Dict[str, Any]:
-        return get_pricing(self.model_name, self.provider)
+    def _parse_screen(self, raw_b64: str) -> Dict[str, Any]:
+        """Run OmniParser on a raw screenshot to obtain a SOM image and element list.
+
+        Used by non-OmniAgent variants (e.g. GTAAgent) at extraction time so
+        every agent can benefit from structured screen data.  Returns an empty
+        dict when no ``omniparser_client`` is configured or the call fails.
+
+        Args:
+            raw_b64: Base64-encoded raw screenshot PNG.
+
+        Returns:
+            Dict with ``"som_image_base64"`` and ``"parsed_content_list"``, or
+            an empty dict on failure.
+        """
+        if not self.omniparser_client:
+            return {}
+        try:
+            result = self.omniparser_client.parse_screenshot(raw_b64)
+            return {
+                "som_image_base64": result.get("labeled_screenshot_base64", ""),
+                "parsed_content_list": result.get("parsed_content_list", []),
+            }
+        except Exception as exc:
+            logger.warning("OmniParser call failed during extraction: %s", exc)
+            return {}
+
+    @staticmethod
+    def _compact_screen_elements(
+        parsed_content_list: list,
+        screen_width: int = 1920,
+        screen_height: int = 1080,
+    ) -> str:
+        """Return a compact, ID-indexed summary of detected screen elements.
+
+        Each line includes the pixel centroid ``(cx, cy)`` calculated from the
+        normalised bounding box so the LLM can reason about element positions.
+
+        Args:
+            parsed_content_list: List of element dicts from OmniParser.
+            screen_width: Actual screen width in pixels.
+            screen_height: Actual screen height in pixels.
+
+        Returns:
+            Multi-line string with one element per line, or ``"(no elements)"``.
+        """
+        if not parsed_content_list:
+            return "(no elements)"
+        lines = []
+        for idx, elem in enumerate(parsed_content_list):
+            elem_type = elem.get("type", "unknown")
+            interactive = elem.get("interactivity", False)
+            content = elem.get("content") or ""
+            bbox = elem.get("bbox")
+            if bbox and len(bbox) == 4:
+                cx = int((bbox[0] + bbox[2]) / 2 * screen_width)
+                cy = int((bbox[1] + bbox[3]) / 2 * screen_height)
+                pos = f" @ ({cx}, {cy})px"
+            else:
+                pos = ""
+            lines.append(
+                f'{idx}: {elem_type}, interactive={interactive}{pos}, "{content}"'
+            )
+        return "\n".join(lines)
+
+    def _scale_to_screen(
+        self,
+        x: float,
+        y: float,
+        parsed_screen: Dict[str, Any],
+    ) -> tuple:
+        """Scale GTA1 coords (resized-image space) to actual screen space.
+
+        Args:
+            x: X coordinate in resized-image space.
+            y: Y coordinate in resized-image space.
+            parsed_screen: Screen dict with ``resized_screen_width/height``
+                and ``screen_width/height`` keys.
+
+        Returns:
+            ``(screen_x, screen_y)`` rounded to the nearest pixel.
+        """
+        resized_w = parsed_screen.get("resized_screen_width") or parsed_screen.get("screen_width", 1)
+        resized_h = parsed_screen.get("resized_screen_height") or parsed_screen.get("screen_height", 1)
+        screen_w = parsed_screen.get("screen_width", resized_w)
+        screen_h = parsed_screen.get("screen_height", resized_h)
+        sx = round(x * screen_w / resized_w) if resized_w else round(x)
+        sy = round(y * screen_h / resized_h) if resized_h else round(y)
+        return sx, sy
+
+    @staticmethod
+    def _compare_screens(
+        screen_before: Optional[Dict[str, Any]],
+        screen_after: Optional[Dict[str, Any]],
+    ) -> bool:
+        """Return True when the screen did not visibly change after an action.
+
+        Compares SHA-256 hashes of the SOM or raw image when available,
+        falling back to text comparison of the parsed element list.
+
+        Args:
+            screen_before: Screen dict captured before the action.
+            screen_after: Screen dict captured after the action.
+
+        Returns:
+            ``True`` if the screen is unchanged, ``False`` otherwise.
+        """
+        if not screen_before or not screen_after:
+            return False
+        for key in ("som_image_base64", "raw_image_base64"):
+            before_b64 = screen_before.get(key, "")
+            after_b64 = screen_after.get(key, "")
+            if before_b64 and after_b64:
+                h_before = hashlib.sha256(before_b64.encode()).hexdigest()
+                h_after = hashlib.sha256(after_b64.encode()).hexdigest()
+                return h_before == h_after
+        before_text = str(screen_before.get("parsed_content_list", ""))
+        after_text = str(screen_after.get("parsed_content_list", ""))
+        return before_text == after_text
+
+    # ------------------------------------------------------------------
+    # Message & context helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _strip_images(msg: Dict[str, Any]) -> Dict[str, Any]:
-        """Return a shallow copy of *msg* with all ``image_url`` blocks removed."""
+        """Return a shallow copy of *msg* with all ``image_url`` blocks removed.
+
+        Args:
+            msg: A single chat message dict.
+
+        Returns:
+            Copy of *msg* with image content items filtered out.
+        """
         msg = msg.copy()
         content = msg.get("content")
         if isinstance(content, list):
@@ -296,56 +491,57 @@ class BaseAgent(ABC):
 
     @staticmethod
     def _extract_data(input_string: str, data_type: str) -> str:
-        """Extract content from fenced code blocks (e.g. ```json … ```)."""
+        """Extract content from a fenced code block (e.g. \`\`\`json … \`\`\`).
+
+        Args:
+            input_string: Raw text possibly containing a fenced block.
+            data_type: Block language tag, e.g. ``"json"`` or ``"python"``.
+
+        Returns:
+            Stripped block content, or the original *input_string* when no
+            matching block is found.
+        """
         pattern = f"```{data_type}" + r"(.*?)(```|$)"
         matches = re.findall(pattern, input_string, re.DOTALL)
         return matches[0][0].strip() if matches else input_string
 
-    def execute_tool_calls(
-        self, tool_calls: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Execute tool calls using the agent's tools collection."""
-        results: List[Dict[str, Any]] = []
-        for tool_call in tool_calls:
-            tool_name = tool_call.get("tool")
-            action = tool_call.get("action", "")
-            label = f"{tool_name}.{action}" if action else tool_name
-            if not self.tools_collection.has_tool(tool_name):
-                logger.info("ACT [%s] FAILED — tool not found", label)
-                results.append({
-                    "tool": tool_name,
-                    "status": "error",
-                    "error": f"Tool not found: {tool_name}",
-                })
-                continue
-            try:
-                tool = self.tools_collection.get_tool(tool_name)
-                tool_kwargs = {
-                    k: v for k, v in tool_call.items()
-                    if k not in ("tool", "action")
-                }
-                result = tool.run(tool_call.get("action"), **tool_kwargs)
-                if hasattr(result, "error") and result.error:
-                    logger.info("ACT [%s] FAILED — %s", label, result.error)
-                else:
-                    logger.info("ACT [%s] OK", label)
-                logger.debug("ACT [%s] output: %s", label, getattr(result, "output", result))
-                results.append({"tool": tool_name, "status": "success", "result": result})
-            except Exception as exc:
-                logger.error("Tool execution failed for %s: %s", tool_name, exc)
-                logger.info("ACT [%s] FAILED — %s", label, exc)
-                results.append({"tool": tool_name, "status": "error", "error": str(exc)})
-        return results
+    @staticmethod
+    def _format_tool_result(tool_name: str, output: str, error: str) -> str:
+        """Format a tool result as a single human-readable string.
+
+        Args:
+            tool_name: Name of the tool that was executed.
+            output: Tool stdout / result text.
+            error: Error message, if any.
+
+        Returns:
+            Formatted string combining tool name, output, and error.
+        """
+        parts = []
+        if output:
+            parts.append(output)
+        if error:
+            parts.append(f"ERROR: {error}")
+        detail = " | ".join(parts) if parts else "(no output)"
+        return f"Tool {tool_name}: {detail}"
 
     # ------------------------------------------------------------------
-    # Orchestration helpers
+    # Orchestration
     # ------------------------------------------------------------------
 
     def _parse_checklist(self, raw_json: str) -> Checklist:
+        """Parse a Checklist from a raw LLM JSON string."""
         return Checklist.from_llm_json(raw_json)
 
     def _generate_plan(self, messages: List[Dict[str, Any]]) -> Checklist:
-        """Generate an initial plan via an extra LLM call (ORCHESTRATED init)."""
+        """Generate an initial plan via an extra LLM call (ORCHESTRATED init).
+
+        Args:
+            messages: Current conversation history from ``AppState.chat``.
+
+        Returns:
+            Generated :class:`Checklist` saved to ``<save_folder>/plan.json``.
+        """
         self.working_memory.task = messages[0]["content"] if messages else ""
         plan_prompt = PLAN_PROMPT.format(task=self.working_memory.task)
         plan_messages = copy.deepcopy(messages)
@@ -383,7 +579,17 @@ class BaseAgent(ABC):
         return checklist
 
     def _load_task_checklist(self, messages: List[Dict[str, Any]]) -> Checklist:
-        """Build a Checklist from the user's task message (TASK init)."""
+        """Build a Checklist from the user's task message (TASK init).
+
+        For multi-line tasks with a single parsed item, calls the LLM again
+        with a dedicated parse prompt to split it into sub-steps.
+
+        Args:
+            messages: Current conversation history from ``AppState.chat``.
+
+        Returns:
+            :class:`Checklist` for the user's task.
+        """
         self.working_memory.task = messages[0]["content"] if messages else ""
         checklist = Checklist.from_user_text(self.working_memory.task)
 
@@ -406,7 +612,14 @@ class BaseAgent(ABC):
         return checklist
 
     def _reflect(self, messages: List[Dict[str, Any]]) -> None:
-        """Run the Reflect LLM call; updates working_memory.ledger and .checklist in place."""
+        """Run the Reflect LLM call; updates working_memory in place.
+
+        Evaluates task progress, updates the ledger, and applies any
+        checklist status changes returned by the LLM.
+
+        Args:
+            messages: Current conversation history from ``AppState.chat``.
+        """
         wm = self.working_memory
         parts = []
         if wm.checklist:
@@ -442,12 +655,72 @@ class BaseAgent(ABC):
             except (json.JSONDecodeError, TypeError):
                 pass
 
+    # ------------------------------------------------------------------
+    # Action execution & verification
+    # ------------------------------------------------------------------
+
+    def execute_tool_calls(
+        self, tool_calls: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Execute tool calls using the agent's tools collection.
+
+        Args:
+            tool_calls: List of tool-call dicts with at minimum a ``"tool"`` key.
+
+        Returns:
+            List of result dicts, each with ``"tool"``, ``"status"``, and either
+            ``"result"`` or ``"error"``.
+        """
+        results: List[Dict[str, Any]] = []
+        for tool_call in tool_calls:
+            tool_name = tool_call.get("tool")
+            action = tool_call.get("action", "")
+            label = f"{tool_name}.{action}" if action else tool_name
+            if not self.tools_collection.has_tool(tool_name):
+                logger.info("ACT [%s] FAILED — tool not found", label)
+                results.append({
+                    "tool": tool_name,
+                    "status": "error",
+                    "error": f"Tool not found: {tool_name}",
+                })
+                continue
+            try:
+                tool = self.tools_collection.get_tool(tool_name)
+                tool_kwargs = {
+                    k: v for k, v in tool_call.items()
+                    if k not in ("tool", "action")
+                }
+                result = tool.run(tool_call.get("action"), **tool_kwargs)
+                if hasattr(result, "error") and result.error:
+                    logger.info("ACT [%s] FAILED — %s", label, result.error)
+                else:
+                    logger.info("ACT [%s] OK", label)
+                logger.debug("ACT [%s] output: %s", label, getattr(result, "output", result))
+                results.append({"tool": tool_name, "status": "success", "result": result})
+            except Exception as exc:
+                logger.error("Tool execution failed for %s: %s", tool_name, exc)
+                logger.info("ACT [%s] FAILED — %s", label, exc)
+                results.append({"tool": tool_name, "status": "error", "error": str(exc)})
+        return results
+
     def _verify_step(
         self,
         tool_results: List[Dict[str, Any]],
         screen_after: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Post-Act verification (no LLM call)."""
+        """Post-Act verification without an LLM call.
+
+        Checks for tool errors, repeated actions, and whether the screen
+        actually changed after the action was executed.
+
+        Args:
+            tool_results: List returned by :meth:`execute_tool_calls`.
+            screen_after: Screen dict captured after executing tools.
+
+        Returns:
+            Dict with keys ``"has_error"``, ``"error_detail"``,
+            ``"is_repeated"``, and ``"screen_unchanged"``.
+        """
         has_error = False
         error_detail = ""
         for result in tool_results:
@@ -470,181 +743,37 @@ class BaseAgent(ABC):
             ),
         }
 
-    @staticmethod
-    def _compare_screens(
-        screen_before: Optional[Dict[str, Any]],
-        screen_after: Optional[Dict[str, Any]],
-    ) -> bool:
-        """Return True when the screen did not visibly change after an action."""
-        if not screen_before or not screen_after:
+    def _detect_repeated_actions(self, threshold: int = 3) -> bool:
+        """Return True when the last *threshold* actions are identical.
+
+        Two actions are considered identical when they share the same action
+        type and their coordinates are within 50 px of each other.
+
+        Args:
+            threshold: Minimum number of consecutive identical actions to trigger.
+
+        Returns:
+            ``True`` if a loop is detected, ``False`` otherwise.
+        """
+        trajectory = self.working_memory.trajectory
+        if len(trajectory) < threshold:
             return False
-        for key in ("som_image_base64", "raw_image_base64"):
-            before_b64 = screen_before.get(key, "")
-            after_b64 = screen_after.get(key, "")
-            if before_b64 and after_b64:
-                h_before = hashlib.sha256(before_b64.encode()).hexdigest()
-                h_after = hashlib.sha256(after_b64.encode()).hexdigest()
-                return h_before == h_after
-        before_text = str(screen_before.get("parsed_content_list", ""))
-        after_text = str(screen_after.get("parsed_content_list", ""))
-        return before_text == after_text
+        recent = trajectory[-threshold:]
+        infos = [self._extract_primary_action(e.get("tool_calls", [])) for e in recent]
+        actions = [i["action"] for i in infos]
+        if len(set(actions)) != 1:
+            return False
+        coords = [i["coordinate"] for i in infos if i.get("coordinate")]
+        if len(coords) == threshold:
+            ref = coords[0]
+            for c in coords[1:]:
+                if abs(c[0] - ref[0]) > 50 or abs(c[1] - ref[1]) > 50:
+                    return False
+        return True
 
-    @staticmethod
-    def _resize_b64(b64: str, max_width: int) -> str:
-        """Resize a base64 PNG to at most *max_width* pixels wide.
-
-        Returns the original string unchanged if already within the limit or
-        if resizing fails for any reason.
-        """
-        try:
-            img = Image.open(BytesIO(base64.b64decode(b64)))
-            if img.width <= max_width:
-                return b64
-            orig_w, orig_h = img.size
-            ratio = max_width / orig_w
-            img = img.resize((max_width, int(orig_h * ratio)), Image.Resampling.LANCZOS)
-            buf = BytesIO()
-            img.save(buf, format="PNG")
-            logger.debug("Screenshot resized %dx%d -> %dx%d", orig_w, orig_h, img.width, img.height)
-            return base64.b64encode(buf.getvalue()).decode("utf-8")
-        except Exception as exc:
-            logger.warning("Screenshot resize failed, using original: %s", exc)
-            return b64
-
-    def _parse_screen(self, raw_b64: str) -> Dict[str, Any]:
-        """Run OmniParser on a raw screenshot to obtain a SOM image and element list.
-
-        Used by non-OmniAgent variants (e.g. GTAAgent) at extraction time so
-        every agent can benefit from structured screen data.  Returns an empty
-        dict when no ``omniparser_client`` is configured or the call fails.
-        """
-        if not self.omniparser_client:
-            return {}
-        try:
-            result = self.omniparser_client.parse_screenshot(raw_b64)
-            return {
-                "som_image_base64": result.get("labeled_screenshot_base64", ""),
-                "parsed_content_list": result.get("parsed_content_list", []),
-            }
-        except Exception as exc:
-            logger.warning("OmniParser call failed during extraction: %s", exc)
-            return {}
-
-    def _read_fields_via_ocr(
-        self,
-        parsed_screen: Dict[str, Any],
-        fields: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, str]:
-        """Read multiple fields from the screen in a single VLM/OCR LLM call.
-
-        .. deprecated::
-            LLM-based OCR extraction is no longer used in the main agentic loop.
-            Mid-loop ``read_fields`` values are now stored directly from the LLM
-            response, and post-loop correction uses :meth:`_correct_field_via_clipboard`.
-            This method is kept for compatibility only.
-
-        Args:
-            parsed_screen: Screen data dict from :meth:`_capture_screen`.
-            fields: ``{field_name: constraint}`` mapping. The constraint is a
-                natural-language instruction to the extraction LLM (e.g.
-                ``"4 digits number"``). Defaults to ``self.extract_fields``.
-
-        Returns:
-            ``{field: value}`` dict. Values are ``"null"`` when not visible or
-            ``"extraction failed"`` if the LLM call errors.
-        """
-        import json as _json
-
-        fields = fields if fields is not None else (self.extract_fields or {})
-        if not fields:
-            return {}
-        fallback = {f: "extraction failed" for f in fields}
-
-        # Pick best available screenshot; run OmniParser for SOM when possible.
-        som_b64 = parsed_screen.get("som_image_base64", "")
-        raw_b64 = parsed_screen.get("raw_image_base64", "")
-        content_list = parsed_screen.get("parsed_content_list", [])
-
-        if not som_b64 and raw_b64:
-            omni_result = self._parse_screen(raw_b64)
-            som_b64 = omni_result.get("som_image_base64", "")
-            if not content_list:
-                content_list = omni_result.get("parsed_content_list", [])
-
-        img_b64 = som_b64 or raw_b64
-
-        # Build OCR context block from structured screen info when available.
-        ocr_text = parsed_screen.get("screen_info", "")
-        compact = ""
-        if not ocr_text and content_list:
-            compact = self.compact_screen_elements(
-                content_list,
-                screen_width=parsed_screen.get("screen_width", 1920),
-                screen_height=parsed_screen.get("screen_height", 1080),
-            )
-
-        ocr_block = (
-            f"Parsed screen elements (OCR):\n{compact}\n\n"
-            if compact else ocr_text
-        )
-
-        fields_lines = [
-            f"- {name}: {constraint}" if constraint else f"- {name}"
-            for name, constraint in fields.items()
-        ]
-        fields_block = "\n".join(fields_lines)
-
-        user_text = EXTRACTION_PROMPT.format(
-            ocr_block=ocr_block,
-            fields_block=fields_block,
-        )
-
-        content: List[Any] = []
-        if img_b64:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{img_b64}"},
-            })
-        content.append({"type": "text", "text": user_text})
-
-        try:
-            response_text, _ = self.llm_client.generate(
-                messages=[{"role": "user", "content": content}],
-                system_prompt=EXTRACTION_SYSTEM_PROMPT,
-            )
-            raw = self._extract_data(response_text, "json") or response_text
-            result = _json.loads(raw)
-            if isinstance(result, dict):
-                return {f: str(result.get(f, "null")) for f in fields}
-            return fallback
-        except Exception as exc:
-            logger.warning("_read_fields_via_ocr: extraction failed: %s", exc)
-            return fallback
-
-    def _scale_to_screen(
-        self,
-        x: float,
-        y: float,
-        parsed_screen: Dict[str, Any],
-    ) -> tuple:
-        """Scale GTA1 coords (resized-image space) to actual screen space.
-
-        Args:
-            x: X coordinate in resized-image space.
-            y: Y coordinate in resized-image space.
-            parsed_screen: Screen dict with ``resized_screen_width/height``
-                and ``screen_width/height`` keys.
-
-        Returns:
-            ``(screen_x, screen_y)`` rounded to the nearest pixel.
-        """
-        resized_w = parsed_screen.get("resized_screen_width") or parsed_screen.get("screen_width", 1)
-        resized_h = parsed_screen.get("resized_screen_height") or parsed_screen.get("screen_height", 1)
-        screen_w = parsed_screen.get("screen_width", resized_w)
-        screen_h = parsed_screen.get("screen_height", resized_h)
-        sx = round(x * screen_w / resized_w) if resized_w else round(x)
-        sy = round(y * screen_h / resized_h) if resized_h else round(y)
-        return sx, sy
+    # ------------------------------------------------------------------
+    # Field extraction
+    # ------------------------------------------------------------------
 
     def _read_field_via_clipboard(
         self,
@@ -696,7 +825,7 @@ class BaseAgent(ABC):
         x, y = self._scale_to_screen(rx, ry, parsed_screen)
 
         logger.debug(
-            "_read_field_via_clipboard: %r grounded at resized (%s, %s) → screen (%s, %s)",
+            "_read_field_via_clipboard: %r grounded at resized (%s, %s) -> screen (%s, %s)",
             field_name, rx, ry, x, y,
         )
         try:
@@ -767,89 +896,24 @@ class BaseAgent(ABC):
             return ocr_str
         return result
 
-    def _read_fields(
-        self,
-        parsed_screen: Dict[str, Any],
-        fields: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, str]:
-        """Extract multiple field values from the screen.
-
-        .. deprecated::
-            The main agentic loop no longer calls this method. Mid-loop values
-            come directly from the LLM response; post-loop correction uses
-            :meth:`_correct_field_via_clipboard`. This method is kept for
-            compatibility only.
-
-        Args:
-            parsed_screen: Screen data dict from :meth:`_capture_screen`.
-            fields: ``{field_name: description}`` mapping. Defaults to
-                ``self.extract_fields``.
-
-        Returns:
-            ``{field_name: value}`` dict.
-        """
-        fields = fields if fields is not None else (self.extract_fields or {})
-        if not fields:
-            return {}
-
-        raw_b64 = parsed_screen.get("raw_image_base64", "")
-        use_clipboard = self.gta1_client is not None and bool(raw_b64)
-
-        if self.gta1_client is not None and not raw_b64:
-            logger.warning("_read_fields: no raw screenshot — falling back to OCR")
-
-        if use_clipboard:
-            results: Dict[str, str] = {}
-            for field_name, description in fields.items():
-                results[field_name] = self._read_field_via_clipboard(
-                    field_name, description, parsed_screen
-                )
-            return results
-
-        return self._read_fields_via_ocr(parsed_screen, fields)
-
-    @staticmethod
-    def compact_screen_elements(
-        parsed_content_list: list,
-        screen_width: int = 1920,
-        screen_height: int = 1080,
-    ) -> str:
-        """Return a compact, ID-indexed summary of detected screen elements.
-
-        Each line includes the pixel centroid ``(cx, cy)`` calculated from the
-        normalised bounding box so the LLM can reason about element positions.
-        """
-        if not parsed_content_list:
-            return "(no elements)"
-        lines = []
-        for idx, elem in enumerate(parsed_content_list):
-            elem_type = elem.get("type", "unknown")
-            interactive = elem.get("interactivity", False)
-            content = elem.get("content") or ""
-            bbox = elem.get("bbox")
-            if bbox and len(bbox) == 4:
-                cx = int((bbox[0] + bbox[2]) / 2 * screen_width)
-                cy = int((bbox[1] + bbox[3]) / 2 * screen_height)
-                pos = f" @ ({cx}, {cy})px"
-            else:
-                pos = ""
-            lines.append(
-                f'{idx}: {elem_type}, interactive={interactive}{pos}, "{content}"'
-            )
-        return "\n".join(lines)
-
-    @staticmethod
-    def _format_tool_result(tool_name: str, output: str, error: str) -> str:
-        parts = []
-        if output:
-            parts.append(output)
-        if error:
-            parts.append(f"ERROR: {error}")
-        detail = " | ".join(parts) if parts else "(no output)"
-        return f"Tool {tool_name}: {detail}"
+    # ------------------------------------------------------------------
+    # Trajectory
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _extract_primary_action(tool_calls: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Extract the primary action and coordinate from a list of tool calls.
+
+        Ignores ``mouse_move`` calls when determining the primary action type
+        so that the meaningful action (e.g. ``left_click``) is returned.
+
+        Args:
+            tool_calls: List of tool-call dicts from the agent plan.
+
+        Returns:
+            Dict with keys ``"action"`` (str or None) and ``"coordinate"``
+            (tuple or None).
+        """
         primary_action = None
         coordinate = None
         for tc in tool_calls:
@@ -860,6 +924,15 @@ class BaseAgent(ABC):
         return {"action": primary_action, "coordinate": coordinate}
 
     def _format_recent_actions(self, n: int = 5) -> str:
+        """Return a human-readable summary of the most recent trajectory steps.
+
+        Args:
+            n: Number of most-recent steps to include.
+
+        Returns:
+            Multi-line string with one entry per step, or
+            ``"(no actions taken yet)"`` when the trajectory is empty.
+        """
         trajectory = self.working_memory.trajectory
         if not trajectory:
             return "(no actions taken yet)"
@@ -876,24 +949,15 @@ class BaseAgent(ABC):
             )
         return "\n".join(lines)
 
-    def _detect_repeated_actions(self, threshold: int = 3) -> bool:
-        trajectory = self.working_memory.trajectory
-        if len(trajectory) < threshold:
-            return False
-        recent = trajectory[-threshold:]
-        infos = [self._extract_primary_action(e.get("tool_calls", [])) for e in recent]
-        actions = [i["action"] for i in infos]
-        if len(set(actions)) != 1:
-            return False
-        coords = [i["coordinate"] for i in infos if i.get("coordinate")]
-        if len(coords) == threshold:
-            ref = coords[0]
-            for c in coords[1:]:
-                if abs(c[0] - ref[0]) > 50 or abs(c[1] - ref[1]) > 50:
-                    return False
-        return True
-
     def _save_trajectory_step(self, plan_response: Dict[str, Any]):
+        """Append the current step data to the in-memory trajectory and disk log.
+
+        Writes one JSON object per line to ``<save_folder>/trajectory.json``.
+
+        Args:
+            plan_response: Dict with keys ``"response_text"``, ``"tool_calls"``,
+                ``"metadata"``, and ``"cost"`` from the plan LLM call.
+        """
         step_data = {
             "step": self.step_count,
             "timestamp": datetime.now().isoformat(),
