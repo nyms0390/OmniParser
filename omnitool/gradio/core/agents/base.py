@@ -57,6 +57,10 @@ class WorkingMemory:
         checklist: Task plan with per-step statuses.
         trajectory: Ordered list of step data dicts (action history).
         parsed_screen: Most recent captured screen state.
+        plan_steps: Per-step curated message lists for plan context.
+            Each element is one loop iteration's messages (agent plan,
+            tool results, screen readings, REFLECT checklist progress, hints).
+            The plan LLM reads the last ``context_n`` steps flattened.
     """
 
     task: Optional[str] = None
@@ -65,6 +69,7 @@ class WorkingMemory:
     checklist: Optional["Checklist"] = None
     trajectory: List[Dict[str, Any]] = field(default_factory=list)
     parsed_screen: Optional[Dict[str, Any]] = None
+    plan_steps: List[List[Dict[str, Any]]] = field(default_factory=list)
 
 
 class BaseAgent(ABC):
@@ -470,6 +475,20 @@ class BaseAgent(ABC):
     # Message & context helpers
     # ------------------------------------------------------------------
 
+    def _plan_add(self, role: str, content: str) -> None:
+        """Append a message to the current plan step.
+
+        Creates a new step if ``plan_steps`` is empty. This is the only
+        method that should write to ``working_memory.plan_steps``.
+
+        Args:
+            role: Message role (``"user"``, ``"assistant"``, or ``"system"``).
+            content: Message text content.
+        """
+        if not self.working_memory.plan_steps:
+            self.working_memory.plan_steps.append([])
+        self.working_memory.plan_steps[-1].append({"role": role, "content": content})
+
     @staticmethod
     def _strip_images(msg: Dict[str, Any]) -> Dict[str, Any]:
         """Return a shallow copy of *msg* with all ``image_url`` blocks removed.
@@ -611,14 +630,23 @@ class BaseAgent(ABC):
 
         return checklist
 
-    def _reflect(self, messages: List[Dict[str, Any]]) -> None:
+    def _reflect(
+        self,
+        messages: List[Dict[str, Any]],
+        screen_after: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Run the Reflect LLM call; updates working_memory in place.
 
         Evaluates task progress, updates the ledger, and applies any
-        checklist status changes returned by the LLM.
+        checklist status changes returned by the LLM. When *screen_after*
+        is provided the screen image is appended to the prompt so the LLM
+        can visually verify that the last checklist step was fulfilled.
 
         Args:
             messages: Current conversation history from ``AppState.chat``.
+            screen_after: Optional post-action screen capture dict. When
+                provided, the SOM (or raw) image is injected into the
+                prompt before the REFLECT question.
         """
         wm = self.working_memory
         parts = []
@@ -637,6 +665,21 @@ class BaseAgent(ABC):
             working_memory_section=working_memory_section,
         )
         ledger_messages = copy.deepcopy(messages)
+
+        if screen_after:
+            img_b64 = (
+                screen_after.get("som_image_base64")
+                or screen_after.get("raw_image_base64", "")
+            )
+            if img_b64:
+                ledger_messages.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                    }],
+                })
+
         ledger_messages.append({"role": "user", "content": ledger_prompt})
 
         response_text, metadata = self.llm_client.generate(
@@ -690,12 +733,21 @@ class BaseAgent(ABC):
                     k: v for k, v in tool_call.items()
                     if k not in ("tool", "action")
                 }
+                logger.info(
+                    "ACT [%s] — input: %s",
+                    label,
+                    {k: v for k, v in tool_kwargs.items() if k != "image"},
+                )
                 result = tool.run(tool_call.get("action"), **tool_kwargs)
                 if hasattr(result, "error") and result.error:
                     logger.info("ACT [%s] FAILED — %s", label, result.error)
                 else:
-                    logger.info("ACT [%s] OK", label)
-                logger.debug("ACT [%s] output: %s", label, getattr(result, "output", result))
+                    output_preview = str(getattr(result, "output", result) or "")
+                    logger.info(
+                        "ACT [%s] OK — output: %s",
+                        label,
+                        output_preview[:200] if output_preview else "(no output)",
+                    )
                 results.append({"tool": tool_name, "status": "success", "result": result})
             except Exception as exc:
                 logger.error("Tool execution failed for %s: %s", tool_name, exc)
@@ -1010,6 +1062,12 @@ class BaseAgent(ABC):
             }
 
             # ---- INIT (mode-specific, runs once) ----
+            # Seed the plan context with the user's task (step 0).
+            self.working_memory.plan_steps.append([])
+            if self.state.chat.messages:
+                user_task_msg = self.state.chat.messages[0]
+                self._plan_add(user_task_msg["role"], str(user_task_msg["content"]))
+
             if self.mode == AgentMode.ORCHESTRATED:
                 yield {"type": "status", "message": "Generating plan..."}
                 self.working_memory.checklist = self._generate_plan(
@@ -1017,10 +1075,15 @@ class BaseAgent(ABC):
                 )
                 _n_steps = len(self.working_memory.checklist.items)
                 logger.info("Plan generated OK — %d steps", _n_steps)
+                logger.info(
+                    "Checklist: %s",
+                    [item.step for item in self.working_memory.checklist.items],
+                )
                 plan_text = self.working_memory.checklist.to_prompt_text()
                 self.state.chat.add_message(
                     "assistant", json.dumps(self.working_memory.checklist.to_dict())
                 )
+                self._plan_add("assistant", plan_text)
                 yield {
                     "type": "plan",
                     "plan_text": plan_text,
@@ -1032,7 +1095,12 @@ class BaseAgent(ABC):
                 self.working_memory.checklist = self._load_task_checklist(self.state.chat.messages)
                 _n_steps = len(self.working_memory.checklist.items)
                 logger.info("Task checklist loaded OK — %d steps", _n_steps)
+                logger.info(
+                    "Checklist: %s",
+                    [item.step for item in self.working_memory.checklist.items],
+                )
                 plan_text = self.working_memory.checklist.to_prompt_text()
+                self._plan_add("assistant", plan_text)
                 yield {
                     "type": "plan",
                     "plan_text": plan_text,
@@ -1042,70 +1110,30 @@ class BaseAgent(ABC):
             # ---- Main loop ----
             while self.step_count < self.max_steps:
                 self.update_step_count()
+                self.working_memory.plan_steps.append([])
+                logger.info(
+                    "─── Step %d/%d ────────────────────────────────",
+                    self.step_count, self.max_steps,
+                )
                 yield {"type": "step", "step_num": self.step_count}
-
-                # ---- REFLECT (Orchestrated/Task, step 2+) ----
-                if (
-                    self.mode in (AgentMode.ORCHESTRATED, AgentMode.TASK)
-                    and self.step_count > 1
-                ):
-                    yield {"type": "status", "message": "Reflecting..."}
-                    self._reflect(self.state.chat.messages)
-                    self.state.chat.add_message("assistant", self.working_memory.ledger)
-                    yield {
-                        "type": "ledger",
-                        "ledger_text": self.working_memory.ledger,
-                        "checklist": (
-                            self.working_memory.checklist.to_dict()
-                            if self.working_memory.checklist else None
-                        ),
-                    }
-
-                    try:
-                        ledger_json = json.loads(self.working_memory.ledger)
-                        task_done = ledger_json.get("is_request_satisfied", {}).get("answer")
-                        checklist_done = (
-                            self.working_memory.checklist
-                            and self.working_memory.checklist.all_done()
-                        )
-                        if task_done or checklist_done:
-                            logger.info(
-                                "Reflect OK — task complete (task_done=%s checklist_done=%s)",
-                                task_done, checklist_done,
-                            )
-                            yield {"type": "assistant_reply", "message": "Task completed."}
-                            break
-
-                        if ledger_json.get("is_in_loop", {}).get("answer"):
-                            loop_reason = ledger_json["is_in_loop"].get("reason", "")
-                            suggestion = ledger_json.get("next_step_hint", {}).get("answer", "")
-                            logger.info("Reflect OK — loop detected: %s", loop_reason)
-                            corrective_hint = (
-                                f"LOOP DETECTED: {loop_reason} "
-                                "You MUST try a different action or target. "
-                            )
-                            if suggestion:
-                                corrective_hint += f"Suggested next step: {suggestion}"
-                            self.state.chat.add_message("system", corrective_hint)
-                            yield {
-                                "type": "status",
-                                "message": (
-                                    "Loop detected — injecting corrective hint: "
-                                    + (suggestion or loop_reason)
-                                ),
-                            }
-                        else:
-                            logger.info("Reflect OK — continuing")
-                    except (json.JSONDecodeError, TypeError):
-                        pass
 
                 # ---- PLAN ----
                 yield {"type": "status", "message": f"Step {self.step_count}: Planning..."}
 
-                context_messages = list(self.state.chat.get_last_n_messages(self.context_n))
+                context_messages = [
+                    msg
+                    for step in self.working_memory.plan_steps[-self.context_n:]
+                    for msg in step
+                ]
                 if self.working_memory.checklist:
                     active = self.working_memory.checklist.get_active()
                     if active:
+                        logger.info(
+                            "PLAN — active step [%d]: %s%s",
+                            active.id,
+                            active.step,
+                            f" — {active.verification_hint}" if active.verification_hint else "",
+                        )
                         context_messages.append({
                             "role": "user",
                             "content": (
@@ -1129,6 +1157,18 @@ class BaseAgent(ABC):
 
                 tool_calls, read_fields = self._parse_response(response_text)
 
+                logger.info(
+                    "PLAN — tokens=%d cost=$%.6f | response: %s",
+                    tokens, cost, response_text[:400] if response_text else "(empty)",
+                )
+                logger.info(
+                    "PLAN — tool calls: %s",
+                    [
+                        "%s.%s" % (tc.get("tool"), tc.get("action", ""))
+                        for tc in tool_calls
+                    ] if tool_calls else "(none)",
+                )
+
                 # ---- READ_FIELDS — process immediately with the screen LLM was viewing ----
                 if read_fields:
                     new_fields = {k: v for k, v in read_fields.items() if k not in self.working_memory.facts}
@@ -1149,21 +1189,18 @@ class BaseAgent(ABC):
                         else:
                             self.working_memory.facts.update(new_fields)
                             stored = new_fields
-                        self.state.chat.add_message(
-                            "system",
-                            f"<screen_reading>\n{json.dumps(stored, indent=2)}\n</screen_reading>",
+                        screen_reading_msg = (
+                            f"<screen_reading>\n{json.dumps(stored, indent=2)}\n</screen_reading>"
                         )
-                        logger.info("Read fields OK — %s", list(stored.keys()))
-                        logger.debug("Read fields values: %s", stored)
+                        self.state.chat.add_message("system", screen_reading_msg)
+                        self._plan_add("system", screen_reading_msg)
+                        logger.info(
+                            "READ_FIELDS — %s",
+                            json.dumps(stored, ensure_ascii=False),
+                        )
                         yield {"type": "screen_reading", "fields": stored}
 
                 tool_calls, grounding_log = self._ground(tool_calls)
-
-                logger.info(
-                    "Plan OK — tokens=%d cost=$%.6f tool_calls=%d",
-                    tokens, cost, len(tool_calls),
-                )
-                logger.debug("Plan response: %s", response_text)
 
                 if grounding_log:
                     logger.info("Grounding OK — %d coordinate(s) resolved", len(grounding_log))
@@ -1172,11 +1209,13 @@ class BaseAgent(ABC):
                 if response_text:
                     yield {"type": "thinking", "response_text": response_text}
 
+                plan_content = f"[Agent plan] {response_text}" if response_text else response_text
                 self.state.chat.add_message(
                     role="assistant",
-                    content=f"[Agent plan] {response_text}" if response_text else response_text,
+                    content=plan_content,
                     metadata={"tokens": tokens, "cost": cost},
                 )
+                self._plan_add("assistant", plan_content)
 
                 plan_response = {
                     "response_text": response_text,
@@ -1186,78 +1225,174 @@ class BaseAgent(ABC):
                 }
 
                 if not tool_calls:
-                    logger.info("Plan OK — no tool calls, stopping loop")
-                    yield {"type": "assistant_reply", "message": response_text}
-                    break
+                    if self.mode not in (AgentMode.ORCHESTRATED, AgentMode.TASK):
+                        # INTERACTIVE: LLM has answered with no further actions.
+                        logger.info("Plan OK — no tool calls, stopping loop")
+                        yield {"type": "assistant_reply", "message": response_text}
+                        break
+                    # ORCHESTRATED/TASK: LLM stopped acting — run REFLECT to decide.
+                    logger.info("Plan OK — no tool calls; running REFLECT to evaluate completion")
 
-                # ---- ACT ----
-                yield {"type": "status", "message": f"Executing {len(tool_calls)} tool(s)..."}
-                tool_results = self.execute_tool_calls(tool_calls)
+                if tool_calls:
+                    # ---- ACT ----
+                    yield {"type": "status", "message": f"Executing {len(tool_calls)} tool(s)..."}
+                    tool_results = self.execute_tool_calls(tool_calls)
 
-                for result in tool_results:
-                    tool_result_obj = result.get("result")
-                    tool_output = ""
-                    tool_base64_image = ""
-                    tool_error = ""
+                    for result in tool_results:
+                        tool_result_obj = result.get("result")
+                        tool_output = ""
+                        tool_base64_image = ""
+                        tool_error = ""
 
-                    if result.get("status") == "success" and tool_result_obj is not None:
-                        if hasattr(tool_result_obj, "output"):
-                            tool_output = tool_result_obj.output or ""
-                            tool_base64_image = tool_result_obj.base64_image or ""
-                            tool_error = tool_result_obj.error or ""
+                        if result.get("status") == "success" and tool_result_obj is not None:
+                            if hasattr(tool_result_obj, "output"):
+                                tool_output = tool_result_obj.output or ""
+                                tool_base64_image = tool_result_obj.base64_image or ""
+                                tool_error = tool_result_obj.error or ""
+                            else:
+                                tool_output = str(tool_result_obj)
                         else:
-                            tool_output = str(tool_result_obj)
-                    else:
-                        tool_error = result.get("error", "Unknown error")
+                            tool_error = result.get("error", "Unknown error")
 
-                    self.state.chat.add_message(
-                        role="system",
-                        content=self._format_tool_result(result["tool"], tool_output, tool_error),
-                    )
+                        tool_result_msg = self._format_tool_result(result["tool"], tool_output, tool_error)
+                        self.state.chat.add_message(role="system", content=tool_result_msg)
+                        self._plan_add("system", tool_result_msg)
+                        yield {
+                            "type": "action_result",
+                            "tool": result.get("tool", "unknown"),
+                            "output": tool_output,
+                            "error": tool_error,
+                            "base64_image": tool_base64_image,
+                        }
+
+                    self._save_trajectory_step(plan_response)
+
+                    # ---- VERIFY ----
+                    yield {"type": "status", "message": "Verifying action effect..."}
+                    if self.action_delay > 0:
+                        time.sleep(self.action_delay)
+                    screen_after = self._capture_screen()
                     yield {
-                        "type": "action_result",
-                        "tool": result.get("tool", "unknown"),
-                        "output": tool_output,
-                        "error": tool_error,
-                        "base64_image": tool_base64_image,
+                        "type": "parsed_screen",
+                        "som_image_base64": screen_after.get("som_image_base64", ""),
+                        "raw_image_base64": screen_after.get("raw_image_base64", ""),
+                        "screen_info": str(screen_after.get("parsed_content_list", [])),
                     }
 
-                self._save_trajectory_step(plan_response)
+                    verify = self._verify_step(tool_results, screen_after)
+                    _changed = not verify["screen_unchanged"]
+                    logger.info("Verify OK — screen_changed=%s has_error=%s", _changed, verify["has_error"])
 
-                # ---- VERIFY ----
-                yield {"type": "status", "message": "Verifying action effect..."}
-                if self.action_delay > 0:
-                    time.sleep(self.action_delay)
-                screen_after = self._capture_screen()
-                yield {
-                    "type": "parsed_screen",
-                    "som_image_base64": screen_after.get("som_image_base64", ""),
-                    "raw_image_base64": screen_after.get("raw_image_base64", ""),
-                    "screen_info": str(screen_after.get("parsed_content_list", [])),
-                }
+                    if verify["screen_unchanged"]:
+                        hint = (
+                            "ACTION HAD NO VISIBLE EFFECT — the screen did not change after "
+                            "this step. Try a different target or action type."
+                        )
+                        self.state.chat.add_message("system", hint)
+                        self._plan_add("system", hint)
+                        yield {"type": "status", "message": "Verify: screen unchanged after action."}
+                        logger.warning("Step %d: screen unchanged after action.", self.step_count)
 
-                verify = self._verify_step(tool_results, screen_after)
-                _changed = not verify["screen_unchanged"]
-                logger.info("Verify OK — screen_changed=%s has_error=%s", _changed, verify["has_error"])
+                    if verify["is_repeated"]:
+                        yield {
+                            "type": "assistant_reply",
+                            "message": (
+                                "Stopping — repeated identical action detected "
+                                "with no progress."
+                            ),
+                        }
+                        break
 
-                if verify["screen_unchanged"]:
-                    hint = (
-                        "ACTION HAD NO VISIBLE EFFECT — the screen did not change after "
-                        "this step. Try a different target or action type."
-                    )
-                    self.state.chat.add_message("system", hint)
-                    yield {"type": "status", "message": "Verify: screen unchanged after action."}
-                    logger.warning("Step %d: screen unchanged after action.", self.step_count)
+                else:
+                    # No tool calls in ORCHESTRATED/TASK — use current screen for REFLECT.
+                    screen_after = self.working_memory.parsed_screen
 
-                if verify["is_repeated"]:
+                # ---- REFLECT (post-action or post-no-tool-calls, Orchestrated/Task) ----
+                if self.mode in (AgentMode.ORCHESTRATED, AgentMode.TASK):
+                    yield {"type": "status", "message": "Reflecting..."}
+                    self._reflect(self.state.chat.messages, screen_after=screen_after)
+                    self.state.chat.add_message("assistant", self.working_memory.ledger)
                     yield {
-                        "type": "assistant_reply",
-                        "message": (
-                            "Stopping — repeated identical action detected "
-                            "with no progress."
+                        "type": "ledger",
+                        "ledger_text": self.working_memory.ledger,
+                        "checklist": (
+                            self.working_memory.checklist.to_dict()
+                            if self.working_memory.checklist else None
                         ),
                     }
-                    break
+
+                    # Feed updated checklist progress into plan context.
+                    if self.working_memory.checklist:
+                        self._plan_add(
+                            "assistant",
+                            self.working_memory.checklist.to_prompt_text(),
+                        )
+
+                    try:
+                        ledger_json = json.loads(self.working_memory.ledger)
+                        task_done = ledger_json.get("is_request_satisfied", {}).get("answer")
+                        satisfied_reason = ledger_json.get("is_request_satisfied", {}).get("reason", "")
+                        next_step = ledger_json.get("next_step_hint", {}).get("answer", "")
+                        checklist_done = (
+                            self.working_memory.checklist
+                            and self.working_memory.checklist.all_done()
+                        )
+                        logger.info(
+                            "REFLECT — satisfied=%s (reason: %s) | next=%s",
+                            task_done,
+                            satisfied_reason[:150] if satisfied_reason else "",
+                            next_step[:100] if next_step else "",
+                        )
+                        if self.working_memory.checklist:
+                            logger.info(
+                                "REFLECT — checklist: %s",
+                                {item.id: item.status for item in self.working_memory.checklist.items},
+                            )
+                        if task_done and checklist_done:
+                            logger.info(
+                                "Reflect OK — task complete (task_done=%s checklist_done=%s)",
+                                task_done, checklist_done,
+                            )
+                            yield {"type": "assistant_reply", "message": "Task completed."}
+                            break
+
+                        if not tool_calls:
+                            # LLM stopped acting but task is not confirmed complete.
+                            stalled_hint = (
+                                "You stopped acting but the task is not yet complete. "
+                                "Review the checklist and continue with the next pending step."
+                            )
+                            self.state.chat.add_message("system", stalled_hint)
+                            self._plan_add("system", stalled_hint)
+                            logger.warning(
+                                "Step %d: no tool calls but task not done — injecting hint.",
+                                self.step_count,
+                            )
+                            yield {"type": "status", "message": "No actions taken — injecting continuation hint."}
+
+                        if ledger_json.get("is_in_loop", {}).get("answer"):
+                            loop_reason = ledger_json["is_in_loop"].get("reason", "")
+                            suggestion = ledger_json.get("next_step_hint", {}).get("answer", "")
+                            logger.info("Reflect OK — loop detected: %s", loop_reason)
+                            corrective_hint = (
+                                f"LOOP DETECTED: {loop_reason} "
+                                "You MUST try a different action or target. "
+                            )
+                            if suggestion:
+                                corrective_hint += f"Suggested next step: {suggestion}"
+                            self.state.chat.add_message("system", corrective_hint)
+                            self._plan_add("system", corrective_hint)
+                            yield {
+                                "type": "status",
+                                "message": (
+                                    "Loop detected — injecting corrective hint: "
+                                    + (suggestion or loop_reason)
+                                ),
+                            }
+                        else:
+                            logger.info("Reflect OK — continuing")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
 
                 self.working_memory.parsed_screen = screen_after
                 yield {
