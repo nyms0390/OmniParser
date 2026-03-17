@@ -1333,10 +1333,13 @@ class BaseAgent(ABC):
                         task_done = ledger_json.get("is_request_satisfied", {}).get("answer")
                         satisfied_reason = ledger_json.get("is_request_satisfied", {}).get("reason", "")
                         next_step = ledger_json.get("next_step_hint", {}).get("answer", "")
+                        screen_obs = ledger_json.get("screen_observation", "")
                         checklist_done = (
                             self.working_memory.checklist
                             and self.working_memory.checklist.all_done()
                         )
+                        if screen_obs:
+                            logger.info("REFLECT — screen: %s", screen_obs[:200])
                         logger.info(
                             "REFLECT — satisfied=%s (reason: %s) | next=%s",
                             task_done,

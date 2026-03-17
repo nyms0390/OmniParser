@@ -349,20 +349,41 @@ Recall we are working on the following request:
 {task}
 
 {working_memory_section}\
-To make progress on the request, please answer the following questions, including necessary reasoning:
+A screenshot of the current screen state (taken after the most recent action) is attached above. \
+Use it as the primary source of truth for what has actually happened on screen.
 
-    - Is the request fully satisfied? (True if complete, or False if the original request has yet to be SUCCESSFULLY and FULLY addressed)
-    - Are we in a loop where we are repeating the same requests and / or getting the same responses as before? Carefully examine the recent action history above. A loop includes repeating the SAME action on the SAME element multiple times.
-    - What is the next concrete step to take? If stuck, suggest a DIFFERENT action type or target.
-    - For each checklist item, update its status to reflect current progress (use "done", "in_progress", "pending", or "skipped").
+Answer the following questions in order:
 
-Please output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
+1. SCREEN OBSERVATION — What do you see on the screen right now? Describe the key UI state \
+relevant to the task (e.g. which dialog is open, what text is visible, whether a confirmation \
+appeared, whether an error is shown).
+
+2. CHECKLIST UPDATE — For each checklist item, decide its current status based on what you see:
+   - "done": ONLY if the screen visually confirms this step is complete.
+   - "in_progress": The step was attempted but is not yet confirmed on screen.
+   - "pending": Not yet started.
+   - "skipped": Intentionally bypassed.
+
+3. LOOP DETECTION — Examine the recent action history. Are we repeating the same tool call \
+(same action + same target element) two or more times with no meaningful screen change in between? \
+That constitutes a loop.
+
+4. NEXT STEP — What is the single next concrete action to take? If stuck or in a loop, propose \
+a DIFFERENT action type or a different target element.
+
+5. TASK COMPLETE — Are ALL checklist items "done" AND is the original request fully and \
+successfully satisfied according to the screen? Set to True only when the screen confirms the \
+end state.
+
+Please output an answer in pure JSON format according to the following schema. \
+The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, \
+AND DO NOT DEVIATE FROM THIS SCHEMA:
 
     {{
-        "is_request_satisfied": {{
-            "reason": string,
-            "answer": boolean
-        }},
+        "screen_observation": string,
+        "checklist_updates": [
+            {{"id": integer, "status": "done" | "in_progress" | "pending" | "skipped"}}
+        ],
         "is_in_loop": {{
             "reason": string,
             "answer": boolean
@@ -371,9 +392,10 @@ Please output an answer in pure JSON format according to the following schema. T
             "reason": string,
             "answer": string
         }},
-        "checklist_updates": [
-            {{"id": integer, "status": "done" | "in_progress" | "pending" | "skipped"}}
-        ]
+        "is_request_satisfied": {{
+            "reason": string,
+            "answer": boolean
+        }}
     }}
 """
 # ---------------------------------------------------------------------------
