@@ -22,7 +22,7 @@ import base64
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, Generator, Tuple
+from typing import Dict, Generator, Optional, Tuple
 
 import gradio as gr
 from PIL import Image
@@ -35,6 +35,8 @@ from omnitool.gradio.config import (
     create_argument_parser,
     get_settings,
     setup_logging,
+    TaskProcedure,
+    load_task_template,
 )
 from omnitool.gradio.core import (
     create_agent,
@@ -193,6 +195,16 @@ class GradioApp:
                         show_label=True,
                     )
 
+                # YAML task template upload — visible only in TASK mode
+                yaml_template_state = gr.State(None)
+                with gr.Row():
+                    yaml_upload = gr.File(
+                        label="Task Template (YAML) — TASK mode only",
+                        file_count="single",
+                        file_types=[".yaml", ".yml"],
+                        visible=False,
+                    )
+
             # Capture initial screenshot on app load (non-blocking)
             interface.load(
                 fn=self.on_app_load,
@@ -223,6 +235,7 @@ class GradioApp:
                     context_n_slider,
                     max_steps_slider,
                     extract_fields_input,
+                    yaml_template_state,
                 ],
                 outputs=[
                     chatbot,
@@ -230,6 +243,18 @@ class GradioApp:
                     status_text,
                     state_var,
                 ],
+            )
+
+            mode_dropdown.change(
+                fn=self.on_mode_change,
+                inputs=[mode_dropdown],
+                outputs=[yaml_upload],
+            )
+
+            yaml_upload.change(
+                fn=self.on_yaml_upload,
+                inputs=[yaml_upload],
+                outputs=[yaml_template_state],
             )
 
             file_upload.change(
@@ -302,6 +327,7 @@ class GradioApp:
         context_n: int,
         max_steps: int,
         extract_fields_raw: str,
+        yaml_template,
     ) -> Generator:
         """Handle submit button click.
 
@@ -323,6 +349,13 @@ class GradioApp:
             state = AppState(run_folder=Path(self.settings.run_folder))
 
         history = list(chatbot_history) if chatbot_history else []
+
+        # When a YAML template is loaded in TASK mode, override message and extract_fields.
+        if yaml_template is not None and mode == AgentMode.TASK.value:
+            message = yaml_template.to_task_string()
+            extract_fields_raw = "\n".join(
+                f"{k}: {v}" for k, v in yaml_template.to_extract_fields().items()
+            )
 
         # Add user message
         state.chat.add_message("user", message)
@@ -525,6 +558,36 @@ class GradioApp:
             logger.error(error_msg, exc_info=True)
             history.append({"role": "assistant", "content": f"[ERROR] {error_msg}"})
             yield history, "", error_msg, state
+
+    def on_mode_change(self, mode: str):
+        """Show/hide the YAML upload widget based on selected mode.
+
+        Args:
+            mode: Selected agent mode string.
+
+        Returns:
+            Gradio update for the yaml_upload component visibility.
+        """
+        return gr.update(visible=(mode == AgentMode.TASK.value))
+
+    def on_yaml_upload(self, file) -> Optional[TaskProcedure]:
+        """Parse an uploaded YAML task template file.
+
+        Args:
+            file: Gradio file object (has a ``.name`` filepath attribute),
+                or None if cleared.
+
+        Returns:
+            Parsed :class:`TaskProcedure` (first procedure), or None.
+        """
+        if file is None:
+            return None
+        try:
+            template = load_task_template(file.name)
+            return template
+        except Exception as exc:
+            logger.warning("Failed to load task template: %s", exc)
+            return None
 
     def on_file_upload(self, state, files) -> Tuple:
         """Handle file upload.

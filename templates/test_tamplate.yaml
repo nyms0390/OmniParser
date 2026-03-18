@@ -1,0 +1,26 @@
+- ID: 1
+  description: This procedure processes the first input and generates an output based on it.
+  inputs:
+    - key: input1
+      value: 12345678
+      # The value field provides a default value for the input. In this case, it is set to 12345678, which is an example of an 8-digit number that meets the specified format requirement.
+      description: This is the first input for the template.
+      format: 8 number digits
+      # The format field specifies the expected format of the input. In this case, it indicates that the input should consist of 8 digits. This can be used for validation purposes to ensure that the input meets the required criteria before processing.
+      required: true
+      # The required field indicates that this input is mandatory for the template to function correctly. If this input is not provided, the template may not work as intended or may produce an error.
+    - key: input2
+      description: This is the second input for the template.
+      format: string
+      required: false
+  outputs:
+    - key: output1
+      description: This is the output generated from processing input1.
+      format: string
+  
+  executions:
+    - type: cua # api or cua
+      system: EPA
+      steps: |
+        1. Process input1 to extract relevant information.
+          - finished coditions: input1 has been successfully processed to extract necessary information.

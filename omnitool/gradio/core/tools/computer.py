@@ -335,13 +335,9 @@ class ComputerTool(BaseTool):
                 parse_output=False
             )
             
-            # Type text and press enter
+            # Type text
             self.windows_host_client.execute_pyautogui_command(
                 f"pyautogui.typewrite('{text}', interval=0.012)",
-                parse_output=False
-            )
-            self.windows_host_client.execute_pyautogui_command(
-                "pyautogui.press('enter')",
                 parse_output=False
             )
             

@@ -187,9 +187,12 @@ class Checklist:
         # Numbered list
         numbered_re = re.compile(r"^\d+[.)]\s+(.+)$")
         items = [
-            ChecklistItem(id=i + 1, step=m.group(1))
-            for i, ln in enumerate(lines)
-            if (m := numbered_re.match(ln))
+            ChecklistItem(id=idx + 1, step=m.group(1))
+            for idx, (_, m) in enumerate(
+                (ln, numbered_re.match(ln))
+                for ln in lines
+                if numbered_re.match(ln)
+            )
         ]
         if items:
             return cls(items=items)
@@ -197,9 +200,12 @@ class Checklist:
         # Bullet list
         bullet_re = re.compile(r"^[-*•]\s+(.+)$")
         items = [
-            ChecklistItem(id=i + 1, step=m.group(1))
-            for i, ln in enumerate(lines)
-            if (m := bullet_re.match(ln))
+            ChecklistItem(id=idx + 1, step=m.group(1))
+            for idx, (_, m) in enumerate(
+                (ln, bullet_re.match(ln))
+                for ln in lines
+                if bullet_re.match(ln)
+            )
         ]
         if items:
             return cls(items=items)

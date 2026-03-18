@@ -51,6 +51,7 @@ from omnitool.gradio.config.settings import (
     load_settings,
     load_yaml_config,
 )
+from omnitool.gradio.config.task_template import TaskProcedure, load_task_template
 
 __all__ = [
     # Constants
@@ -102,4 +103,7 @@ __all__ = [
     "get_settings",
     # Logging
     "setup_logging",
+    # Task template
+    "TaskProcedure",
+    "load_task_template",
 ]
