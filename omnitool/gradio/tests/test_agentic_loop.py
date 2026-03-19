@@ -227,11 +227,12 @@ class TestPromptTemplates:
 
     def test_reflect_prompt_format(self):
         out = REFLECT_PROMPT.format(
-            task="test task",
             working_memory_section="Checklist:\n  ⬜ [1] Step one\n",
-            active_step_section="Currently working on: Step 1\n",
+            active_step_section="step [1]: click Save (verify when done: Save dialog closes)\n\n",
         )
-        assert "test task" in out
+        assert "step [1]" in out
+        assert "SCREEN OBSERVATION" in out
+        assert "CHECKLIST UPDATE" in out
         assert "checklist_updates" in out
         assert "is_request_satisfied" in out
         assert "is_progress_being_made" not in out

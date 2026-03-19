@@ -619,7 +619,6 @@ class BaseAgent(ABC):
 
     def _reflect(
         self,
-        messages: List[Dict[str, Any]],
         screen_after: Optional[Dict[str, Any]] = None,
         active_item: Optional[Any] = None,
     ) -> None:
@@ -627,14 +626,13 @@ class BaseAgent(ABC):
 
         Evaluates task progress, updates the ledger, and applies any
         checklist status changes returned by the LLM. When *screen_after*
-        is provided the screen image is appended to the prompt so the LLM
-        can visually verify that the last checklist step was fulfilled.
+        is provided the screen image is prepended so the model observes
+        the screen before reading the checklist.
 
         Args:
-            messages: Current conversation history from ``AppState.chat``.
             screen_after: Optional post-action screen capture dict. When
-                provided, the SOM (or raw) image is injected into the
-                prompt before the REFLECT question.
+                provided, the SOM (or raw) image is injected before the
+                REFLECT question.
             active_item: The checklist item that was just attempted.
                 Captured before the reflect call so REFLECT evaluates the
                 correct step rather than the next pending one.
@@ -653,24 +651,23 @@ class BaseAgent(ABC):
 
         if active_item:
             hint_line = (
-                f"\nVerify when done: {active_item.verification_hint}"
+                f" (verify when done: {active_item.verification_hint})"
                 if active_item.verification_hint
                 else ""
             )
             active_step_section = (
-                f"The agent just attempted step [{active_item.id}]: "
-                f"{active_item.step}{hint_line}\n\n"
+                f"step [{active_item.id}]: {active_item.step}{hint_line}\n\n"
             )
         else:
-            active_step_section = ""
+            active_step_section = "(no active step)\n\n"
 
         ledger_prompt = REFLECT_PROMPT.format(
-            task=wm.task or "",
             working_memory_section=working_memory_section,
             active_step_section=active_step_section,
         )
-        ledger_messages = copy.deepcopy(messages)
 
+        # Minimal context: screen image first (unbiased observation), then prompt.
+        ledger_messages: List[Dict[str, Any]] = []
         if screen_after:
             img_b64 = (
                 screen_after.get("som_image_base64")
@@ -1309,7 +1306,6 @@ class BaseAgent(ABC):
                         if self.working_memory.checklist else None
                     )
                     self._reflect(
-                        self.state.chat.messages,
                         screen_after=screen_after,
                         active_item=active_before_reflect,
                     )

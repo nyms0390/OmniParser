@@ -327,48 +327,37 @@ Provide clear, structured responses in the requested JSON format.\
 """
 
 REFLECT_PROMPT = """\
-Recall we are working on the following request:
+The agent just attempted: {active_step_section}\
+A screenshot of the screen state after the action is attached above. \
+Commit to describing what you actually see before consulting anything else.
 
-{task}
+STEP 1 — SCREEN OBSERVATION
+Describe the current screen state in detail: which window/dialog is in focus, what text \
+is visible, any confirmation messages, error banners, or changed UI elements. \
+Be strictly observational — do not infer intent or assume success.
 
 {working_memory_section}\
-A screenshot of the current screen state (taken after the most recent action) is attached above. \
-Use it as the primary source of truth for what has actually happened on screen.
+Now use your screen observation to answer the following:
 
-{active_step_section}\
-Answer the following questions in order:
-
-1. SCREEN OBSERVATION — What do you see on the screen right now? Describe the key UI state \
-relevant to the task (e.g. which dialog is open, what text is visible, whether a confirmation \
-appeared, whether an error is shown). Be skeptical — look for evidence of the intended result, \
-not merely that an action was taken or that no error appeared.
-
-2. CHECKLIST UPDATE — Evaluate the status of each checklist item based on what you see. \
-Focus primarily on the step that was just attempted (indicated above). \
-For that step: use its "verify when done" criterion to decide if it is truly complete. \
-For other items: only update their status if the screen unambiguously shows a side-effect \
-change — do not speculatively mark items done that were not explicitly attempted.
-   - "done": ONLY if the screen visually confirms this step is complete. Important: a \
-successfully executed action does NOT guarantee correctness — the agent may have clicked the \
-wrong element, entered a wrong value, or acted in the wrong context. Use the step's \
-verify-when-done criterion (if provided) as the specific visual criterion; if no criterion is \
-given, describe what you would expect to see if the step were truly complete before marking done.
-   - "in_progress": The step was attempted but is not yet confirmed on screen.
+STEP 2 — CHECKLIST UPDATE
+Evaluate each checklist item status based solely on what you described above. \
+Focus primarily on the step just attempted. For that step, use its "verify when done" \
+criterion as the specific visual pass/fail test. For other items: only update if the \
+screen unambiguously shows a side-effect change.
+   - "done": ONLY if the screen visually confirms completion per the verify criterion.
+   - "in_progress": Attempted but not yet confirmed on screen.
    - "pending": Not yet started.
    - "skipped": Intentionally bypassed.
 
-3. LOOP DETECTION — Examine the recent action history. Are we repeating the same tool call \
-(same action + same target element) two or more times with no meaningful screen change in between? \
-That constitutes a loop.
+STEP 3 — LOOP DETECTION
+Are the recent actions repeating the same tool call (same action + same target) two or \
+more times with no meaningful screen change? That constitutes a loop.
 
-4. TASK COMPLETE — Are ALL checklist items "done" AND is the original request fully and \
-successfully satisfied according to the screen? Set to True only when the screen confirms the \
-end state. Do not set True if any checklist item was marked "done" based only on action \
-completion rather than visual outcome confirmation.
+STEP 4 — TASK COMPLETE
+Are ALL checklist items "done" AND is the task fully satisfied per the screen? \
+Set True only when the screen confirms the end state.
 
-Please output an answer in pure JSON format according to the following schema. \
-The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, \
-AND DO NOT DEVIATE FROM THIS SCHEMA:
+Output pure JSON only. DO NOT DEVIATE FROM THIS SCHEMA:
 
     {{
         "screen_observation": string,
