@@ -117,14 +117,23 @@ class Checklist:
         """Serialise to a list of dicts (JSON-serialisable)."""
         return [item.to_dict() for item in self.items]
 
-    def to_prompt_text(self) -> str:
-        """Format the checklist as a human-readable progress block."""
+    def to_prompt_text(self, collapse_completed: bool = False) -> str:
+        """Format the checklist as a human-readable progress block.
+
+        Args:
+            collapse_completed: When *True*, done and skipped items are
+                rendered as a single line without the ``verify when done``
+                hint.  Use this for the REFLECT prompt to reduce noise while
+                keeping full detail for pending and in-progress steps.
+        """
         lines = ["Checklist:"]
         for item in self.items:
             sym = _STATUS_SYMBOLS.get(item.status, "⬜")
             lines.append(f"  {sym} [{item.id}] {item.step}")
-            if item.verification_hint:
-                lines.append(f"       hint: {item.verification_hint}")
+            if item.verification_hint and not (
+                collapse_completed and item.status in (DONE, SKIPPED)
+            ):
+                lines.append(f"       verify when done: {item.verification_hint}")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -179,35 +188,59 @@ class Checklist:
         * Bullet lists   — ``- step``, ``* step``, ``• step``
         * Falls back to a single-item checklist for unstructured text.
 
+        A step may be followed by an indented ``verify:`` continuation line
+        that supplies a :attr:`~ChecklistItem.verification_hint`::
+
+            1. Click the Submit button
+               verify: "Success" toast appears at the top of the page
+
         The caller can detect the fallback case by checking
         ``len(checklist.items) == 1``.
         """
-        lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+        raw_lines = text.strip().splitlines()
+        verify_re = re.compile(r"^\s+verify:\s+(.+)$", re.IGNORECASE)
+
+        def _attach_hints(
+            items: List[ChecklistItem],
+            lines: List[str],
+            step_re: re.Pattern,
+        ) -> None:
+            """Walk raw lines; attach indented verify: lines to the preceding step."""
+            item_idx = -1
+            for ln in lines:
+                if step_re.match(ln.strip()):
+                    item_idx += 1
+                else:
+                    m = verify_re.match(ln)
+                    if m and 0 <= item_idx < len(items):
+                        items[item_idx].verification_hint = m.group(1).strip()
 
         # Numbered list
         numbered_re = re.compile(r"^\d+[.)]\s+(.+)$")
         items = [
             ChecklistItem(id=idx + 1, step=m.group(1))
-            for idx, (_, m) in enumerate(
-                (ln, numbered_re.match(ln))
-                for ln in lines
-                if numbered_re.match(ln)
+            for idx, m in enumerate(
+                numbered_re.match(ln.strip())
+                for ln in raw_lines
+                if numbered_re.match(ln.strip())
             )
         ]
         if items:
+            _attach_hints(items, raw_lines, numbered_re)
             return cls(items=items)
 
         # Bullet list
         bullet_re = re.compile(r"^[-*•]\s+(.+)$")
         items = [
             ChecklistItem(id=idx + 1, step=m.group(1))
-            for idx, (_, m) in enumerate(
-                (ln, bullet_re.match(ln))
-                for ln in lines
-                if bullet_re.match(ln)
+            for idx, m in enumerate(
+                bullet_re.match(ln.strip())
+                for ln in raw_lines
+                if bullet_re.match(ln.strip())
             )
         ]
         if items:
+            _attach_hints(items, raw_lines, bullet_re)
             return cls(items=items)
 
         # Single-item fallback

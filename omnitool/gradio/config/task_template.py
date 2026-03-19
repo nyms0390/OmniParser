@@ -122,7 +122,7 @@ class TaskProcedure:
         return "\n".join(parts)
 
     def to_task_string(self) -> str:
-        """Build a task string suitable for ``_load_task_checklist``.
+        """Build a task string suitable for ``_init_checklist_from_template``.
 
         The string contains:
         - Procedure description

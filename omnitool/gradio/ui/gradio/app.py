@@ -415,6 +415,9 @@ class GradioApp:
 
             self.orchestrator = create_agent(**orchestrator_kwargs)
 
+            if yaml_template is not None and mode == AgentMode.TASK.value:
+                self.orchestrator.task_template = yaml_template
+
             # Stream sampling loop updates to the chatbot
             status = "Running..."
             is_first_screen = True  # Auto-expand the initial screen capture

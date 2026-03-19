@@ -8,9 +8,9 @@ Prompts are kept in one place for:
 
 Prompt order mirrors the workflow:
   1. Infrastructure (platform registry, thinking variants)
-  2. Agent system prompts  — used every step (VLM / Anthropic / GTA1)
-  3. Orchestration init    — pre-loop, one-time (planner, task parse, plan)
-  4. Per-step loop         — REFLECT
+  2. Orchestration init    — pre-loop, one-time (checklist generation)
+  3. Agent system prompts  — used every step (VLM / Anthropic / GTA1)
+  4. Per-step loop         — REFLECT (with dedicated REFLECT_SYSTEM_PROMPT)
   5. Post-loop             — result extraction
   6. Builder functions     — assemblers that combine the above
 """
@@ -82,7 +82,42 @@ THINKING_INSTRUCTION_R1 = (
 
 
 # ---------------------------------------------------------------------------
-# 2. Agent system prompts — used every step of the action loop
+# 2. Orchestration init — pre-loop, runs once at the start
+# ---------------------------------------------------------------------------
+
+# System prompt for checklist generation LLM calls.
+CHECKLIST_GEN_SYSTEM_PROMPT = """\
+You are an expert computer automation planner.
+Your role is to analyze tasks and decompose them into structured, \
+verifiable steps for automated computer interactions.
+Provide clear, structured responses in the requested JSON format.\
+"""
+
+# Orchestrator / Task mode: generate the initial checklist.
+CHECKLIST_GEN_PROMPT = """\
+Please devise a step-by-step plan for the following task: {task}
+
+Output a JSON array where each element describes one step and how to verify it. Example:
+```json
+[
+  {{
+    "id": 1,
+    "step": "Open the browser and navigate to the target website",
+    "verification_hint": "Browser is open and the URL bar shows the target domain"
+  }},
+  {{
+    "id": 2,
+    "step": "Click the Login button",
+    "verification_hint": "A login form or dialog is visible on screen"
+  }}
+]
+```
+Keep steps concise and actionable. Output only valid JSON. Start directly.\
+"""
+
+
+# ---------------------------------------------------------------------------
+# 3. Agent system prompts — used every step of the action loop
 # ---------------------------------------------------------------------------
 
 # VLM system prompt (OmniAgent / OpenAI-compatible, SOM box IDs)
@@ -94,16 +129,15 @@ THINKING_INSTRUCTION_R1 = (
 # <screen_elements> tags to prevent prompt injection and keep the system
 # prompt static / cacheable.
 
-VLM_SYSTEM_PROMPT_TEMPLATE = """\
+VLM_SYSTEM_PROMPT = """\
 {platform_description}
 You are able to use a mouse and keyboard to interact with the computer based on the given task and screenshot.
 {interaction_constraints}
 
 For each step, follow this process:
 1. Examine the SOM image to realize what's going on on the screen.
-2. Review the action history to assess what has already been done and whether it succeeded.
-3. Decide the single next action and, when required, the target Box ID.
-4. If you need to capture values from the screen, read them directly and set "read_fields" to a JSON object mapping each field name to its exact value as shown on screen.
+2. Decide the single next action and, when required, the target Box ID.
+3. If you need to capture values from the screen, read them directly and set "read_fields" to a JSON object mapping each field name to its exact value as shown on screen.
 
 Your available "Next Action" only include:
 - type: types a string of text.
@@ -118,7 +152,7 @@ Your available "Next Action" only include:
 Output format:
 ```json
 {{
-    "Reasoning": str, # concise summary of what you see on screen, what history tells you, and why you chose this action.
+    "Reasoning": str, # concise summary of what you see on screen and why you chose this action.
     "Next Action": "action_type, action description" | "None" # one action at a time, describe it briefly.
     "Box ID": n | null, # required for left_click, right_click, double_click, hover, type
     "value": "xxx" | null, # required when action is type
@@ -175,10 +209,9 @@ IMPORTANT NOTES:
 {thinking_instruction}
 3. You should not include other actions, such as keyboard shortcuts.
 4. When the task is completed, say "Next Action": "None".
-5. Avoid choosing the same action/elements multiple times in a row. If it happens, reflect on what may have gone wrong and try a different action or target.
-6. If you encounter a login page, captcha, or an action that requires user permission, say "Next Action": "None".
-7. To open applications from desktop icons or files/folders, always use "double_click". A single click only selects without launching. Use "left_click" for buttons, links, and menu items inside applications.
-8. Strictly follow the output format, do not output any additional explainations.
+5. If you encounter a login page, captcha, or an action that requires user permission, say "Next Action": "None".
+6. To open applications from desktop icons or files/folders, always use "double_click". A single click only selects without launching. Use "left_click" for buttons, links, and menu items inside applications.
+7. Strictly follow the output format, do not output any additional explainations.
 """
 
 
@@ -206,9 +239,8 @@ You are able to use a mouse and keyboard to interact with the computer based on 
 
 For each step, follow this process:
 1. Examine the screenshot to understand the current screen state.
-2. Review the action history to assess what has already been done and whether it succeeded.
-3. Decide the single next action and describe the exact UI element to target.
-4. If you need to capture values from the screen, read them directly and set "read_fields" to a JSON object mapping each field name to its exact value as shown on screen.
+2. Decide the single next action and describe the exact UI element to target.
+3. If you need to capture values from the screen, read them directly and set "read_fields" to a JSON object mapping each field name to its exact value as shown on screen.
 
 Your available "Next Action" only include:
 - type: types a string of text into the currently focused field.
@@ -223,7 +255,7 @@ Your available "Next Action" only include:
 Output format:
 ```json
 {{
-    "Reasoning": str, # concise summary of what you see on screen, what history tells you, and why you chose this action.
+    "Reasoning": str, # concise summary of what you see on screen and why you chose this action.
     "Next Action": "action_type, description of the target element" | "None" # one action at a time.
     "value": "xxx" | null, # required when action is type
     "read_fields": {{"field": "exact value as shown on screen"}} | null, # values you are capturing from the current screen; use null if nothing to capture.
@@ -283,65 +315,16 @@ IMPORTANT NOTES:
 
 
 # ---------------------------------------------------------------------------
-# 3. Orchestration init — pre-loop, runs once at the start
-# ---------------------------------------------------------------------------
-
-# Shared system prompt for all planner LLM calls (plan generation & reflect).
-PLANNER_SYSTEM_PROMPT = """\
-You are an expert computer automation planner.
-Your role is to analyze tasks and screen state to plan or evaluate \
-the progress of automated computer interactions.
-Provide clear, structured responses in the requested JSON format.\
-"""
-
-# Task mode: parse raw user input / checklist into structured steps (first call).
-TASK_PARSE_PROMPT = """\
-The user has provided the following task description or checklist:
-
-{user_text}
-
-Convert it into a structured JSON array of steps, each with a verification hint that \
-describes how to confirm the step is complete. Example format:
-
-```json
-[
-  {{
-    "id": 1,
-    "step": "Concise description of what to do",
-    "verification_hint": "What you would see/check to confirm this step is done"
-  }}
-]
-```
-
-Keep each step concise and actionable. Output only valid JSON. Start directly.\
-"""
-
-# Orchestrator / Task mode: generate the initial action plan.
-PLAN_PROMPT = """\
-Please devise a step-by-step plan for the following task: {task}
-
-Output a JSON array where each element describes one step and how to verify it. Example:
-```json
-[
-  {{
-    "id": 1,
-    "step": "Open the browser and navigate to the target website",
-    "verification_hint": "Browser is open and the URL bar shows the target domain"
-  }},
-  {{
-    "id": 2,
-    "step": "Click the Login button",
-    "verification_hint": "A login form or dialog is visible on screen"
-  }}
-]
-```
-Keep steps concise and actionable. Output only valid JSON. Start directly.\
-"""
-
-
-# ---------------------------------------------------------------------------
 # 4. Per-step loop — runs before each action in orchestrator / task mode
 # ---------------------------------------------------------------------------
+
+# Dedicated system prompt for the reflect step (outcome evaluation).
+REFLECT_SYSTEM_PROMPT = """\
+You are an expert evaluator for computer automation tasks.
+Your role is to assess the outcome of the most recent agent action \
+by examining the screen state and updating the task progress accordingly.
+Provide clear, structured responses in the requested JSON format.\
+"""
 
 REFLECT_PROMPT = """\
 Recall we are working on the following request:
@@ -352,14 +335,24 @@ Recall we are working on the following request:
 A screenshot of the current screen state (taken after the most recent action) is attached above. \
 Use it as the primary source of truth for what has actually happened on screen.
 
+{active_step_section}\
 Answer the following questions in order:
 
 1. SCREEN OBSERVATION — What do you see on the screen right now? Describe the key UI state \
 relevant to the task (e.g. which dialog is open, what text is visible, whether a confirmation \
-appeared, whether an error is shown).
+appeared, whether an error is shown). Be skeptical — look for evidence of the intended result, \
+not merely that an action was taken or that no error appeared.
 
-2. CHECKLIST UPDATE — For each checklist item, decide its current status based on what you see:
-   - "done": ONLY if the screen visually confirms this step is complete.
+2. CHECKLIST UPDATE — Evaluate the status of each checklist item based on what you see. \
+Focus primarily on the step that was just attempted (indicated above). \
+For that step: use its "verify when done" criterion to decide if it is truly complete. \
+For other items: only update their status if the screen unambiguously shows a side-effect \
+change — do not speculatively mark items done that were not explicitly attempted.
+   - "done": ONLY if the screen visually confirms this step is complete. Important: a \
+successfully executed action does NOT guarantee correctness — the agent may have clicked the \
+wrong element, entered a wrong value, or acted in the wrong context. Use the step's \
+verify-when-done criterion (if provided) as the specific visual criterion; if no criterion is \
+given, describe what you would expect to see if the step were truly complete before marking done.
    - "in_progress": The step was attempted but is not yet confirmed on screen.
    - "pending": Not yet started.
    - "skipped": Intentionally bypassed.
@@ -368,12 +361,10 @@ appeared, whether an error is shown).
 (same action + same target element) two or more times with no meaningful screen change in between? \
 That constitutes a loop.
 
-4. NEXT STEP — What is the single next concrete action to take? If stuck or in a loop, propose \
-a DIFFERENT action type or a different target element.
-
-5. TASK COMPLETE — Are ALL checklist items "done" AND is the original request fully and \
+4. TASK COMPLETE — Are ALL checklist items "done" AND is the original request fully and \
 successfully satisfied according to the screen? Set to True only when the screen confirms the \
-end state.
+end state. Do not set True if any checklist item was marked "done" based only on action \
+completion rather than visual outcome confirmation.
 
 Please output an answer in pure JSON format according to the following schema. \
 The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, \
@@ -387,10 +378,6 @@ AND DO NOT DEVIATE FROM THIS SCHEMA:
         "is_in_loop": {{
             "reason": string,
             "answer": boolean
-        }},
-        "next_step_hint": {{
-            "reason": string,
-            "answer": string
         }},
         "is_request_satisfied": {{
             "reason": string,
@@ -492,7 +479,7 @@ def build_vlm_system_prompt(
         THINKING_INSTRUCTION_R1 if is_thinking_model
         else THINKING_INSTRUCTION_STANDARD
     )
-    return VLM_SYSTEM_PROMPT_TEMPLATE.format(
+    return VLM_SYSTEM_PROMPT.format(
         platform_description=pp.description,
         interaction_constraints=pp.constraints,
         thinking_instruction=instruction,

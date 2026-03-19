@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from omnitool.gradio.config import AgentMode
-from omnitool.gradio.config.prompts import PLAN_PROMPT, REFLECT_PROMPT, TASK_PARSE_PROMPT
+from omnitool.gradio.config.prompts import CHECKLIST_GEN_PROMPT, REFLECT_PROMPT
 from omnitool.gradio.core.agents.checklist import Checklist, ChecklistItem
 from omnitool.gradio.app import AppState
 
@@ -51,7 +51,7 @@ def mock_agent(tmp_path):
     agent.update_cost = Mock()
     agent._extract_data = Mock(side_effect=lambda text, fmt: text)
 
-    # LLM client used by _generate_plan / _reflect
+    # LLM client used by _generate_checklist / _reflect
     agent.llm_client = Mock()
     return agent
 
@@ -219,8 +219,8 @@ class TestChecklistToPromptText:
 # ===========================================================================
 
 class TestPromptTemplates:
-    def test_plan_prompt_format(self):
-        out = PLAN_PROMPT.format(task="open notepad")
+    def test_checklist_gen_prompt_format(self):
+        out = CHECKLIST_GEN_PROMPT.format(task="open notepad")
         assert "open notepad" in out
         assert "verification_hint" in out
         assert "id" in out
@@ -228,22 +228,15 @@ class TestPromptTemplates:
     def test_reflect_prompt_format(self):
         out = REFLECT_PROMPT.format(
             task="test task",
-            checklist_section="Checklist:\n  ⬜ [1] Step one",
-            recent_actions="  Step 1: left_click at [100,200]",
+            working_memory_section="Checklist:\n  ⬜ [1] Step one\n",
+            active_step_section="Currently working on: Step 1\n",
         )
         assert "test task" in out
         assert "checklist_updates" in out
         assert "is_request_satisfied" in out
-        assert "next_step_hint" in out
         assert "is_progress_being_made" not in out
         assert "instruction_or_question" not in out
         assert "screen_description" not in out
-        assert "screenshot" not in out.lower()
-
-    def test_task_parse_prompt_format(self):
-        out = TASK_PARSE_PROMPT.format(user_text="do X then Y")
-        assert "do X then Y" in out
-        assert "verification_hint" in out
 
 
 # ===========================================================================

@@ -32,11 +32,12 @@ from omnitool.gradio.clients.external.gta1 import GTA1Client
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import (
     AgentMode,
-    PLAN_PROMPT,
-    PLANNER_SYSTEM_PROMPT,
+    CHECKLIST_GEN_PROMPT,
+    CHECKLIST_GEN_SYSTEM_PROMPT,
     REFLECT_PROMPT,
-    TASK_PARSE_PROMPT,
+    REFLECT_SYSTEM_PROMPT,
     SCREENSHOT_MAX_WIDTH,
+    TaskProcedure,
     get_llm_config,
     get_pricing,
 )
@@ -57,10 +58,9 @@ class WorkingMemory:
         checklist: Task plan with per-step statuses.
         trajectory: Ordered list of step data dicts (action history).
         parsed_screen: Most recent captured screen state.
-        plan_steps: Per-step curated message lists for plan context.
+        plan_steps: Per-step curated message lists for audit / corrective hints.
             Each element is one loop iteration's messages (agent plan,
-            tool results, screen readings, REFLECT checklist progress, hints).
-            The plan LLM reads the last ``context_n`` steps flattened.
+            tool results, screen readings, hints).
     """
 
     task: Optional[str] = None
@@ -97,6 +97,7 @@ class BaseAgent(ABC):
         omniparser_client: Optional[OmniParserClient] = None,
         gta1_client: Optional[GTA1Client] = None,
         provider: Optional[str] = None,
+        task_template: Optional[TaskProcedure] = None,
         **kwargs,
     ):
         self.model_name = model_name
@@ -115,6 +116,7 @@ class BaseAgent(ABC):
         self.extract_fields = extract_fields
         self.omniparser_client = omniparser_client
         self.gta1_client = gta1_client
+        self.task_template = task_template
         self.screenshot_max_width = SCREENSHOT_MAX_WIDTH
 
         # LLM config for cost calculation
@@ -552,17 +554,20 @@ class BaseAgent(ABC):
         """Parse a Checklist from a raw LLM JSON string."""
         return Checklist.from_llm_json(raw_json)
 
-    def _generate_plan(self, messages: List[Dict[str, Any]]) -> Checklist:
-        """Generate an initial plan via an extra LLM call (ORCHESTRATED init).
+    def _generate_checklist(self) -> Checklist:
+        """Generate an initial checklist via LLM from the task description.
 
-        Args:
-            messages: Current conversation history from ``AppState.chat``.
+        Sets ``wm.task`` from the first chat message only when it has not
+        already been set (e.g. by :meth:`_init_checklist_from_template`),
+        so a TASK-mode fallback preserves the template description.
 
         Returns:
             Generated :class:`Checklist` saved to ``<save_folder>/plan.json``.
         """
-        self.working_memory.task = messages[0]["content"] if messages else ""
-        plan_prompt = PLAN_PROMPT.format(task=self.working_memory.task)
+        messages = self.state.chat.messages
+        if not self.working_memory.task:
+            self.working_memory.task = messages[0]["content"] if messages else ""
+        plan_prompt = CHECKLIST_GEN_PROMPT.format(task=self.working_memory.task)
         plan_messages = copy.deepcopy(messages)
 
         initial_screen = self.working_memory.parsed_screen
@@ -583,7 +588,7 @@ class BaseAgent(ABC):
         plan_messages.append({"role": "user", "content": plan_prompt})
         response_text, metadata = self.llm_client.generate(
             messages=plan_messages,
-            system_prompt=PLANNER_SYSTEM_PROMPT,
+            system_prompt=CHECKLIST_GEN_SYSTEM_PROMPT,
         )
         self.update_token_usage(metadata.get("tokens", 0))
         raw_plan = self._extract_data(response_text, "json")
@@ -597,43 +602,26 @@ class BaseAgent(ABC):
 
         return checklist
 
-    def _load_task_checklist(self, messages: List[Dict[str, Any]]) -> Checklist:
-        """Build a Checklist from the user's task message (TASK init).
+    def _init_checklist_from_template(self, template: TaskProcedure) -> Checklist:
+        """Load task description and checklist from a YAML TaskProcedure (TASK mode).
 
-        For multi-line tasks with a single parsed item, calls the LLM again
-        with a dedicated parse prompt to split it into sub-steps.
+        Sets ``wm.task`` to the procedure description and parses checklist
+        items from the template's CUA steps.
 
         Args:
-            messages: Current conversation history from ``AppState.chat``.
+            template: Parsed :class:`TaskProcedure` from the YAML task file.
 
         Returns:
-            :class:`Checklist` for the user's task.
+            :class:`Checklist` built from the template steps.
         """
-        self.working_memory.task = messages[0]["content"] if messages else ""
-        checklist = Checklist.from_user_text(self.working_memory.task)
-
-        raw_lines = [ln for ln in self.working_memory.task.splitlines() if ln.strip()]
-        if len(checklist.items) == 1 and len(raw_lines) > 2:
-            parse_prompt = TASK_PARSE_PROMPT.format(user_text=self.working_memory.task)
-            parse_messages = copy.deepcopy(messages)
-            parse_messages.append({"role": "user", "content": parse_prompt})
-            try:
-                response_text, metadata = self.llm_client.generate(
-                    messages=parse_messages,
-                    system_prompt="",
-                )
-                self.update_token_usage(metadata.get("tokens", 0))
-                raw_json = self._extract_data(response_text, "json")
-                checklist = self._parse_checklist(raw_json)
-            except Exception as exc:
-                logger.warning("LLM task-parse fallback failed: %s", exc)
-
-        return checklist
+        self.working_memory.task = template.description
+        return Checklist.from_user_text(template.to_task_string())
 
     def _reflect(
         self,
         messages: List[Dict[str, Any]],
         screen_after: Optional[Dict[str, Any]] = None,
+        active_item: Optional[Any] = None,
     ) -> None:
         """Run the Reflect LLM call; updates working_memory in place.
 
@@ -647,11 +635,14 @@ class BaseAgent(ABC):
             screen_after: Optional post-action screen capture dict. When
                 provided, the SOM (or raw) image is injected into the
                 prompt before the REFLECT question.
+            active_item: The checklist item that was just attempted.
+                Captured before the reflect call so REFLECT evaluates the
+                correct step rather than the next pending one.
         """
         wm = self.working_memory
         parts = []
         if wm.checklist:
-            parts.append(wm.checklist.to_prompt_text())
+            parts.append(wm.checklist.to_prompt_text(collapse_completed=True))
         if wm.facts:
             facts_lines = "\n".join(f"- {k}: {v}" for k, v in wm.facts.items())
             parts.append(f"Data collected so far:\n{facts_lines}")
@@ -660,9 +651,23 @@ class BaseAgent(ABC):
             parts.append(f"Recent actions:\n{recent_actions}")
         working_memory_section = ("\n\n".join(parts) + "\n\n") if parts else ""
 
+        if active_item:
+            hint_line = (
+                f"\nVerify when done: {active_item.verification_hint}"
+                if active_item.verification_hint
+                else ""
+            )
+            active_step_section = (
+                f"The agent just attempted step [{active_item.id}]: "
+                f"{active_item.step}{hint_line}\n\n"
+            )
+        else:
+            active_step_section = ""
+
         ledger_prompt = REFLECT_PROMPT.format(
             task=wm.task or "",
             working_memory_section=working_memory_section,
+            active_step_section=active_step_section,
         )
         ledger_messages = copy.deepcopy(messages)
 
@@ -684,7 +689,7 @@ class BaseAgent(ABC):
 
         response_text, metadata = self.llm_client.generate(
             messages=ledger_messages,
-            system_prompt=PLANNER_SYSTEM_PROMPT,
+            system_prompt=REFLECT_SYSTEM_PROMPT,
         )
         self.update_token_usage(metadata.get("tokens", 0))
         wm.ledger = self._extract_data(response_text, "json")
@@ -1068,44 +1073,33 @@ class BaseAgent(ABC):
                 user_task_msg = self.state.chat.messages[0]
                 self._plan_add(user_task_msg["role"], str(user_task_msg["content"]))
 
-            if self.mode == AgentMode.ORCHESTRATED:
+            if self.mode == AgentMode.TASK and self.task_template:
+                yield {"type": "status", "message": "Loading task checklist..."}
+                self.working_memory.checklist = self._init_checklist_from_template(
+                    self.task_template
+                )
+
+            # ORCHESTRATED mode, or TASK checklist was empty/invalid → LLM fallback
+            if not self.working_memory.checklist or not self.working_memory.checklist.items:
                 yield {"type": "status", "message": "Generating plan..."}
-                self.working_memory.checklist = self._generate_plan(
-                    self.state.chat.messages
-                )
-                _n_steps = len(self.working_memory.checklist.items)
-                logger.info("Plan generated OK — %d steps", _n_steps)
-                logger.info(
-                    "Checklist: %s",
-                    [item.step for item in self.working_memory.checklist.items],
-                )
-                plan_text = self.working_memory.checklist.to_prompt_text()
+                self.working_memory.checklist = self._generate_checklist()
                 self.state.chat.add_message(
                     "assistant", json.dumps(self.working_memory.checklist.to_dict())
                 )
-                self._plan_add("assistant", plan_text)
-                yield {
-                    "type": "plan",
-                    "plan_text": plan_text,
-                    "checklist": self.working_memory.checklist.to_dict(),
-                }
 
-            elif self.mode == AgentMode.TASK:
-                yield {"type": "status", "message": "Loading task checklist..."}
-                self.working_memory.checklist = self._load_task_checklist(self.state.chat.messages)
-                _n_steps = len(self.working_memory.checklist.items)
-                logger.info("Task checklist loaded OK — %d steps", _n_steps)
-                logger.info(
-                    "Checklist: %s",
-                    [item.step for item in self.working_memory.checklist.items],
-                )
-                plan_text = self.working_memory.checklist.to_prompt_text()
-                self._plan_add("assistant", plan_text)
-                yield {
-                    "type": "plan",
-                    "plan_text": plan_text,
-                    "checklist": self.working_memory.checklist.to_dict(),
-                }
+            _n_steps = len(self.working_memory.checklist.items)
+            logger.info("Checklist ready — %d steps", _n_steps)
+            logger.info(
+                "Checklist: %s",
+                [item.step for item in self.working_memory.checklist.items],
+            )
+            plan_text = self.working_memory.checklist.to_prompt_text()
+            self._plan_add("assistant", plan_text)
+            yield {
+                "type": "plan",
+                "plan_text": plan_text,
+                "checklist": self.working_memory.checklist.to_dict(),
+            }
 
             # ---- Main loop ----
             while self.step_count < self.max_steps:
@@ -1120,11 +1114,7 @@ class BaseAgent(ABC):
                 # ---- PLAN ----
                 yield {"type": "status", "message": f"Step {self.step_count}: Planning..."}
 
-                context_messages = [
-                    msg
-                    for step in self.working_memory.plan_steps[-self.context_n:]
-                    for msg in step
-                ]
+                context_messages = []
                 if self.working_memory.checklist:
                     active = self.working_memory.checklist.get_active()
                     if active:
@@ -1134,15 +1124,17 @@ class BaseAgent(ABC):
                             active.step,
                             f" — {active.verification_hint}" if active.verification_hint else "",
                         )
+                        subtask_lines = [f"Your current subtask: {active.step}"]
+                        if active.verification_hint:
+                            subtask_lines.append(
+                                f"Verify completion by: {active.verification_hint}"
+                            )
+                        subtask_lines.append(
+                            "Focus on this subtask. What single action should you take?"
+                        )
                         context_messages.append({
                             "role": "user",
-                            "content": (
-                                f"Current checklist step [{active.id}]: {active.step}"
-                                + (
-                                    f" — {active.verification_hint}"
-                                    if active.verification_hint else ""
-                                )
-                            ),
+                            "content": "\n".join(subtask_lines),
                         })
 
                 prepared_messages = self._format_messages(context_messages)
@@ -1310,7 +1302,17 @@ class BaseAgent(ABC):
                 # ---- REFLECT (post-action or post-no-tool-calls, Orchestrated/Task) ----
                 if self.mode in (AgentMode.ORCHESTRATED, AgentMode.TASK):
                     yield {"type": "status", "message": "Reflecting..."}
-                    self._reflect(self.state.chat.messages, screen_after=screen_after)
+                    # Capture the active item BEFORE reflect so we identify the step
+                    # that was just attempted, not the next one after checklist update.
+                    active_before_reflect = (
+                        self.working_memory.checklist.get_active()
+                        if self.working_memory.checklist else None
+                    )
+                    self._reflect(
+                        self.state.chat.messages,
+                        screen_after=screen_after,
+                        active_item=active_before_reflect,
+                    )
                     self.state.chat.add_message("assistant", self.working_memory.ledger)
                     yield {
                         "type": "ledger",
@@ -1321,18 +1323,10 @@ class BaseAgent(ABC):
                         ),
                     }
 
-                    # Feed updated checklist progress into plan context.
-                    if self.working_memory.checklist:
-                        self._plan_add(
-                            "assistant",
-                            self.working_memory.checklist.to_prompt_text(),
-                        )
-
                     try:
                         ledger_json = json.loads(self.working_memory.ledger)
                         task_done = ledger_json.get("is_request_satisfied", {}).get("answer")
                         satisfied_reason = ledger_json.get("is_request_satisfied", {}).get("reason", "")
-                        next_step = ledger_json.get("next_step_hint", {}).get("answer", "")
                         screen_obs = ledger_json.get("screen_observation", "")
                         checklist_done = (
                             self.working_memory.checklist
@@ -1341,10 +1335,9 @@ class BaseAgent(ABC):
                         if screen_obs:
                             logger.info("REFLECT — screen: %s", screen_obs[:200])
                         logger.info(
-                            "REFLECT — satisfied=%s (reason: %s) | next=%s",
+                            "REFLECT — satisfied=%s (reason: %s)",
                             task_done,
                             satisfied_reason[:150] if satisfied_reason else "",
-                            next_step[:100] if next_step else "",
                         )
                         if self.working_memory.checklist:
                             logger.info(
@@ -1375,22 +1368,16 @@ class BaseAgent(ABC):
 
                         if ledger_json.get("is_in_loop", {}).get("answer"):
                             loop_reason = ledger_json["is_in_loop"].get("reason", "")
-                            suggestion = ledger_json.get("next_step_hint", {}).get("answer", "")
                             logger.info("Reflect OK — loop detected: %s", loop_reason)
                             corrective_hint = (
                                 f"LOOP DETECTED: {loop_reason} "
-                                "You MUST try a different action or target. "
+                                "You MUST try a different action or target."
                             )
-                            if suggestion:
-                                corrective_hint += f"Suggested next step: {suggestion}"
                             self.state.chat.add_message("system", corrective_hint)
                             self._plan_add("system", corrective_hint)
                             yield {
                                 "type": "status",
-                                "message": (
-                                    "Loop detected — injecting corrective hint: "
-                                    + (suggestion or loop_reason)
-                                ),
+                                "message": "Loop detected — injecting corrective hint: " + loop_reason,
                             }
                         else:
                             logger.info("Reflect OK — continuing")

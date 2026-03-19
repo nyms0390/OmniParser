@@ -335,9 +335,13 @@ class ComputerTool(BaseTool):
                 parse_output=False
             )
             
-            # Type text
+            # Type text and click
             self.windows_host_client.execute_pyautogui_command(
                 f"pyautogui.typewrite('{text}', interval=0.012)",
+                parse_output=False
+            )
+            self.windows_host_client.execute_pyautogui_command(
+                "pyautogui.click()",
                 parse_output=False
             )
             
