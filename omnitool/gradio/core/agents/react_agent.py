@@ -160,11 +160,14 @@ class ReActAgent(BaseAgent):
                     "som_image_base64": screen_data.display_image_b64,
                     "parsed_content_list": screen_data.elements,
                 }
+                # Only set som_image_base64 when OmniParser produced a labeled image.
+                # For GTA1 (no SOM), leave it empty so the UI uses format_raw_screen.
+                has_som = bool(screen_data.elements)
                 yield {
                     "type": "parsed_screen",
-                    "som_image_base64": screen_data.display_image_b64,
+                    "som_image_base64": screen_data.display_image_b64 if has_som else "",
                     "raw_image_base64": screen_data.raw_image_b64,
-                    "screen_info": str(screen_data.elements),
+                    "screen_info": str(screen_data.elements) if has_som else "",
                 }
 
                 # 2. Build user message
@@ -196,6 +199,10 @@ class ReActAgent(BaseAgent):
                     metadata.get("tokens", 0),
                     tool_calls[0].get("name") if tool_calls else "(none)",
                 )
+
+                # Yield the LLM's reasoning text so the UI can display it.
+                if response_text:
+                    yield {"type": "thinking", "response_text": response_text}
 
                 # No tool call — nudge the LLM
                 if not tool_calls:
@@ -236,6 +243,9 @@ class ReActAgent(BaseAgent):
                         "message": result["summary"],
                         "success": result["success"],
                         "facts": self.working_memory.facts,
+                        "total_steps": self.step_count,
+                        "total_tokens": self.total_tokens,
+                        "total_cost": f"${self.total_cost:.4f}",
                     }
                     return
 
@@ -246,25 +256,28 @@ class ReActAgent(BaseAgent):
                     tool_result = f"Grounding error: {exc}"
                     logger.warning("Step %d grounding failed: %s", self.step_count, exc)
                     history.append(_tool_msg(tool_call_id, tool_result))
-                    yield {"type": "action_result", "tool": tool_name, "result": tool_result}
+                    yield {"type": "action_result", "tool": tool_name, "error": tool_result}
                     continue
 
                 tool_results = self.execute_tool_calls([dispatch])
                 res = tool_results[0] if tool_results else {}
                 if res.get("status") == "error":
-                    tool_result = f"Error: {res.get('error', 'unknown')}"
+                    err_text = res.get("error", "unknown error")
+                    history.append(_tool_msg(tool_call_id, f"Error: {err_text}"))
+                    yield {
+                        "type": "action_result",
+                        "tool": dispatch.get("action", tool_name),
+                        "error": err_text,
+                    }
                 else:
                     raw_result = res.get("result")
-                    tool_result = getattr(raw_result, "output", None) or "Done."
-
-                # 7. Append tool result
-                history.append(_tool_msg(tool_call_id, tool_result))
-                yield {
-                    "type": "action_result",
-                    "tool": dispatch.get("tool", tool_name),
-                    "action": dispatch.get("action", tool_name),
-                    "result": tool_result,
-                }
+                    output_text = getattr(raw_result, "output", None) or "Done."
+                    history.append(_tool_msg(tool_call_id, output_text))
+                    yield {
+                        "type": "action_result",
+                        "tool": dispatch.get("action", tool_name),
+                        "output": output_text,
+                    }
 
                 # 8. Compaction (harness-triggered every N steps)
                 if self.step_count % self.compaction_interval == 0:
@@ -281,11 +294,14 @@ class ReActAgent(BaseAgent):
                 "message": f"Stopped: reached {self.max_steps} steps without completing.",
                 "success": False,
                 "facts": self.working_memory.facts,
+                "total_steps": self.step_count,
+                "total_tokens": self.total_tokens,
+                "total_cost": f"${self.total_cost:.4f}",
             }
 
         except Exception as exc:
             logger.exception("ReActAgent crashed: %s", exc)
-            yield {"type": "error", "error": str(exc)}
+            yield {"type": "error", "message": str(exc)}
 
     # ------------------------------------------------------------------
     # History helpers
