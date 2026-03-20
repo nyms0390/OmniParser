@@ -11,6 +11,9 @@ AGENT_CHOICES = ["OmniAgent", "GTAAgent", "AnthropicAgent", "ReActAgent"]
 DEFAULT_AGENT = "OmniAgent"
 DEFAULT_MODEL = "gpt-4o"
 
+GROUNDING_CHOICES = ["omniparser", "gta1"]
+DEFAULT_GROUNDING = "omniparser"
+
 
 def get_agent_choices() -> List[str]:
     """Return available agent types for the UI dropdown."""
@@ -55,4 +58,6 @@ __all__ = [
     "AGENT_CHOICES",
     "DEFAULT_AGENT",
     "DEFAULT_MODEL",
+    "GROUNDING_CHOICES",
+    "DEFAULT_GROUNDING",
 ]

@@ -22,6 +22,8 @@ from omnitool.gradio.ui.gradio.components.settings import (
     get_provider_options_for_model,
     DEFAULT_AGENT,
     DEFAULT_MODEL,
+    GROUNDING_CHOICES,
+    DEFAULT_GROUNDING,
 )
 
 __all__ = [
@@ -43,5 +45,7 @@ __all__ = [
     "get_provider_options_for_model",
     "DEFAULT_AGENT",
     "DEFAULT_MODEL",
+    "GROUNDING_CHOICES",
+    "DEFAULT_GROUNDING",
     "create_settings_panel",
 ]

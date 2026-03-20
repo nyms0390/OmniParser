@@ -58,6 +58,8 @@ from omnitool.gradio.ui.gradio.components import (
     get_provider_options_for_model,
     DEFAULT_AGENT,
     DEFAULT_MODEL,
+    GROUNDING_CHOICES,
+    DEFAULT_GROUNDING,
 )
 
 logger = None
@@ -105,6 +107,12 @@ class GradioApp:
                         value=DEFAULT_AGENT,
                         label="Agent",
                     )
+                    grounding_dropdown = gr.Dropdown(
+                        choices=GROUNDING_CHOICES,
+                        value=DEFAULT_GROUNDING,
+                        label="Grounding",
+                        visible=False,  # shown only when ReActAgent is selected
+                    )
                     model_dropdown = gr.Dropdown(
                         choices=get_model_choices(),
                         value=DEFAULT_MODEL,
@@ -151,6 +159,13 @@ class GradioApp:
                         value="windows",
                         label="Platform",
                     )
+
+                # Show grounding dropdown only for ReActAgent
+                agent_dropdown.change(
+                    fn=self.on_agent_change,
+                    inputs=[agent_dropdown],
+                    outputs=[grounding_dropdown],
+                )
 
                 # Update provider options when model changes
                 model_dropdown.change(
@@ -227,6 +242,7 @@ class GradioApp:
                     state_var,
                     message_input,
                     agent_dropdown,
+                    grounding_dropdown,
                     model_dropdown,
                     provider_dropdown,
                     chatbot,
@@ -299,6 +315,10 @@ class GradioApp:
             logger.error(error_msg)
             return [{"role": "assistant", "content": error_msg}]
 
+    def on_agent_change(self, agent_type: str):
+        """Show the grounding dropdown only when ReActAgent is selected."""
+        return gr.update(visible=(agent_type == "ReActAgent"))
+
     def on_model_change(self, model_name: str) -> Tuple:
         """Handle model selection change.
 
@@ -319,6 +339,7 @@ class GradioApp:
         state,
         message: str,
         agent_type: str,
+        grounding: str,
         model_name: str,
         provider: str,
         chatbot_history,
@@ -411,6 +432,7 @@ class GradioApp:
                 "extract_fields": extract_fields,
                 "azure_endpoint": self.settings.azure_endpoint,
                 "gta1_url": self.settings.gta1_url,
+                "grounding": grounding,
             }
 
             self.orchestrator = create_agent(**orchestrator_kwargs)
