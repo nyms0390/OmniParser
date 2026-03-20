@@ -132,6 +132,12 @@ class ReActAgent(BaseAgent):
             history: List[Dict[str, Any]] = []
             loop_tracker: deque = deque(maxlen=_LOOP_WINDOW)
 
+            # Populate task from the first chat message if not already set.
+            # (Other agents get this via _generate_checklist; ReActAgent skips that call.)
+            if not self.working_memory.task:
+                chat_messages = self.state.chat.messages
+                self.working_memory.task = chat_messages[0]["content"] if chat_messages else ""
+
             # Seed history with the task as the first user message.
             task = self.working_memory.task or ""
             if task:
