@@ -14,7 +14,9 @@ from omnitool.gradio.app import AppState, get_api_key, AuthProvider
 from .anthropic import AnthropicAgent
 from .base import BaseAgent
 from .gta import GTAAgent
+from .grounding import GTA1Grounding, OmniParserGrounding
 from .omniagent import OmniAgent
+from .react_agent import ReActAgent
 
 
 def create_agent(
@@ -33,24 +35,29 @@ def create_agent(
     extract_fields: Optional[Dict[str, str]] = None,
     azure_endpoint: Optional[str] = None,
     gta1_url: str = "http://localhost:8002",
+    grounding: str = "omniparser",
 ) -> BaseAgent:
     """Factory function — returns the right BaseAgent subclass.
 
     Args:
-        agent_type: Agent class name ("OmniAgent", "GTAAgent", "AnthropicAgent").
+        agent_type: Agent class name ("OmniAgent", "GTAAgent", "AnthropicAgent",
+            "ReActAgent").
         model_name: LLM model ID from LLM_MODELS (e.g. "gpt-4o").
         state: Application runtime state.
         tools_collection: Available tools.
         save_folder: Output folder for the agent.
-        omniparser_client: Required for OmniAgent / AnthropicAgent.
+        omniparser_client: Required for OmniAgent / AnthropicAgent / ReActAgent
+            with OmniParser grounding.
         mode: Agent operating mode.
         platform: Target OS (affects system prompt).
         max_steps: Maximum loop iterations.
-        context_n: Chat history window size.
+        context_n: Chat history window size (unused by ReActAgent).
         provider: LLM provider (e.g. "openai", "azure"). Defaults to first
             supported provider of the model.
         azure_endpoint: Azure OpenAI endpoint URL (required when provider="azure").
-        gta1_url: GTA1 server URL (required for GTAAgent).
+        gta1_url: GTA1 server URL (required for GTAAgent / ReActAgent with gta1
+            grounding).
+        grounding: Grounding strategy for ReActAgent — "omniparser" or "gta1".
 
     Returns:
         Initialised BaseAgent subclass.
@@ -115,6 +122,17 @@ def create_agent(
             omniparser_client=omniparser_client,
             **common,
         )
+
+    elif agent_type == "ReActAgent":
+        if grounding == "gta1":
+            strategy = GTA1Grounding(GTA1Client(base_url=gta1_url))
+        else:
+            if omniparser_client is None:
+                raise ValueError(
+                    "ReActAgent with omniparser grounding requires omniparser_client"
+                )
+            strategy = OmniParserGrounding(omniparser_client)
+        return ReActAgent(grounding_strategy=strategy, **common)
 
     else:
         raise ValueError(f"Unknown agent_type: {agent_type!r}")

@@ -447,7 +447,62 @@ Example — two fields located on screen:
 
 
 # ---------------------------------------------------------------------------
-# 6. Builder functions — assemble fully-rendered prompts from templates above
+# 6. ReAct agent prompts
+# ---------------------------------------------------------------------------
+
+REACT_SYSTEM_PROMPT = """\
+{platform_description}
+You are a computer automation agent. Use the provided tools to complete the given task.
+{interaction_constraints}
+
+## Element Reference
+{element_reference_hint}
+
+## Rules
+1. Before taking your first action, briefly outline your plan in 2-4 bullet points.
+2. Take one action per turn.
+3. Verify each step completed successfully by observing the screen before moving on.
+4. If the same action fails twice, try a different approach.
+5. Call `finish()` only when the entire task is done and confirmed on screen.
+"""
+
+COMPACTION_PROMPT = """\
+Summarize your progress on this task so far. Be concise but complete — this summary \
+will replace your full conversation history, so include everything needed to continue.
+
+Structure your summary as:
+1. **Accomplished**: What steps have been completed and confirmed.
+2. **Failed attempts**: Actions you tried that did NOT work, and why.
+3. **Current state**: What is currently visible/active on screen.
+4. **Remaining**: What still needs to be done to complete the task.
+
+Output only the summary text, no extra formatting.\
+"""
+
+
+def build_react_system_prompt(
+    platform: str = "windows",
+    element_reference_hint: str = "",
+) -> str:
+    """Assemble the ReAct agent system prompt.
+
+    Args:
+        platform: Key into :data:`PLATFORM_PROMPTS` (default ``"windows"``).
+        element_reference_hint: Grounding-strategy hint injected verbatim.
+
+    Returns:
+        Fully-rendered system prompt string.
+    """
+    pp = PLATFORM_PROMPTS.get(platform, PLATFORM_PROMPTS["generic"])
+    return REACT_SYSTEM_PROMPT.format(
+        platform_description=pp.description,
+        interaction_constraints=pp.constraints,
+        element_reference_hint=element_reference_hint,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 7. Builder functions — assemble fully-rendered prompts from templates above
 # ---------------------------------------------------------------------------
 
 def build_vlm_system_prompt(

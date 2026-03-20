@@ -95,12 +95,51 @@ class AzureOpenAIClient(BaseLLMClient):
         # Remove None values
         generation_params = {k: v for k, v in generation_params.items() if v is not None}
 
+        tools = kwargs.get("tools")
+        if tools:
+            generation_params["tools"] = tools
+            generation_params["tool_choice"] = "auto"
+            generation_params["parallel_tool_calls"] = False
+
         try:
             # Call API
             response = self.client.chat.completions.create(**generation_params)
 
-            # Extract response
-            response_text = response.choices[0].message.content
+            choice = response.choices[0]
+            msg = choice.message
+
+            # Extract tool calls when present.
+            tool_calls_out = []
+            if msg.tool_calls:
+                import json as _json
+                for tc in msg.tool_calls:
+                    try:
+                        arguments = _json.loads(tc.function.arguments or "{}")
+                    except (_json.JSONDecodeError, TypeError):
+                        arguments = {}
+                    tool_calls_out.append({
+                        "id": tc.id,
+                        "name": tc.function.name,
+                        "arguments": arguments,
+                    })
+
+            # Build assistant message dict for history (preserves tool_calls).
+            assistant_message: dict = {"role": "assistant", "content": msg.content}
+            if msg.tool_calls:
+                import json as _json
+                assistant_message["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments or "{}",
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ]
+
+            response_text = msg.content or ""
 
             # Prepare metadata
             metadata = {
@@ -109,6 +148,8 @@ class AzureOpenAIClient(BaseLLMClient):
                 "output_tokens": response.usage.completion_tokens,
                 "model": self.model,
                 "provider": "azure",
+                "tool_calls": tool_calls_out,
+                "assistant_message": assistant_message,
             }
 
             return response_text, metadata
