@@ -11,12 +11,11 @@ from omnitool.gradio.clients.external.omniparser import OmniParserClient
 from omnitool.gradio.config import AgentMode, get_llm_config, get_provider_config
 from omnitool.gradio.app import AppState, get_api_key, AuthProvider
 
-from .anthropic import AnthropicAgent
+from .anthropic_agent import AnthropicAgent
 from .base import BaseAgent
-from .gta import GTAAgent
 from .grounding import GTA1Grounding, OmniParserGrounding
-from .omniagent import OmniAgent
 from .react_agent import ReActAgent
+from .vlm_agent import VLMAgent
 
 
 def create_agent(
@@ -40,14 +39,15 @@ def create_agent(
     """Factory function — returns the right BaseAgent subclass.
 
     Args:
-        agent_type: Agent class name ("OmniAgent", "GTAAgent", "AnthropicAgent",
-            "ReActAgent").
+        agent_type: Agent class name ("VLMAgent", "AnthropicAgent", "ReActAgent").
+            Legacy names "OmniAgent" and "GTAAgent" are accepted as aliases for
+            "VLMAgent" with omniparser and gta1 grounding respectively.
         model_name: LLM model ID from LLM_MODELS (e.g. "gpt-4o").
         state: Application runtime state.
         tools_collection: Available tools.
         save_folder: Output folder for the agent.
-        omniparser_client: Required for OmniAgent / AnthropicAgent / ReActAgent
-            with OmniParser grounding.
+        omniparser_client: Required for VLMAgent / AnthropicAgent / ReActAgent
+            with omniparser grounding.
         mode: Agent operating mode.
         platform: Target OS (affects system prompt).
         max_steps: Maximum loop iterations.
@@ -55,9 +55,10 @@ def create_agent(
         provider: LLM provider (e.g. "openai", "azure"). Defaults to first
             supported provider of the model.
         azure_endpoint: Azure OpenAI endpoint URL (required when provider="azure").
-        gta1_url: GTA1 server URL (required for GTAAgent / ReActAgent with gta1
+        gta1_url: GTA1 server URL (required for VLMAgent / ReActAgent with gta1
             grounding).
-        grounding: Grounding strategy for ReActAgent — "omniparser" or "gta1".
+        grounding: Grounding strategy for VLMAgent and ReActAgent — "omniparser"
+            or "gta1".
 
     Returns:
         Initialised BaseAgent subclass.
@@ -106,36 +107,50 @@ def create_agent(
         extract_fields=extract_fields,
     )
 
-    if agent_type == "OmniAgent":
-        if omniparser_client is None:
-            raise ValueError("OmniAgent requires omniparser_client")
-        return OmniAgent(omniparser_client=omniparser_client, **common)
+    if agent_type in ("VLMAgent", "OmniAgent", "GTAAgent"):
+        # Legacy aliases: OmniAgent → omniparser grounding, GTAAgent → gta1 grounding
+        effective_grounding = "omniparser" if agent_type == "OmniAgent" else \
+                              "gta1"        if agent_type == "GTAAgent" else grounding
+        strategy, grounding_kwargs = _resolve_grounding(
+            effective_grounding, omniparser_client, gta1_url, agent_type
+        )
+        return VLMAgent(grounding_strategy=strategy, **grounding_kwargs, **common)
 
     elif agent_type == "AnthropicAgent":
         if omniparser_client is None:
             raise ValueError("AnthropicAgent requires omniparser_client")
         return AnthropicAgent(omniparser_client=omniparser_client, **common)
 
-    elif agent_type == "GTAAgent":
-        return GTAAgent(
-            gta1_client=GTA1Client(base_url=gta1_url),
-            omniparser_client=omniparser_client,
-            **common,
-        )
-
     elif agent_type == "ReActAgent":
-        if grounding == "gta1":
-            strategy = GTA1Grounding(GTA1Client(base_url=gta1_url))
-        else:
-            if omniparser_client is None:
-                raise ValueError(
-                    "ReActAgent with omniparser grounding requires omniparser_client"
-                )
-            strategy = OmniParserGrounding(omniparser_client)
-        return ReActAgent(grounding_strategy=strategy, **common)
+        strategy, grounding_kwargs = _resolve_grounding(
+            grounding, omniparser_client, gta1_url, agent_type
+        )
+        return ReActAgent(grounding_strategy=strategy, **grounding_kwargs, **common)
 
     else:
         raise ValueError(f"Unknown agent_type: {agent_type!r}")
+
+
+def _resolve_grounding(
+    grounding: str,
+    omniparser_client: Optional[OmniParserClient],
+    gta1_url: str,
+    agent_type: str,
+) -> tuple:
+    """Return (GroundingStrategy, extra_kwargs) for the requested grounding mode.
+
+    extra_kwargs are forwarded to the agent constructor so BaseAgent stores the
+    raw client (used for clipboard-based field correction).
+    """
+    if grounding == "gta1":
+        gta1_client = GTA1Client(base_url=gta1_url)
+        return GTA1Grounding(gta1_client), {"gta1_client": gta1_client}
+    else:
+        if omniparser_client is None:
+            raise ValueError(
+                f"{agent_type} with omniparser grounding requires omniparser_client"
+            )
+        return OmniParserGrounding(omniparser_client), {"omniparser_client": omniparser_client}
 
 
 def _create_llm_client(

@@ -7,8 +7,8 @@ from typing import List
 from omnitool.gradio.config import get_all_model_names, get_supported_providers
 
 
-AGENT_CHOICES = ["OmniAgent", "GTAAgent", "AnthropicAgent", "ReActAgent"]
-DEFAULT_AGENT = "OmniAgent"
+AGENT_CHOICES = ["VLMAgent", "OmniAgent", "GTAAgent", "AnthropicAgent", "ReActAgent"]
+DEFAULT_AGENT = "VLMAgent"
 DEFAULT_MODEL = "gpt-4o"
 
 GROUNDING_CHOICES = ["omniparser", "gta1"]

@@ -35,7 +35,7 @@ class GTA1Client(BaseServiceClient):
         base_url: str | None = None,
         timeout: int = 30,
     ):
-        """Initialise the GTA1 client.
+        """Initialize the GTA1 client.
 
         Args:
             base_url: URL of the GTA1 server.  Falls back to the ``GTA1_URL``
@@ -44,7 +44,7 @@ class GTA1Client(BaseServiceClient):
         """
         resolved = base_url or os.environ.get("GTA1_URL", _DEFAULT_URL)
         super().__init__(resolved, timeout)
-        logger.info("Initialised GTA1Client at %s", resolved)
+        logger.info("Initialized GTA1Client at %s", resolved)
 
     @property
     def probe_endpoint(self) -> str:

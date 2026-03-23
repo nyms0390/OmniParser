@@ -11,10 +11,14 @@ Available strategies:
   GTA1Grounding       — raw screenshot pass-through; LLM uses natural-language target.
 """
 
+import base64
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from io import BytesIO
 from typing import Any, Dict, List, Optional
+
+from PIL import Image, ImageDraw
 
 from omnitool.gradio.clients.external.omniparser import OmniParserClient
 from omnitool.gradio.clients.external.gta1 import GTA1Client
@@ -23,6 +27,12 @@ from omnitool.gradio.core.tools.schemas import (
     OMNIPARSER_COMPUTER_TOOLS,
     POSITIONAL_ACTIONS,
 )
+
+# Crosshair appearance (mirrors GTA1/scripts/demo.py and GTAAgent)
+_CROSSHAIR_RADIUS = 18
+_CROSSHAIR_COLOR  = (255, 50, 50)
+_CROSSHAIR_WIDTH  = 3
+_DOT_RADIUS       = 5
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +87,6 @@ class GroundingStrategy(ABC):
     def get_tools(self) -> List[dict]:
         """Return the OpenAI tool schemas for computer actions (no finish tool)."""
 
-    @abstractmethod
     def resolve(
         self,
         tool_name: str,
@@ -86,15 +95,47 @@ class GroundingStrategy(ABC):
     ) -> Dict[str, Any]:
         """Resolve a tool call to an execute_tool_calls dispatch dict.
 
-        Args:
-            tool_name:   Name of the called tool (e.g. ``"left_click"``).
-            arguments:   Parsed JSON arguments from the tool call.
-            screen_data: Current :class:`ScreenData` from :meth:`preprocess`.
+        Handles non-positional tools (type_text, key_press, scroll, wait) directly.
+        Delegates positional tools to :meth:`_resolve_positional`.
 
         Returns:
             Dict with ``"tool"``, ``"action"``, and action-specific kwargs
             (``"coordinate"``, ``"text"``, ``"key"``, ``"direction"``) understood
             by :meth:`BaseAgent.execute_tool_calls`.
+
+        Raises:
+            ValueError: If required arguments are missing or resolution fails.
+        """
+        dispatch: Dict[str, Any] = {"tool": "computer", "action": tool_name}
+
+        if tool_name in POSITIONAL_ACTIONS:
+            dispatch["coordinate"] = self._resolve_positional(tool_name, arguments, screen_data)
+        elif tool_name == "type_text":
+            dispatch["action"] = "type"
+            dispatch["text"] = arguments.get("text", "")
+        elif tool_name == "key_press":
+            dispatch["action"] = "key"
+            dispatch["text"] = arguments.get("key", "")
+        elif tool_name == "scroll":
+            direction = arguments.get("direction", "down")
+            dispatch["action"] = f"scroll_{direction}"
+        # "wait" — bare dispatch, no extra args needed
+
+        return dispatch
+
+    @abstractmethod
+    def _resolve_positional(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        screen_data: ScreenData,
+    ) -> List[int]:
+        """Resolve a positional action to ``[x, y]`` screen coordinates.
+
+        Args:
+            tool_name:   Name of the positional tool (e.g. ``"left_click"``).
+            arguments:   Parsed JSON arguments from the tool call.
+            screen_data: Current :class:`ScreenData` from :meth:`preprocess`.
 
         Raises:
             ValueError: If required arguments are missing or resolution fails.
@@ -109,6 +150,42 @@ class GroundingStrategy(ABC):
     @abstractmethod
     def element_reference_hint(self) -> str:
         """One-line description of how the LLM should reference screen elements."""
+
+    @property
+    def last_grounding_events(self) -> List[Dict[str, Any]]:
+        """Grounding events from the most recent :meth:`resolve` call.
+
+        Non-empty only for strategies that perform visual grounding (e.g.
+        :class:`GTA1Grounding`).  Used by :class:`ReActAgent` to emit
+        ``grounding`` events so the UI can show the crosshair-annotated image.
+        """
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Module-level helper
+# ---------------------------------------------------------------------------
+
+def _draw_crosshair(image_b64: str, x: int, y: int) -> str:
+    """Draw a red crosshair + dot at *(x, y)* on a base64-encoded PNG.
+
+    Coordinates are in the image's own pixel space (i.e. the resized screenshot).
+    Returns an empty string on failure so callers can treat it as optional.
+    """
+    try:
+        img = Image.open(BytesIO(base64.b64decode(image_b64))).convert("RGBA")
+        draw = ImageDraw.Draw(img)
+        r, w = _CROSSHAIR_RADIUS, _CROSSHAIR_WIDTH
+        draw.line([(x - r, y), (x + r, y)], fill=_CROSSHAIR_COLOR, width=w)
+        draw.line([(x, y - r), (x, y + r)], fill=_CROSSHAIR_COLOR, width=w)
+        dr = _DOT_RADIUS
+        draw.ellipse([(x - dr, y - dr), (x + dr, y + dr)], fill=_CROSSHAIR_COLOR)
+        out = BytesIO()
+        img.convert("RGB").save(out, format="PNG")
+        return base64.b64encode(out.getvalue()).decode()
+    except Exception as exc:
+        logger.warning("_draw_crosshair failed: %s", exc)
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -168,41 +245,22 @@ class OmniParserGrounding(GroundingStrategy):
     def get_tools(self) -> List[dict]:
         return OMNIPARSER_COMPUTER_TOOLS
 
-    def resolve(
+    def _resolve_positional(
         self,
         tool_name: str,
         arguments: Dict[str, Any],
         screen_data: ScreenData,
-    ) -> Dict[str, Any]:
-        dispatch: Dict[str, Any] = {"tool": "computer", "action": tool_name}
-
-        if tool_name in POSITIONAL_ACTIONS:
-            box_id = arguments.get("box_id")
-            if box_id is None:
-                raise ValueError(f"'{tool_name}' requires box_id")
-            try:
-                bbox = screen_data.elements[int(box_id)]["bbox"]
-                cx = int((bbox[0] + bbox[2]) / 2 * screen_data.screen_width)
-                cy = int((bbox[1] + bbox[3]) / 2 * screen_data.screen_height)
-                dispatch["coordinate"] = [cx, cy]
-            except (IndexError, KeyError, TypeError, ValueError) as exc:
-                raise ValueError(f"box_id {box_id} resolution failed: {exc}") from exc
-
-        elif tool_name == "type_text":
-            dispatch["action"] = "type"
-            dispatch["text"] = arguments.get("text", "")
-
-        elif tool_name == "key_press":
-            dispatch["action"] = "key"
-            dispatch["text"] = arguments.get("key", "")
-
-        elif tool_name == "scroll":
-            direction = arguments.get("direction", "down")
-            dispatch["action"] = f"scroll_{direction}"
-
-        # "wait" — bare dispatch, no extra args needed
-
-        return dispatch
+    ) -> List[int]:
+        box_id = arguments.get("box_id")
+        if box_id is None:
+            raise ValueError(f"'{tool_name}' requires box_id")
+        try:
+            bbox = screen_data.elements[int(box_id)]["bbox"]
+            cx = int((bbox[0] + bbox[2]) / 2 * screen_data.screen_width)
+            cy = int((bbox[1] + bbox[3]) / 2 * screen_data.screen_height)
+            return [cx, cy]
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"box_id {box_id} resolution failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +277,11 @@ class GTA1Grounding(GroundingStrategy):
 
     def __init__(self, gta1_client: GTA1Client) -> None:
         self._client = gta1_client
+        self._last_grounding_events: List[Dict[str, Any]] = []
+
+    @property
+    def last_grounding_events(self) -> List[Dict[str, Any]]:
+        return self._last_grounding_events
 
     @property
     def name(self) -> str:
@@ -254,43 +317,40 @@ class GTA1Grounding(GroundingStrategy):
     def get_tools(self) -> List[dict]:
         return GTA1_COMPUTER_TOOLS
 
-    def resolve(
+    def _resolve_positional(
         self,
         tool_name: str,
         arguments: Dict[str, Any],
         screen_data: ScreenData,
-    ) -> Dict[str, Any]:
-        dispatch: Dict[str, Any] = {"tool": "computer", "action": tool_name}
+    ) -> List[int]:
+        target = arguments.get("target")
+        if not target:
+            raise ValueError(f"'{tool_name}' requires target")
 
-        if tool_name in POSITIONAL_ACTIONS:
-            target = arguments.get("target")
-            if not target:
-                raise ValueError(f"'{tool_name}' requires target")
+        coord = self._resolve_coordinate(screen_data.raw_image_b64, target)
+        if coord is None:
+            self._last_grounding_events = [{
+                "instruction": target,
+                "coordinate": None,
+                "annotated_image_b64": "",
+                "success": False,
+            }]
+            raise ValueError(f"GTA1 failed to resolve target: {target!r}")
 
-            coord = self._resolve_coordinate(screen_data.raw_image_b64, target)
-            if coord is None:
-                raise ValueError(f"GTA1 failed to resolve target: {target!r}")
+        rx, ry = coord
+        annotated = _draw_crosshair(screen_data.raw_image_b64, rx, ry)
+        self._last_grounding_events = [{
+            "instruction": target,
+            "coordinate": [rx, ry],
+            "annotated_image_b64": annotated,
+            "success": True,
+        }]
 
-            rx, ry = coord
-            rw = screen_data.resized_width or screen_data.screen_width
-            rh = screen_data.resized_height or screen_data.screen_height
-            sx = round(rx * screen_data.screen_width / rw) if rw else rx
-            sy = round(ry * screen_data.screen_height / rh) if rh else ry
-            dispatch["coordinate"] = [sx, sy]
-
-        elif tool_name == "type_text":
-            dispatch["action"] = "type"
-            dispatch["text"] = arguments.get("text", "")
-
-        elif tool_name == "key_press":
-            dispatch["action"] = "key"
-            dispatch["text"] = arguments.get("key", "")
-
-        elif tool_name == "scroll":
-            direction = arguments.get("direction", "down")
-            dispatch["action"] = f"scroll_{direction}"
-
-        return dispatch
+        rw = screen_data.resized_width or screen_data.screen_width
+        rh = screen_data.resized_height or screen_data.screen_height
+        sx = round(rx * screen_data.screen_width / rw) if rw else rx
+        sy = round(ry * screen_data.screen_height / rh) if rh else ry
+        return [sx, sy]
 
     def _resolve_coordinate(
         self, image_b64: str, instruction: str

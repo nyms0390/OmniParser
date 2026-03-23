@@ -19,6 +19,7 @@ preserving: accomplished steps, failed attempts, current state, remaining work.
 
 import json
 import logging
+import time
 from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
@@ -26,7 +27,7 @@ from typing import Any, Dict, Generator, List, Optional
 from omnitool.gradio.app.state import AppState
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import AgentMode, COMPACTION_PROMPT, build_react_system_prompt
-from omnitool.gradio.core.agents.base import BaseAgent
+from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images
 from omnitool.gradio.core.agents.grounding import GroundingStrategy, ScreenData
 from omnitool.gradio.core.tools.schemas import FINISH_TOOL
 
@@ -91,16 +92,6 @@ class ReActAgent(BaseAgent):
         )
         self.grounding_strategy = grounding_strategy
         self.compaction_interval = compaction_interval
-
-    # ------------------------------------------------------------------
-    # BaseAgent abstract method stubs (ReAct loop bypasses these hooks)
-    # ------------------------------------------------------------------
-
-    def _format_messages(self, messages):
-        return messages
-
-    def _parse_tool_calls(self, response_text):
-        return []
 
     def _get_system_prompt(self) -> str:
         return build_react_system_prompt(
@@ -168,12 +159,12 @@ class ReActAgent(BaseAgent):
                 }
                 # Only set som_image_base64 when OmniParser produced a labeled image.
                 # For GTA1 (no SOM), leave it empty so the UI uses format_raw_screen.
-                has_som = bool(screen_data.elements)
+                is_som_grounding = self.grounding_strategy.name == "omniparser"
                 yield {
                     "type": "parsed_screen",
-                    "som_image_base64": screen_data.display_image_b64 if has_som else "",
+                    "som_image_base64": screen_data.display_image_b64 if is_som_grounding else "",
                     "raw_image_base64": screen_data.raw_image_b64,
-                    "screen_info": str(screen_data.elements) if has_som else "",
+                    "screen_info": str(screen_data.elements) if screen_data.elements else "",
                 }
 
                 # 2. Build user message
@@ -227,12 +218,15 @@ class ReActAgent(BaseAgent):
                     "message": f"Step {self.step_count}: Executing {tool_name}...",
                 }
 
-                # 5. Loop detection
+                # 5. Loop detection — flag now, inject hint after tool result
+                # (Azure/OpenAI require tool messages to immediately follow assistant
+                # messages that contain tool_calls; inserting a user message in between
+                # causes a 400 error.)
                 action_sig = (tool_name, _freeze(arguments))
                 loop_tracker.append(action_sig)
-                if list(loop_tracker).count(action_sig) >= _LOOP_THRESHOLD:
+                inject_stuck_hint = list(loop_tracker).count(action_sig) >= _LOOP_THRESHOLD
+                if inject_stuck_hint:
                     logger.warning("Step %d: loop detected for %s", self.step_count, tool_name)
-                    history.append({"role": "user", "content": _STUCK_HINT})
 
                 # 6a. finish() → exit
                 if tool_name == "finish":
@@ -251,7 +245,7 @@ class ReActAgent(BaseAgent):
                         "facts": self.working_memory.facts,
                         "total_steps": self.step_count,
                         "total_tokens": self.total_tokens,
-                        "total_cost": f"${self.total_cost:.4f}",
+                        "total_cost": f"${self.total_cost:.6f}",
                     }
                     return
 
@@ -259,17 +253,30 @@ class ReActAgent(BaseAgent):
                 try:
                     dispatch = self.grounding_strategy.resolve(tool_name, arguments, screen_data)
                 except ValueError as exc:
+                    # Show failed grounding result (e.g. GTA1 crosshair miss) in the UI.
+                    evts = self.grounding_strategy.last_grounding_events
+                    if evts:
+                        yield {"type": "grounding", "events": evts}
                     tool_result = f"Grounding error: {exc}"
                     logger.warning("Step %d grounding failed: %s", self.step_count, exc)
                     history.append(_tool_msg(tool_call_id, tool_result))
+                    if inject_stuck_hint:
+                        history.append({"role": "user", "content": _STUCK_HINT})
                     yield {"type": "action_result", "tool": tool_name, "error": tool_result}
                     continue
+
+                # Show grounding result (crosshair-annotated image) when available.
+                evts = self.grounding_strategy.last_grounding_events
+                if evts:
+                    yield {"type": "grounding", "events": evts}
 
                 tool_results = self.execute_tool_calls([dispatch])
                 res = tool_results[0] if tool_results else {}
                 if res.get("status") == "error":
                     err_text = res.get("error", "unknown error")
                     history.append(_tool_msg(tool_call_id, f"Error: {err_text}"))
+                    if inject_stuck_hint:
+                        history.append({"role": "user", "content": _STUCK_HINT})
                     yield {
                         "type": "action_result",
                         "tool": dispatch.get("action", tool_name),
@@ -279,11 +286,17 @@ class ReActAgent(BaseAgent):
                     raw_result = res.get("result")
                     output_text = getattr(raw_result, "output", None) or "Done."
                     history.append(_tool_msg(tool_call_id, output_text))
+                    if inject_stuck_hint:
+                        history.append({"role": "user", "content": _STUCK_HINT})
                     yield {
                         "type": "action_result",
                         "tool": dispatch.get("action", tool_name),
                         "output": output_text,
                     }
+
+                # Allow the UI to settle before the next screenshot.
+                if self.action_delay > 0:
+                    time.sleep(self.action_delay)
 
                 # 8. Compaction (harness-triggered every N steps)
                 if self.step_count % self.compaction_interval == 0:
@@ -302,7 +315,7 @@ class ReActAgent(BaseAgent):
                 "facts": self.working_memory.facts,
                 "total_steps": self.step_count,
                 "total_tokens": self.total_tokens,
-                "total_cost": f"${self.total_cost:.4f}",
+                "total_cost": f"${self.total_cost:.6f}",
             }
 
         except Exception as exc:
@@ -356,10 +369,12 @@ class ReActAgent(BaseAgent):
             compaction_messages = history + [
                 {"role": "user", "content": COMPACTION_PROMPT}
             ]
-            summary, _ = self.llm_client.generate(
+            summary, compact_meta = self.llm_client.generate(
                 messages=compaction_messages,
                 system_prompt=system_prompt,
             )
+            self.update_token_usage(compact_meta.get("tokens", 0))
+            self.update_cost(self._calculate_cost(compact_meta))
             if not summary:
                 return history  # compaction failed silently — keep history
         except Exception as exc:
@@ -377,24 +392,6 @@ class ReActAgent(BaseAgent):
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
-def _evict_old_images(history: List[Dict[str, Any]]) -> None:
-    """Replace image_url blocks in all but the last user message with a text placeholder.
-
-    This keeps only the most recent screenshot in the token budget while
-    preserving the full action/result text history.
-    """
-    user_indices = [i for i, m in enumerate(history) if m.get("role") == "user"]
-    for i in user_indices[:-1]:
-        msg = history[i]
-        if isinstance(msg.get("content"), list):
-            new_content = []
-            for block in msg["content"]:
-                if block.get("type") == "image_url":
-                    new_content.append({"type": "text", "text": "[screenshot]"})
-                else:
-                    new_content.append(block)
-            history[i] = {**msg, "content": new_content}
-
 
 def _tool_msg(tool_call_id: str, content: str) -> Dict[str, Any]:
     return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
@@ -405,7 +402,7 @@ def _freeze(arguments: Dict[str, Any]):
     try:
         return frozenset(arguments.items())
     except TypeError:
-        return frozenset(json.dumps(arguments, sort_keys=True))
+        return json.dumps(arguments, sort_keys=True)
 
 
 __all__ = ["ReActAgent"]

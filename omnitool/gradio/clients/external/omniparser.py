@@ -16,12 +16,12 @@ class OmniParserClient(BaseServiceClient):
     Handles screenshot parsing via HTTP API.
     """
     
-    def __init__(self, base_url: str = "http://localhost:8000", timeout: int = 60):
+    def __init__(self, base_url: str = "http://localhost:8000", timeout: int = 600):
         """Initialize OmniParser client.
         
         Args:
             base_url: Base URL of OmniParser server (default: localhost:8000)
-            timeout: Request timeout in seconds (default: 60)
+            timeout: Request timeout in seconds (default: 600)
         """
         super().__init__(base_url, timeout)
         self.parse_endpoint = "parse"
@@ -30,7 +30,7 @@ class OmniParserClient(BaseServiceClient):
     @property
     def probe_endpoint(self) -> str:
         """Endpoint for health check."""
-        return "probe"
+        return "health"
     
     def parse_screenshot(
         self,

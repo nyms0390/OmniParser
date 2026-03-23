@@ -188,9 +188,49 @@ FINISH_TOOL: dict = {
 # Positional action names — need coordinate resolution
 POSITIONAL_ACTIONS = frozenset({"left_click", "right_click", "double_click", "hover"})
 
+# ---------------------------------------------------------------------------
+# read_field tool — captures a text value from screen into working memory
+# ---------------------------------------------------------------------------
+
+READ_FIELD_TOOL: dict = {
+    "type": "function",
+    "function": {
+        "name": "read_field",
+        "description": (
+            "Capture a text value visible on the current screen into memory. "
+            "Use this to record values (e.g. confirmation number, price, status) "
+            "before navigating away. The value will be verified via clipboard "
+            "if a grounding target is provided."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "field_name": {
+                    "type": "string",
+                    "description": "Key name to store the captured value under (e.g. 'order_total').",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "The exact value as you read it from the screen.",
+                },
+                "target": {
+                    "type": "string",
+                    "description": (
+                        "Natural-language description of the on-screen element showing "
+                        "this value (e.g. 'the order total amount near the bottom'). "
+                        "Used for clipboard-based verification — omit if not needed."
+                    ),
+                },
+            },
+            "required": ["field_name", "value"],
+        },
+    },
+}
+
 __all__ = [
     "OMNIPARSER_COMPUTER_TOOLS",
     "GTA1_COMPUTER_TOOLS",
     "FINISH_TOOL",
     "POSITIONAL_ACTIONS",
+    "READ_FIELD_TOOL",
 ]

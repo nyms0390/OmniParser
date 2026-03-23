@@ -6,13 +6,14 @@ Prompts are kept in one place for:
 - Platform extensibility via registry
 - Injection safety (screen_info in user messages, not system prompt)
 
-Prompt order mirrors the workflow:
-  1. Infrastructure (platform registry, thinking variants)
-  2. Orchestration init    — pre-loop, one-time (checklist generation)
-  3. Agent system prompts  — used every step (VLM / Anthropic / GTA1)
-  4. Per-step loop         — REFLECT (with dedicated REFLECT_SYSTEM_PROMPT)
-  5. Post-loop             — result extraction
-  6. Builder functions     — assemblers that combine the above
+Prompt order mirrors the agentic loop:
+  1. Infrastructure      — platform registry, thinking variants
+  2. Pre-loop            — checklist generation (runs once)
+  3. Agent system prompts— Anthropic / ReAct / VLMAgent (used every step)
+  4. Per-step reflect    — REFLECT_SYSTEM_PROMPT, REFLECT_PROMPT
+  5. Mid-loop            — COMPACTION_PROMPT (ReAct history summarisation)
+  6. Post-loop           — result extraction (direct + clipboard)
+  7. Builder functions   — assemblers that render templates above
 """
 
 from dataclasses import dataclass
@@ -65,9 +66,7 @@ PLATFORM_PROMPTS: Dict[str, PlatformPrompt] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Thinking-model instruction variants  (inserted as note #2)
-# ---------------------------------------------------------------------------
+# Thinking-model instruction variants (inserted as note #2 in VLM prompts)
 
 THINKING_INSTRUCTION_STANDARD = (
     "\n2. Write your \"Reasoning\" as a concise prose summary covering "
@@ -82,7 +81,7 @@ THINKING_INSTRUCTION_R1 = (
 
 
 # ---------------------------------------------------------------------------
-# 2. Orchestration init — pre-loop, runs once at the start
+# 2. Pre-loop — checklist generation (runs once before the action loop)
 # ---------------------------------------------------------------------------
 
 # System prompt for checklist generation LLM calls.
@@ -120,102 +119,7 @@ Keep steps concise and actionable. Output only valid JSON. Start directly.\
 # 3. Agent system prompts — used every step of the action loop
 # ---------------------------------------------------------------------------
 
-# VLM system prompt (OmniAgent / OpenAI-compatible, SOM box IDs)
-# Placeholders: {platform_description}, {interaction_constraints},
-#               {thinking_instruction}
-#
-# NOTE: screen_info (dynamic, user-visible UI text from OmniParser) is NOT
-# included here.  It is injected as a *user* message wrapped in
-# <screen_elements> tags to prevent prompt injection and keep the system
-# prompt static / cacheable.
-
-VLM_SYSTEM_PROMPT = """\
-{platform_description}
-You are able to use a mouse and keyboard to interact with the computer based on the given task and screenshot.
-{interaction_constraints}
-
-For each step, follow this process:
-1. Examine the SOM image to realize what's going on on the screen.
-2. Decide the single next action and, when required, the target Box ID.
-3. If you need to capture values from the screen, read them directly and set "read_fields" to a JSON object mapping each field name to its exact value as shown on screen.
-
-Your available "Next Action" only include:
-- type: types a string of text.
-- left_click: move mouse to box id and left clicks.
-- right_click: move mouse to box id and right clicks.
-- double_click: move mouse to box id and double clicks.
-- hover: move mouse to box id.
-- scroll_up: scrolls the screen up to view previous content.
-- scroll_down: scrolls the screen down, when the desired button is not visible, or you need to see more content.
-- wait: waits for 1 second for the device to load or respond.
-
-Output format:
-```json
-{{
-    "Reasoning": str, # concise summary of what you see on screen and why you chose this action.
-    "Next Action": "action_type, action description" | "None" # one action at a time, describe it briefly.
-    "Box ID": n | null, # required for left_click, right_click, double_click, hover, type
-    "value": "xxx" | null, # required when action is type
-    "read_fields": {{"field": "exact value as shown on screen"}} | null # values you are capturing from the current screen; use null if nothing to capture.
-}}
-```
-
-One Example:
-```json
-{{
-    "Reasoning": "Box 3 is an interactive icon ('Chrome browser') on the desktop. No previous actions. Opening Chrome by double-clicking Box 3.",
-    "Next Action": "double_click, open Chrome browser",
-    "Box ID": 3,
-    "value": null,
-    "read_fields": null
-}}
-```
-
-Another Example:
-```json
-{{
-    "Reasoning": "Box 0 is the browser address bar. Previous action clicked address bar and screen changed. Typing the target URL.",
-    "Next Action": "type, enter URL",
-    "Box ID": 0,
-    "value": "https://github.com",
-    "read_fields": null
-}}
-```
-
-Another Example:
-```json
-{{
-    "Reasoning": "No element matching 'Submit' is visible in screen elements. The SOM image shows the page is cut off — button is likely below the fold. Scrolling down.",
-    "Next Action": "scroll_down, look for Submit button",
-    "Box ID": null,
-    "value": null,
-    "read_fields": null
-}}
-```
-
-Another Example (reading screen values for a later step):
-```json
-{{
-    "Reasoning": "The order confirmation page is showing. I can see the confirmation number and total. Capturing them before navigating away.",
-    "Next Action": "None",
-    "Box ID": null,
-    "value": null,
-    "read_fields": {{"confirmation_number": "A1B2C3D4", "order_total": "29.99"}}
-}}
-```
-
-IMPORTANT NOTES:
-1. You should only give a single action at a time.
-{thinking_instruction}
-3. You should not include other actions, such as keyboard shortcuts.
-4. When the task is completed, say "Next Action": "None".
-5. If you encounter a login page, captcha, or an action that requires user permission, say "Next Action": "None".
-6. To open applications from desktop icons or files/folders, always use "double_click". A single click only selects without launching. Use "left_click" for buttons, links, and menu items inside applications.
-7. Strictly follow the output format, do not output any additional explainations.
-"""
-
-
-# Anthropic (Claude) system prompt
+# Anthropic (Claude computer-use) system prompt
 ANTHROPIC_SYSTEM_PROMPT = """\
 {platform_description}
 You are an intelligent computer use assistant.
@@ -228,94 +132,48 @@ The current screen's detected UI elements will be provided in a user
 message. Use them for accurate targeting.
 """
 
-
-# GTA1 system prompt (raw screenshot + natural-language grounding)
-# Placeholders: {platform_description}, {interaction_constraints},
-#               {thinking_instruction}
-GTA1_SYSTEM_PROMPT = """\
+# ReAct agent system prompt
+REACT_SYSTEM_PROMPT = """\
 {platform_description}
-You are able to use a mouse and keyboard to interact with the computer based on the given task and screenshot.
+You are a computer automation agent. Use the provided tools to complete the given task.
 {interaction_constraints}
 
-For each step, follow this process:
-1. Examine the screenshot to understand the current screen state.
-2. Decide the single next action and describe the exact UI element to target.
-3. If you need to capture values from the screen, read them directly and set "read_fields" to a JSON object mapping each field name to its exact value as shown on screen.
+## Element Reference
+{element_reference_hint}
 
-Your available "Next Action" only include:
-- type: types a string of text into the currently focused field.
-- left_click: left-click on a described UI element.
-- right_click: right-click on a described UI element.
-- double_click: double-click on a described UI element.
-- hover: move mouse to a described UI element.
-- scroll_up: scrolls the screen up to view previous content.
-- scroll_down: scrolls the screen down when the desired element is not visible.
-- wait: waits 1 second for the device to load or respond.
+## Rules
+1. Before taking your first action, briefly outline your plan in 2-4 bullet points.
+2. Take one action per turn.
+3. Verify each step completed successfully by observing the screen before moving on.
+4. If the same action fails twice, try a different approach.
+5. Call `finish()` only when the entire task is done and confirmed on screen.
+"""
 
-Output format:
-```json
-{{
-    "Reasoning": str, # concise summary of what you see on screen and why you chose this action.
-    "Next Action": "action_type, description of the target element" | "None" # one action at a time.
-    "value": "xxx" | null, # required when action is type
-    "read_fields": {{"field": "exact value as shown on screen"}} | null, # values you are capturing from the current screen; use null if nothing to capture.
-}}
-```
+# VLMAgent tool-calling system prompt
+VLM_TOOL_SYSTEM_PROMPT = """\
+{platform_description}
+You are a computer automation agent. Use the provided tools to complete the given task.
+{interaction_constraints}
 
-One Example:
-```json
-{{
-    "Reasoning": "The Firefox browser icon is visible in the taskbar at the bottom of the screen. No previous actions. Launching Firefox.",
-    "Next Action": "double_click, the Firefox browser icon in the taskbar at the bottom",
-    "value": null,
-    "read_fields": null
-}}
-```
+## Element Reference
+{element_reference_hint}
 
-Another Example:
-```json
-{{
-    "Reasoning": "The browser address bar is visible at the top. Previous action opened the browser and screen changed. Typing the target URL.",
-    "Next Action": "type, the browser address bar at the top of the window",
-    "value": "https://github.com",
-    "read_fields": null
-}}
-```
+## Workflow
+You will receive a screenshot and a current subtask at each turn.
+1. Observe the screen carefully.
+2. Take exactly ONE action using the provided tools.
+3. To record a text value from the screen (confirmation number, order total, etc.), call `read_field` with the value you see — this captures it for later.
 
-Another Example:
-```json
-{{
-    "Reasoning": "The Submit button is not visible. The page appears to have more content below. Scrolling down.",
-    "Next Action": "scroll_down, look for Submit button below the fold",
-    "value": null,
-    "read_fields": null
-}}
-```
-
-Another Example (reading screen values for a later step):
-```json
-{{
-    "Reasoning": "The order confirmation page is showing. I can see the confirmation number and total. Capturing them before navigating away.",
-    "Next Action": "None",
-    "value": null,
-    "read_fields": {{"confirmation_number": "A1B2C3D4", "order_total": "29.99"}}
-}}
-```
-
-IMPORTANT NOTES:
-1. You should only give a single action at a time.
-{thinking_instruction}
-3. You should not include other actions, such as keyboard shortcuts.
-4. When the task is completed, say "Next Action": "None".
-5. Avoid choosing the same action/elements multiple times in a row. If it happens, try a different action or target.
-6. If you encounter a login page, captcha, or an action that requires user permission, say "Next Action": "None".
-7. To open applications, always use "double_click". Use "left_click" for buttons, links, and menu items.
-8. Strictly follow the output format, do not output any additional explanations.
+## Rules
+- One tool call per turn.
+- Use `double_click` to open files, folders, and desktop applications. Use `left_click` for buttons, links, and menu items.
+- If an action has no visible effect, try a different approach or target.
+- Do not repeat the same action without a new observation.
 """
 
 
 # ---------------------------------------------------------------------------
-# 4. Per-step loop — runs before each action in orchestrator / task mode
+# 4. Per-step reflect — outcome evaluation after each action
 # ---------------------------------------------------------------------------
 
 # Dedicated system prompt for the reflect step (outcome evaluation).
@@ -374,8 +232,28 @@ Output pure JSON only. DO NOT DEVIATE FROM THIS SCHEMA:
         }}
     }}
 """
+
+
 # ---------------------------------------------------------------------------
-# 5. Post-loop — result extraction after the action loop completes
+# 5. Mid-loop — ReAct history compaction (triggered every N steps)
+# ---------------------------------------------------------------------------
+
+COMPACTION_PROMPT = """\
+Summarize your progress on this task so far. Be concise but complete — this summary \
+will replace your full conversation history, so include everything needed to continue.
+
+Structure your summary as:
+1. **Accomplished**: What steps have been completed and confirmed.
+2. **Failed attempts**: Actions you tried that did NOT work, and why.
+3. **Current state**: What is currently visible/active on screen.
+4. **Remaining**: What still needs to be done to complete the task.
+
+Output only the summary text, no extra formatting.\
+"""
+
+
+# ---------------------------------------------------------------------------
+# 6. Post-loop — result extraction after the action loop completes
 # ---------------------------------------------------------------------------
 
 EXTRACTION_SYSTEM_PROMPT = """\
@@ -406,13 +284,9 @@ Example — if asked for price (2 decimal places) and status:
     }}\
 """
 
-
-# ---------------------------------------------------------------------------
-# 5b. Clipboard-based extraction — coordinate localisation prompts
-#
+# Clipboard-based extraction — coordinate localisation prompts.
 # Used by BaseAgent._read_fields_via_clipboard() to ask the LLM where each
 # field lives on-screen so the agent can drag-select and copy via clipboard.
-# ---------------------------------------------------------------------------
 
 CLIPBOARD_COORD_SYSTEM_PROMPT = """\
 You are a screen coordinate assistant. Given a screenshot and a list of fields, \
@@ -447,37 +321,23 @@ Example — two fields located on screen:
 
 
 # ---------------------------------------------------------------------------
-# 6. ReAct agent prompts
+# 7. Builder functions — assemble fully-rendered prompts from templates above
 # ---------------------------------------------------------------------------
 
-REACT_SYSTEM_PROMPT = """\
-{platform_description}
-You are a computer automation agent. Use the provided tools to complete the given task.
-{interaction_constraints}
+def build_anthropic_system_prompt(platform: str = "windows") -> str:
+    """Assemble a complete Anthropic system prompt.
 
-## Element Reference
-{element_reference_hint}
+    Args:
+        platform: Key into :data:`PLATFORM_PROMPTS`.
 
-## Rules
-1. Before taking your first action, briefly outline your plan in 2-4 bullet points.
-2. Take one action per turn.
-3. Verify each step completed successfully by observing the screen before moving on.
-4. If the same action fails twice, try a different approach.
-5. Call `finish()` only when the entire task is done and confirmed on screen.
-"""
-
-COMPACTION_PROMPT = """\
-Summarize your progress on this task so far. Be concise but complete — this summary \
-will replace your full conversation history, so include everything needed to continue.
-
-Structure your summary as:
-1. **Accomplished**: What steps have been completed and confirmed.
-2. **Failed attempts**: Actions you tried that did NOT work, and why.
-3. **Current state**: What is currently visible/active on screen.
-4. **Remaining**: What still needs to be done to complete the task.
-
-Output only the summary text, no extra formatting.\
-"""
+    Returns:
+        Fully-rendered system prompt string.
+    """
+    pp = PLATFORM_PROMPTS.get(platform, PLATFORM_PROMPTS["generic"])
+    return ANTHROPIC_SYSTEM_PROMPT.format(
+        platform_description=pp.description,
+        interaction_constraints=pp.constraints,
+    )
 
 
 def build_react_system_prompt(
@@ -501,71 +361,22 @@ def build_react_system_prompt(
     )
 
 
-# ---------------------------------------------------------------------------
-# 7. Builder functions — assemble fully-rendered prompts from templates above
-# ---------------------------------------------------------------------------
-
-def build_vlm_system_prompt(
+def build_vlm_tool_system_prompt(
     platform: str = "windows",
-    is_thinking_model: bool = False,
+    element_reference_hint: str = "",
 ) -> str:
-    """Assemble a complete VLM system prompt from templates.
+    """Assemble the VLMAgent tool-calling system prompt.
 
     Args:
         platform: Key into :data:`PLATFORM_PROMPTS` (default ``"windows"``).
-        is_thinking_model: If *True*, use the R1-style thinking instruction.
+        element_reference_hint: Grounding-strategy hint injected verbatim.
 
     Returns:
         Fully-rendered system prompt string.
     """
     pp = PLATFORM_PROMPTS.get(platform, PLATFORM_PROMPTS["generic"])
-    instruction = (
-        THINKING_INSTRUCTION_R1 if is_thinking_model
-        else THINKING_INSTRUCTION_STANDARD
-    )
-    return VLM_SYSTEM_PROMPT.format(
+    return VLM_TOOL_SYSTEM_PROMPT.format(
         platform_description=pp.description,
         interaction_constraints=pp.constraints,
-        thinking_instruction=instruction,
-    )
-
-
-def build_anthropic_system_prompt(platform: str = "windows") -> str:
-    """Assemble a complete Anthropic system prompt.
-
-    Args:
-        platform: Key into :data:`PLATFORM_PROMPTS`.
-
-    Returns:
-        Fully-rendered system prompt string.
-    """
-    pp = PLATFORM_PROMPTS.get(platform, PLATFORM_PROMPTS["generic"])
-    return ANTHROPIC_SYSTEM_PROMPT.format(
-        platform_description=pp.description,
-        interaction_constraints=pp.constraints,
-    )
-
-
-def build_gta1_system_prompt(
-    platform: str = "windows",
-    is_thinking_model: bool = False,
-) -> str:
-    """Assemble a complete GTA1-mode VLM system prompt.
-
-    Args:
-        platform: Key into :data:`PLATFORM_PROMPTS` (default ``"windows"``).
-        is_thinking_model: If *True*, use the R1-style thinking instruction.
-
-    Returns:
-        Fully-rendered system prompt string.
-    """
-    pp = PLATFORM_PROMPTS.get(platform, PLATFORM_PROMPTS["generic"])
-    instruction = (
-        THINKING_INSTRUCTION_R1 if is_thinking_model
-        else THINKING_INSTRUCTION_STANDARD
-    )
-    return GTA1_SYSTEM_PROMPT.format(
-        platform_description=pp.description,
-        interaction_constraints=pp.constraints,
-        thinking_instruction=instruction,
+        element_reference_hint=element_reference_hint,
     )

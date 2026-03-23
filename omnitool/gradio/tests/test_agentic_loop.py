@@ -1,12 +1,12 @@
 """
-Tests for the agentic loop refactor — runs without any real model or OCR access.
+Tests for the agentic loop — VLMAgent + Plan→Reflect, runs without any real model or OCR.
 
 All external dependencies (LLM, OmniParser, screen capture) are mocked.
 """
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -14,6 +14,33 @@ from omnitool.gradio.config import AgentMode
 from omnitool.gradio.config.prompts import CHECKLIST_GEN_PROMPT, REFLECT_PROMPT
 from omnitool.gradio.core.agents.checklist import Checklist, ChecklistItem
 from omnitool.gradio.app import AppState
+
+
+# ---------------------------------------------------------------------------
+# Shared test data
+# ---------------------------------------------------------------------------
+
+PLAN_JSON = json.dumps([
+    {"id": 1, "step": "Open Notepad", "verification_hint": "Notepad window visible"},
+    {"id": 2, "step": "Type hello world", "verification_hint": "Text appears in editor"},
+])
+
+REFLECT_JSON = json.dumps({
+    "screen_observation": "Notepad is open.",
+    "is_request_satisfied": {"reason": "not done yet", "answer": False},
+    "is_in_loop": {"reason": "no loop", "answer": False},
+    "checklist_updates": [{"id": 1, "status": "done"}],
+})
+
+REFLECT_DONE_JSON = json.dumps({
+    "screen_observation": "Task complete.",
+    "is_request_satisfied": {"reason": "all done", "answer": True},
+    "is_in_loop": {"reason": "", "answer": False},
+    "checklist_updates": [
+        {"id": 1, "status": "done"},
+        {"id": 2, "status": "done"},
+    ],
+})
 
 
 # ---------------------------------------------------------------------------
@@ -27,62 +54,130 @@ def app_state(tmp_path):
     return state
 
 
-@pytest.fixture
-def mock_agent(tmp_path):
-    """Fully mocked BaseAgent."""
-    agent = Mock()
-    agent.save_folder = tmp_path / "execution"
-    agent.save_folder.mkdir(exist_ok=True)
-    agent.total_tokens = 0
-    agent.total_cost = 0.0
+def _make_screen_data():
+    """Return a minimal ScreenData object."""
+    from omnitool.gradio.core.agents.grounding import ScreenData
+    return ScreenData(
+        raw_image_b64="fakeraw",
+        display_image_b64="fakesom",
+        elements=[{"bbox": [0.1, 0.1, 0.3, 0.2], "content": "Start", "box_id": 0}],
+        screen_width=1920,
+        screen_height=1080,
+        resized_width=1920,
+        resized_height=1080,
+    )
 
-    # Default plan response — one tool call
-    agent.plan.return_value = {
-        "response_text": '{"Reasoning": "click start", "Next Action": "left_click", "Box ID": 0}',
-        "tool_calls": [{"tool": "computer", "action": "left_click", "coordinate": [100, 200]}],
-        "metadata": {"tokens": 50},
-        "cost": 0.001,
-    }
-    agent.execute_tool_calls.return_value = [
-        {"tool": "computer", "status": "success", "result": Mock(output="ok", base64_image="", error="")}
+
+def _tool_response(tool_name="left_click", args=None, text="Planning action."):
+    """Build a metadata dict with one tool call, as returned by llm_client.generate()."""
+    if args is None:
+        args = {"box_id": 0}
+    tc_id = "call_1"
+    return (
+        text,
+        {
+            "tokens": 50,
+            "tool_calls": [{"id": tc_id, "name": tool_name, "arguments": args}],
+            "assistant_message": {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{
+                    "id": tc_id,
+                    "type": "function",
+                    "function": {"name": tool_name, "arguments": json.dumps(args)},
+                }],
+            },
+        },
+    )
+
+
+def _empty_response(text="Task is done."):
+    """Build a metadata dict with no tool calls (LLM signals stop)."""
+    return (
+        text,
+        {
+            "tokens": 10,
+            "tool_calls": [],
+            "assistant_message": {"role": "assistant", "content": text},
+        },
+    )
+
+
+def _make_orchestrator(app_state, mode=AgentMode.INTERACTIVE, max_steps=3):
+    """Build a VLMAgent with all external calls mocked out."""
+    from omnitool.gradio.core.agents import VLMAgent
+
+    llm_client = Mock()
+    llm_client.generate.side_effect = [
+        _tool_response(),
+        _empty_response(),
+        _empty_response(),
+        _empty_response(),
+        _empty_response(),
     ]
-    agent.update_token_usage = Mock()
-    agent.update_step_count = Mock()
-    agent.update_cost = Mock()
-    agent._extract_data = Mock(side_effect=lambda text, fmt: text)
 
-    # LLM client used by _generate_checklist / _reflect
-    agent.llm_client = Mock()
-    return agent
+    grounding = Mock()
+    grounding.name = "omniparser"
+    grounding.element_reference_hint = "Use box_id."
+    grounding.get_tools.return_value = [{
+        "type": "function",
+        "function": {
+            "name": "left_click",
+            "parameters": {
+                "type": "object",
+                "properties": {"box_id": {"type": "integer"}},
+                "required": ["box_id"],
+            },
+        },
+    }]
+    grounding.resolve.return_value = {"action": "left_click", "coordinate": [100, 200]}
+    grounding.last_grounding_events = []
 
+    screen_data = _make_screen_data()
 
-@pytest.fixture
-def mock_screen():
-    return {
-        "som_image_base64": "fakeb64",
-        "parsed_content_list": [{"bbox": [0.1, 0.1, 0.3, 0.2], "content": "Start"}],
-        "screen_width": 1920,
-        "screen_height": 1080,
-    }
-
-
-def _make_orchestrator(app_state, mock_agent, mock_screen, mode=AgentMode.INTERACTIVE, max_steps=3):
-    """Build an OmniAgent with all external calls mocked out."""
-    from omnitool.gradio.core.agents import OmniAgent
-    from pathlib import Path
-
-    orch = OmniAgent(
-        model_name="omniparser + gpt-4o",
-        llm_client=mock_agent,
+    orch = VLMAgent(
+        model_name="gpt-4o",
+        llm_client=llm_client,
         state=app_state,
         tools_collection=Mock(),
-        save_folder=Path(app_state.run_folder),
-        omniparser_client=Mock(),
+        save_folder=app_state.session.run_folder,
+        grounding_strategy=grounding,
         max_steps=max_steps,
         mode=mode,
     )
 
-    orch._capture_screen = Mock(return_value=mock_screen)
+    # _do_capture must update working_memory (VLMAgent.run() reads from it)
+    def do_capture():
+        orch.working_memory.screen_data = screen_data
+        orch.working_memory.parsed_screen = {
+            "raw_image_base64": screen_data.raw_image_b64,
+            "som_image_base64": screen_data.display_image_b64,
+            "screen_width": screen_data.screen_width,
+            "screen_height": screen_data.screen_height,
+            "resized_screen_width": screen_data.resized_width,
+            "resized_screen_height": screen_data.resized_height,
+            "parsed_content_list": screen_data.elements,
+        }
+        return screen_data
+
+    orch._do_capture = Mock(side_effect=do_capture)
+
+    # Bypass checklist generation by default — tests that need it override this
+    orch._generate_checklist = Mock(return_value=Checklist.from_llm_json(PLAN_JSON))
+
+    # Mock execute_tool_calls to return success
+    orch.execute_tool_calls = Mock(return_value=[{
+        "tool": "computer",
+        "status": "success",
+        "result": Mock(output="ok", error=""),
+    }])
+
+    # Mock _reflect to set a default ledger; orchestrated tests may override
+    def fake_reflect(**kwargs):
+        orch.working_memory.ledger = REFLECT_JSON
+
+    orch._reflect = Mock(side_effect=fake_reflect)
+
     return orch
 
 
@@ -170,7 +265,7 @@ class TestChecklistMutations:
     def test_apply_updates_unknown_id_ignored(self):
         c = Checklist.from_user_text("1. A")
         c.apply_updates([{"id": 99, "status": "done"}])
-        assert c.items[0].status == "pending"  # unchanged
+        assert c.items[0].status == "pending"
 
     def test_all_done_false_when_pending(self):
         c = Checklist.from_user_text("1. A\n2. B")
@@ -241,210 +336,166 @@ class TestPromptTemplates:
 
 
 # ===========================================================================
-# Orchestrator — INTERACTIVE mode
+# VLMAgent — INTERACTIVE mode
 # ===========================================================================
 
 class TestOrchestratorInteractive:
-    def test_yields_step_events(self, app_state, mock_agent, mock_screen):
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.INTERACTIVE, max_steps=2)
+    def test_yields_step_events(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.INTERACTIVE, max_steps=2)
         events = list(orch.run())
         types = [e["type"] for e in events]
         assert "status" in types
         assert "step" in types
         assert "action_result" in types
 
-    def test_stops_when_no_tool_calls(self, app_state, mock_agent, mock_screen):
-        mock_agent.plan.return_value = {
-            "response_text": "Task is done.",
-            "tool_calls": [],
-            "metadata": {"tokens": 10},
-            "cost": 0.0,
-        }
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.INTERACTIVE, max_steps=5)
+    def test_stops_when_no_tool_calls(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.INTERACTIVE, max_steps=5)
+        orch.llm_client.generate.side_effect = [_empty_response()]
         events = list(orch.run())
         types = [e["type"] for e in events]
         assert "assistant_reply" in types
-        # Should stop after step 1
-        step_events = [e for e in events if e["type"] == "step"]
-        assert len(step_events) == 1
+        assert len([e for e in events if e["type"] == "step"]) == 1
 
-    def test_no_reflect_in_interactive_mode(self, app_state, mock_agent, mock_screen):
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.INTERACTIVE, max_steps=2)
+    def test_no_reflect_in_interactive_mode(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.INTERACTIVE, max_steps=2)
         list(orch.run())
-        # LLM client on agent should not be called for reflect in interactive mode
-        assert mock_agent.llm_client.generate.call_count == 0
+        orch._reflect.assert_not_called()
 
-    def test_repeated_action_detection_stops_loop(self, app_state, mock_agent, mock_screen):
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.INTERACTIVE, max_steps=20)
+    def test_repeated_action_detection_stops_loop(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.INTERACTIVE, max_steps=20)
         # Pre-populate trajectory with 4 identical actions so 5th triggers detection
         for i in range(4):
-            orch.trajectory.append({
+            orch.working_memory.trajectory.append({
                 "step": i + 1,
                 "tool_calls": [{"action": "left_click", "coordinate": [100, 200]}],
             })
         orch.step_count = 4
+        orch.llm_client.generate.side_effect = [_tool_response()] * 20
         events = list(orch.run())
         types = [e["type"] for e in events]
         assert "assistant_reply" in types
-        # Stopped early — not 20 steps
-        step_events = [e for e in events if e["type"] == "step"]
-        assert len(step_events) <= 2
+        assert len([e for e in events if e["type"] == "step"]) <= 2
 
-    def test_complete_event_always_yielded(self, app_state, mock_agent, mock_screen):
-        mock_agent.plan.return_value = {"response_text": "done", "tool_calls": [], "metadata": {"tokens": 5}, "cost": 0.0}
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen)
+    def test_complete_event_always_yielded(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.INTERACTIVE)
+        orch.llm_client.generate.side_effect = [_empty_response()]
         events = list(orch.run())
         assert events[-1]["type"] == "complete"
 
-    def test_error_event_on_exception(self, app_state, mock_agent, mock_screen):
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen)
-        orch._capture_screen = Mock(side_effect=RuntimeError("camera broken"))
+    def test_complete_event_has_required_fields(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.INTERACTIVE)
+        orch.llm_client.generate.side_effect = [_empty_response()]
+        complete = list(orch.run())[-1]
+        assert complete["type"] == "complete"
+        assert "message" in complete
+        assert "success" in complete
+        assert "total_steps" in complete
+        assert "total_tokens" in complete
+
+    def test_error_event_on_exception(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.INTERACTIVE)
+        orch._do_capture = Mock(side_effect=RuntimeError("camera broken"))
         events = list(orch.run())
         assert any(e["type"] == "error" for e in events)
 
 
 # ===========================================================================
-# Orchestrator — ORCHESTRATED mode
+# VLMAgent — ORCHESTRATED mode
 # ===========================================================================
 
-PLAN_JSON = json.dumps([
-    {"id": 1, "step": "Open Notepad", "verification_hint": "Notepad window visible"},
-    {"id": 2, "step": "Type hello world", "verification_hint": "Text appears in editor"},
-])
-
-REFLECT_JSON = json.dumps({
-    "is_request_satisfied": {"reason": "not done yet", "answer": False},
-    "is_in_loop": {"reason": "no loop", "answer": False},
-    "next_step_hint": {"reason": "", "answer": "Type hello world"},
-    "checklist_updates": [{"id": 1, "status": "done"}],
-})
-
-
 class TestOrchestratorOrchestrated:
-    def test_plan_event_yielded(self, app_state, mock_agent, mock_screen):
-        mock_agent.llm_client.generate.return_value = (PLAN_JSON, {"tokens": 80})
-        mock_agent._extract_data.side_effect = lambda text, fmt: text
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=1)
+    def test_plan_event_yielded(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.ORCHESTRATED, max_steps=1)
         events = list(orch.run())
         plan_events = [e for e in events if e["type"] == "plan"]
         assert len(plan_events) == 1
         assert "checklist" in plan_events[0]
 
-    def test_checklist_built_from_plan(self, app_state, mock_agent, mock_screen):
-        mock_agent.llm_client.generate.return_value = (PLAN_JSON, {"tokens": 80})
-        mock_agent._extract_data.side_effect = lambda text, fmt: text
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=1)
+    def test_checklist_built_from_plan(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.ORCHESTRATED, max_steps=1)
         list(orch.run())
-        assert orch.checklist is not None
-        assert len(orch.checklist.items) == 2
+        assert orch.working_memory.checklist is not None
+        assert len(orch.working_memory.checklist.items) == 2
 
-    def test_reflect_skipped_on_step_1(self, app_state, mock_agent, mock_screen):
-        # Only one generate call expected: the plan call. Reflect should not fire on step 1.
-        mock_agent.llm_client.generate.return_value = (PLAN_JSON, {"tokens": 80})
-        mock_agent._extract_data.side_effect = lambda text, fmt: text
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=1)
+    def test_reflect_fires_on_step_1(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.ORCHESTRATED, max_steps=1)
         list(orch.run())
-        # Only the plan LLM call, no reflect call on step 1
-        assert mock_agent.llm_client.generate.call_count == 1
+        orch._reflect.assert_called_once()
 
-    def test_reflect_fires_on_step_2(self, app_state, mock_agent, mock_screen):
-        # Step 1: plan call. Step 2: plan + reflect.
-        call_count = [0]
-        def side_effect(messages, system_prompt):
-            call_count[0] += 1
-            if call_count[0] == 1:  # plan
-                return (PLAN_JSON, {"tokens": 80})
-            return (REFLECT_JSON, {"tokens": 60})
-
-        mock_agent.llm_client.generate.side_effect = side_effect
-        mock_agent._extract_data.side_effect = lambda text, fmt: text
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=2)
-        events = list(orch.run())
-        ledger_events = [e for e in events if e["type"] == "ledger"]
-        assert len(ledger_events) == 1  # Only on step 2
-
-    def test_reflect_updates_checklist_statuses(self, app_state, mock_agent, mock_screen):
-        call_count = [0]
-        def side_effect(messages, system_prompt):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return (PLAN_JSON, {"tokens": 80})
-            return (REFLECT_JSON, {"tokens": 60})
-
-        mock_agent.llm_client.generate.side_effect = side_effect
-        mock_agent._extract_data.side_effect = lambda text, fmt: text
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=2)
+    def test_reflect_fires_every_step(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.ORCHESTRATED, max_steps=2)
+        orch.llm_client.generate.side_effect = [_tool_response(), _tool_response()]
         list(orch.run())
-        assert orch.checklist is not None
-        assert orch.checklist.items[0].status == "done"  # updated by REFLECT_JSON
+        assert orch._reflect.call_count == 2
 
-    def test_initial_screen_reused_on_step_1(self, app_state, mock_agent, mock_screen):
-        mock_agent.llm_client.generate.return_value = (PLAN_JSON, {"tokens": 80})
-        mock_agent._extract_data.side_effect = lambda text, fmt: text
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=1)
+    def test_reflect_updates_checklist_statuses(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.ORCHESTRATED, max_steps=1)
+
+        def fake_reflect_with_update(**kwargs):
+            orch.working_memory.ledger = REFLECT_JSON
+            orch.working_memory.checklist.apply_updates([{"id": 1, "status": "done"}])
+
+        orch._reflect = Mock(side_effect=fake_reflect_with_update)
         list(orch.run())
-        # init capture (1) + verify screen_after on step 1 (1) = 2 total
-        # Observe on step 1 reuses _initial_screen (no capture)
-        assert orch._capture_screen.call_count == 2
+        assert orch.working_memory.checklist.items[0].status == "done"
 
-    def test_task_complete_when_all_checklist_done(self, app_state, mock_agent, mock_screen):
-        all_done_reflect = json.dumps({
-            "is_request_satisfied": {"reason": "complete", "answer": False},
-            "is_in_loop": {"reason": "", "answer": False},
-            "next_step_hint": {"reason": "", "answer": ""},
-            "checklist_updates": [
+    def test_capture_called_each_step(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.ORCHESTRATED, max_steps=2)
+        list(orch.run())
+        # 1 pre-loop + 1 observe/step + 1 post-action/step = at least 3 for max_steps=2
+        assert orch._do_capture.call_count >= 3
+
+    def test_task_complete_when_satisfied_and_all_done(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.ORCHESTRATED, max_steps=5)
+
+        def fake_reflect_done(**kwargs):
+            orch.working_memory.ledger = REFLECT_DONE_JSON
+            orch.working_memory.checklist.apply_updates([
                 {"id": 1, "status": "done"},
                 {"id": 2, "status": "done"},
-            ],
-        })
-        call_count = [0]
-        def side_effect(messages, system_prompt):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return (PLAN_JSON, {"tokens": 80})
-            return (all_done_reflect, {"tokens": 60})
+            ])
 
-        mock_agent.llm_client.generate.side_effect = side_effect
-        mock_agent._extract_data.side_effect = lambda text, fmt: text
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.ORCHESTRATED, max_steps=5)
+        orch._reflect = Mock(side_effect=fake_reflect_done)
         events = list(orch.run())
-        reply_events = [e for e in events if e["type"] == "assistant_reply"]
-        assert len(reply_events) == 1
-        # Only reached step 2 (plan on 1, reflect+stop on 2)
-        step_events = [e for e in events if e["type"] == "step"]
-        assert len(step_events) == 2
+        assert any(e["type"] == "assistant_reply" for e in events)
+        # Stopped after step 1 — didn't run to max_steps
+        assert len([e for e in events if e["type"] == "step"]) == 1
 
 
 # ===========================================================================
-# Orchestrator — TASK mode
+# VLMAgent — TASK mode
 # ===========================================================================
 
 class TestOrchestratorTask:
-    def test_task_mode_no_longer_errors(self, app_state, mock_agent, mock_screen):
-        mock_agent.llm_client.generate.return_value = (REFLECT_JSON, {"tokens": 60})
-        mock_agent._extract_data.side_effect = lambda text, fmt: text
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.TASK, max_steps=1)
+    def test_task_mode_runs_without_error(self, app_state):
+        orch = _make_orchestrator(app_state, AgentMode.TASK, max_steps=1)
         events = list(orch.run())
-        assert not any(e.get("message", "").startswith("Task mode is not yet") for e in events if e["type"] == "error")
+        assert not any(
+            e.get("message", "").startswith("Task mode is not yet")
+            for e in events if e["type"] == "error"
+        )
 
-    def test_task_checklist_from_numbered_message(self, app_state, mock_agent, mock_screen):
+    def test_task_checklist_from_numbered_message(self, app_state):
         app_state.chat.messages[0]["content"] = "1. Open Notepad\n2. Type hello\n3. Save file"
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.TASK, max_steps=1)
+        orch = _make_orchestrator(app_state, AgentMode.TASK, max_steps=1)
+        orch._generate_checklist = Mock(
+            return_value=Checklist.from_user_text("1. Open Notepad\n2. Type hello\n3. Save file")
+        )
         events = list(orch.run())
         plan_events = [e for e in events if e["type"] == "plan"]
         assert len(plan_events) == 1
         assert len(plan_events[0]["checklist"]) == 3
 
-    def test_task_plan_event_before_first_step(self, app_state, mock_agent, mock_screen):
+    def test_task_plan_event_before_first_step(self, app_state):
         app_state.chat.messages[0]["content"] = "1. Step A\n2. Step B"
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.TASK, max_steps=1)
+        orch = _make_orchestrator(app_state, AgentMode.TASK, max_steps=1)
         events = list(orch.run())
-        indices = {e["type"]: i for i, e in enumerate(events)}
-        # plan event must come before first step event
-        assert indices["plan"] < indices["step"]
+        event_types = [e["type"] for e in events]
+        assert "plan" in event_types and "step" in event_types
+        assert event_types.index("plan") < event_types.index("step")
 
-    def test_task_llm_fallback_for_prose(self, app_state, mock_agent, mock_screen):
-        """Multi-line prose with no list structure triggers LLM fallback parse."""
+    def test_task_llm_fallback_for_prose(self, app_state):
+        """Prose task with no list structure — LLM fallback produces structured checklist."""
         parsed_checklist = json.dumps([
             {"id": 1, "step": "Open browser", "verification_hint": "Browser open"},
             {"id": 2, "step": "Search for cats", "verification_hint": "Results shown"},
@@ -454,183 +505,180 @@ class TestOrchestratorTask:
             "Please open the browser first,\n"
             "then search for cats on Google."
         )
-        mock_agent.llm_client.generate.return_value = (parsed_checklist, {"tokens": 40})
-        mock_agent._extract_data.side_effect = lambda text, fmt: text
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen, AgentMode.TASK, max_steps=1)
+        orch = _make_orchestrator(app_state, AgentMode.TASK, max_steps=1)
+        orch._generate_checklist = Mock(
+            return_value=Checklist.from_llm_json(parsed_checklist)
+        )
         events = list(orch.run())
         plan_events = [e for e in events if e["type"] == "plan"]
-        # LLM fallback should have produced 2 items
         assert len(plan_events[0]["checklist"]) == 2
 
 
 # ===========================================================================
-# VLMAgent — message preparation and tool-call parsing
+# VLMAgent — _build_observation (message construction)
 # ===========================================================================
 
-class TestVLMAgentPrepareMessages:
+class TestVLMAgentBuildObservation:
     def _make_agent(self, tmp_path):
-        from omnitool.gradio.core.agents import OmniAgent
-        llm_client = Mock()
-        state = AppState(run_folder=tmp_path)
-        tools = Mock()
-        agent = OmniAgent("omniparser + gpt-4o", llm_client, state, tools, tmp_path, omniparser_client=Mock())
-        return agent
+        from omnitool.gradio.core.agents import VLMAgent
+        grounding = Mock()
+        grounding.name = "omniparser"
+        grounding.element_reference_hint = ""
+        grounding.get_tools.return_value = []
+        return VLMAgent(
+            model_name="gpt-4o",
+            llm_client=Mock(),
+            state=AppState(run_folder=tmp_path),
+            tools_collection=Mock(),
+            save_folder=tmp_path,
+            grounding_strategy=grounding,
+        )
 
-    def test_som_image_attached_when_available(self, tmp_path):
+    def test_som_image_included_when_available(self, tmp_path):
+        from omnitool.gradio.core.agents.grounding import ScreenData
         agent = self._make_agent(tmp_path)
-        messages = [{"role": "user", "content": "do task"}]
-        parsed_screen = {
-            "som_image_base64": "sombase64data",
-            "parsed_content_list": [],
-        }
-        prepared = agent._format_messages(messages, parsed_screen)
-        last = prepared[-1]
-        # Content should be a list (multipart) with an image_url entry
-        assert isinstance(last["content"], list)
-        types = [part.get("type") for part in last["content"]]
-        assert "image_url" in types
+        screen = ScreenData("rawb64", "somb64", [], 1920, 1080, 1920, 1080)
+        obs = agent._build_observation(screen, "click start")
+        assert any(b.get("type") == "image_url" for b in obs["content"])
 
-    def test_text_fallback_when_no_som(self, tmp_path):
+    def test_no_image_block_when_display_image_empty(self, tmp_path):
+        from omnitool.gradio.core.agents.grounding import ScreenData
         agent = self._make_agent(tmp_path)
-        messages = [{"role": "user", "content": "do task"}]
-        parsed_screen = {
-            "som_image_base64": "",
-            "parsed_content_list": [{"content": "button"}],
-        }
-        prepared = agent._format_messages(messages, parsed_screen)
-        last = prepared[-1]
-        assert isinstance(last["content"], str)
-        assert "screen_elements" in last["content"]
+        screen = ScreenData("rawb64", "", [], 1920, 1080, 1920, 1080)
+        obs = agent._build_observation(screen, "")
+        assert not any(b.get("type") == "image_url" for b in obs["content"])
 
-    def test_screen_description_not_injected_when_som_present(self, tmp_path):
+    def test_elements_text_included_when_present(self, tmp_path):
+        from omnitool.gradio.core.agents.grounding import ScreenData
         agent = self._make_agent(tmp_path)
-        messages = [{"role": "user", "content": "do task"}]
-        parsed_screen = {
-            "som_image_base64": "fakeb64",
-            "parsed_content_list": [],
-        }
-        prepared = agent._format_messages(messages, parsed_screen)
-        last = prepared[-1]
-        # Content is a single image_url entry — no text parts at all
-        assert isinstance(last["content"], list)
-        assert all(p.get("type") == "image_url" for p in last["content"])
+        screen = ScreenData("rawb64", "", [{"content": "Start btn", "bbox": [0, 0, 1, 1]}], 1920, 1080, 1920, 1080)
+        obs = agent._build_observation(screen, "")
+        text = " ".join(b["text"] for b in obs["content"] if b.get("type") == "text")
+        assert "screen_elements" in text
 
-
-class TestVLMAgentParseToolCalls:
-    def _make_agent(self, tmp_path):
-        from omnitool.gradio.core.agents import OmniAgent
-        return OmniAgent("test", Mock(), AppState(run_folder=tmp_path), Mock(), tmp_path, omniparser_client=Mock())
-
-    def test_left_click_with_box_id(self, tmp_path):
+    def test_subtask_included_in_content(self, tmp_path):
+        from omnitool.gradio.core.agents.grounding import ScreenData
         agent = self._make_agent(tmp_path)
-        response = '```json\n{"Reasoning": "click", "Next Action": "left_click", "Box ID": 0}\n```'
-        parsed_screen = {
-            "parsed_content_list": [{"bbox": [0.0, 0.0, 0.2, 0.1]}],
-            "screen_width": 1000,
-            "screen_height": 1000,
-        }
-        calls = agent._parse_response(response, parsed_screen)
-        actions = [c["action"] for c in calls]
-        assert "mouse_move" in actions
-        assert "left_click" in actions
-
-    def test_type_action(self, tmp_path):
-        agent = self._make_agent(tmp_path)
-        response = '{"Next Action": "type", "value": "hello world"}'
-        calls = agent._parse_response(response, {"parsed_content_list": [], "screen_width": 1920, "screen_height": 1080})
-        assert any(c["action"] == "type" and c.get("text") == "hello world" for c in calls)
-
-    def test_none_action_returns_empty(self, tmp_path):
-        agent = self._make_agent(tmp_path)
-        response = '{"Next Action": "None", "Reasoning": "task complete"}'
-        calls = agent._parse_response(response, {"parsed_content_list": [], "screen_width": 1920, "screen_height": 1080})
-        assert calls == []
-
-    def test_invalid_json_returns_empty(self, tmp_path):
-        agent = self._make_agent(tmp_path)
-        calls = agent._parse_response("not json", {"parsed_content_list": [], "screen_width": 1920, "screen_height": 1080})
-        assert calls == []
-
-    def test_invalid_box_id_skips_coordinate(self, tmp_path):
-        agent = self._make_agent(tmp_path)
-        response = '{"Next Action": "left_click", "Box ID": 999}'
-        calls = agent._parse_response(response, {"parsed_content_list": [], "screen_width": 1920, "screen_height": 1080})
-        # Should still produce a left_click, just no mouse_move (no coordinate)
-        actions = [c["action"] for c in calls]
-        assert "mouse_move" not in actions
-        assert "left_click" in actions
+        screen = ScreenData("rawb64", "somb64", [], 1920, 1080, 1920, 1080)
+        obs = agent._build_observation(screen, "click the save button")
+        text = " ".join(b["text"] for b in obs["content"] if b.get("type") == "text")
+        assert "click the save button" in text
 
 
 # ===========================================================================
-# Orchestrator — _verify_step (no LLM)
+# VLMAgent — _handle_read_field and _get_tools
+# ===========================================================================
+
+class TestVLMAgentReadField:
+    def _make_agent(self, tmp_path):
+        from omnitool.gradio.core.agents import VLMAgent
+        grounding = Mock()
+        grounding.name = "omniparser"
+        grounding.element_reference_hint = ""
+        grounding.get_tools.return_value = []
+        return VLMAgent(
+            model_name="gpt-4o",
+            llm_client=Mock(),
+            state=AppState(run_folder=tmp_path),
+            tools_collection=Mock(),
+            save_folder=tmp_path,
+            grounding_strategy=grounding,
+        )
+
+    def test_new_field_captured(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        result = agent._handle_read_field({"field_name": "price", "value": "12.99"})
+        assert agent.working_memory.facts["price"] == "12.99"
+        assert "12.99" in result
+
+    def test_empty_field_name_returns_error(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        result = agent._handle_read_field({"field_name": "", "value": "x"})
+        assert "error" in result.lower()
+        assert not agent.working_memory.facts
+
+    def test_same_value_returns_existing_value(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        agent.working_memory.facts["price"] = "12.99"
+        result = agent._handle_read_field({"field_name": "price", "value": "12.99"})
+        assert "12.99" in result
+        assert agent.working_memory.facts["price"] == "12.99"  # unchanged
+
+    def test_different_value_overwrites(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        agent.working_memory.facts["price"] = "12.99"
+        result = agent._handle_read_field({"field_name": "price", "value": "9.99"})
+        assert agent.working_memory.facts["price"] == "9.99"
+        assert "9.99" in result
+
+    def test_get_tools_includes_read_field(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        tools = agent._get_tools()
+        names = [t["function"]["name"] for t in tools]
+        assert "read_field" in names
+
+
+# ===========================================================================
+# _verify_step and _compare_screens
 # ===========================================================================
 
 class TestVerifyStep:
-    def test_no_error_no_repeat(self, app_state, mock_agent, mock_screen):
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen)
-        tool_results = [
-            {"status": "success", "result": Mock(output="ok", error="")}
-        ]
-        result = orch._verify_step(tool_results)
+    def test_no_error_no_repeat(self, app_state):
+        orch = _make_orchestrator(app_state)
+        result = orch._verify_step([{"status": "success", "result": Mock(output="ok", error="")}])
         assert not result["has_error"]
         assert not result["is_repeated"]
         assert not result["screen_unchanged"]
 
-    def test_detects_tool_error(self, app_state, mock_agent, mock_screen):
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen)
-        tool_results = [{"status": "error", "error": "tool crashed"}]
-        result = orch._verify_step(tool_results)
+    def test_detects_tool_error(self, app_state):
+        orch = _make_orchestrator(app_state)
+        result = orch._verify_step([{"status": "error", "error": "tool crashed"}])
         assert result["has_error"]
         assert "tool crashed" in result["error_detail"]
 
-    def test_detects_repeated_action(self, app_state, mock_agent, mock_screen):
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen)
+    def test_detects_repeated_action(self, app_state):
+        orch = _make_orchestrator(app_state)
         for i in range(5):
-            orch.trajectory.append({
+            orch.working_memory.trajectory.append({
                 "step": i + 1,
                 "tool_calls": [{"action": "left_click", "coordinate": [100, 200]}],
             })
-        result = orch._verify_step([])
-        assert result["is_repeated"]
+        assert orch._verify_step([])["is_repeated"]
 
-    def test_screen_unchanged_when_same_image(self, app_state, mock_agent, mock_screen):
-        from omnitool.gradio.core.agents import BaseAgent as OmniAgent
+    def test_screen_unchanged_when_same_image(self):
+        from omnitool.gradio.core.agents import BaseAgent
         screen_a = {"som_image_base64": "abc123", "parsed_content_list": []}
         screen_b = {"som_image_base64": "abc123", "parsed_content_list": []}
-        result = OmniAgent._compare_screens(screen_a, screen_b)
-        assert result is True
+        assert BaseAgent._compare_screens(screen_a, screen_b) is True
 
-    def test_screen_changed_when_different_image(self, app_state, mock_agent, mock_screen):
-        from omnitool.gradio.core.agents import BaseAgent as OmniAgent
+    def test_screen_changed_when_different_image(self):
+        from omnitool.gradio.core.agents import BaseAgent
         screen_a = {"som_image_base64": "abc123", "parsed_content_list": []}
         screen_b = {"som_image_base64": "xyz789", "parsed_content_list": []}
-        result = OmniAgent._compare_screens(screen_a, screen_b)
-        assert result is False
+        assert BaseAgent._compare_screens(screen_a, screen_b) is False
 
-    def test_screen_fallback_to_content_list(self, app_state, mock_agent, mock_screen):
-        from omnitool.gradio.core.agents import BaseAgent as OmniAgent
+    def test_screen_fallback_to_content_list(self):
+        from omnitool.gradio.core.agents import BaseAgent
         screen_a = {"som_image_base64": "", "parsed_content_list": [{"content": "A"}]}
         screen_b = {"som_image_base64": "", "parsed_content_list": [{"content": "A"}]}
-        assert OmniAgent._compare_screens(screen_a, screen_b) is True
-
+        assert BaseAgent._compare_screens(screen_a, screen_b) is True
         screen_c = {"som_image_base64": "", "parsed_content_list": [{"content": "B"}]}
-        assert OmniAgent._compare_screens(screen_a, screen_c) is False
+        assert BaseAgent._compare_screens(screen_a, screen_c) is False
 
-    def test_screen_compare_returns_false_on_missing(self, app_state, mock_agent, mock_screen):
-        from omnitool.gradio.core.agents import BaseAgent as OmniAgent
-        # Missing either screen → safely report "changed" (don't false-stop)
-        assert OmniAgent._compare_screens(None, None) is False
-        assert OmniAgent._compare_screens({"som_image_base64": "x"}, None) is False
+    def test_screen_compare_returns_false_on_missing(self):
+        from omnitool.gradio.core.agents import BaseAgent
+        assert BaseAgent._compare_screens(None, None) is False
+        assert BaseAgent._compare_screens({"som_image_base64": "x"}, None) is False
 
-    def test_verify_step_screen_unchanged_flag(self, app_state, mock_agent, mock_screen):
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen)
-        same_screen = {"som_image_base64": "identical", "parsed_content_list": []}
-        result = orch._verify_step([], same_screen, same_screen)
-        assert result["screen_unchanged"] is True
+    def test_verify_step_screen_unchanged_flag(self, app_state):
+        orch = _make_orchestrator(app_state)
+        same = {"som_image_base64": "identical", "parsed_content_list": []}
+        orch.working_memory.parsed_screen = same   # "before"
+        assert orch._verify_step([], same)["screen_unchanged"] is True
 
-    def test_verify_step_screen_changed_flag(self, app_state, mock_agent, mock_screen):
-        orch = _make_orchestrator(app_state, mock_agent, mock_screen)
+    def test_verify_step_screen_changed_flag(self, app_state):
+        orch = _make_orchestrator(app_state)
         before = {"som_image_base64": "before_data", "parsed_content_list": []}
         after  = {"som_image_base64": "after_data",  "parsed_content_list": []}
-        result = orch._verify_step([], before, after)
-        assert result["screen_unchanged"] is False
+        orch.working_memory.parsed_screen = before  # "before"
+        assert orch._verify_step([], after)["screen_unchanged"] is False

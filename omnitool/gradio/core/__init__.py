@@ -3,8 +3,7 @@
 from omnitool.gradio.core.agents import (
     AnthropicAgent,
     BaseAgent,
-    GTAAgent,
-    OmniAgent,
+    VLMAgent,
     create_agent,
 )
 from omnitool.gradio.core.agents.checklist import Checklist, ChecklistItem
@@ -19,9 +18,8 @@ from omnitool.gradio.core.tools import (
 __all__ = [
     # Agents
     "BaseAgent",
-    "OmniAgent",
+    "VLMAgent",
     "AnthropicAgent",
-    "GTAAgent",
     "create_agent",
     # Checklist
     "Checklist",
