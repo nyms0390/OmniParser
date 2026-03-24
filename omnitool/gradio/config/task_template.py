@@ -206,11 +206,11 @@ def load_task_template(path: str) -> TaskProcedure:
 
     if isinstance(data, list):
         procedures = data
-    elif isinstance(data, dict) and "procedure" in data:
-        procedures = data["procedure"]
+    elif isinstance(data, dict) and "procedures" in data:
+        procedures = data["procedures"]
         if not isinstance(procedures, list):
             raise ValueError(
-                f"Task template '{path}': 'procedure' key must contain a list."
+                f"Task template '{path}': 'procedures' key must contain a list."
             )
     else:
         raise ValueError(

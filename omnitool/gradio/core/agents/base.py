@@ -138,6 +138,7 @@ class BaseAgent(ABC):
 
         # Orchestration state
         self.working_memory = WorkingMemory()
+        self._reflect_done = False
 
     # ------------------------------------------------------------------
     # Lifecycle & accounting
@@ -575,7 +576,7 @@ class BaseAgent(ABC):
         """
         messages = self.state.chat.messages
         if not self.working_memory.task:
-            self.working_memory.task = messages[0]["content"] if messages else ""
+            self.working_memory.task = _extract_text_content(messages[0]["content"]) if messages else ""
         plan_prompt = CHECKLIST_GEN_PROMPT.format(task=self.working_memory.task)
         plan_messages = copy.deepcopy(messages)
 
@@ -877,7 +878,7 @@ class BaseAgent(ABC):
             )
             return "extraction failed"
 
-        if not rx and not ry:
+        if rx == 0 and ry == 0:
             logger.debug(
                 "_read_field_via_clipboard: zero coordinates for %r — field not visible",
                 field_name,
@@ -1192,6 +1193,16 @@ class BaseAgent(ABC):
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+def _extract_text_content(content) -> str:
+    """Extract plain text from a message content that may be a string or a list of blocks."""
+    if isinstance(content, list):
+        return " ".join(
+            block.get("text", "") for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ).strip()
+    return str(content) if content is not None else ""
+
 
 def _evict_old_images(history: List[Dict[str, Any]]) -> None:
     """Replace image_url blocks in all but the last user message with a placeholder.

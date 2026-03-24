@@ -27,7 +27,7 @@ from typing import Any, Dict, Generator, List, Optional
 from omnitool.gradio.app.state import AppState
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import AgentMode, COMPACTION_PROMPT, build_react_system_prompt
-from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images
+from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images, _extract_text_content
 from omnitool.gradio.core.agents.grounding import GroundingStrategy, ScreenData
 from omnitool.gradio.core.tools.schemas import FINISH_TOOL
 
@@ -127,7 +127,7 @@ class ReActAgent(BaseAgent):
             # (Other agents get this via _generate_checklist; ReActAgent skips that call.)
             if not self.working_memory.task:
                 chat_messages = self.state.chat.messages
-                self.working_memory.task = chat_messages[0]["content"] if chat_messages else ""
+                self.working_memory.task = _extract_text_content(chat_messages[0]["content"]) if chat_messages else ""
 
             # Seed history with the task as the first user message.
             task = self.working_memory.task or ""

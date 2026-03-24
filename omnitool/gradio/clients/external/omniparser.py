@@ -45,9 +45,9 @@ class OmniParserClient(BaseServiceClient):
             
         Returns:
             Dictionary with:
-                - som_image_base64: Semantic object map
-                - original_screenshot_base64: Original screenshot
-                - screen_info: Parsed screen information
+                - labeled_screenshot_base64: SOM-annotated screenshot
+                - parsed_content_list: List of detected UI elements
+                - screen_info: Parsed screen information (added if absent)
                 - latency: Processing time
                 
         Raises:
