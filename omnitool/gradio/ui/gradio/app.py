@@ -111,7 +111,7 @@ class GradioApp:
                         choices=GROUNDING_CHOICES,
                         value=DEFAULT_GROUNDING,
                         label="Grounding",
-                        visible=False,  # shown only when ReActAgent is selected
+                        visible=True,  # shown for VLMAgent and ReActAgent
                     )
                     model_dropdown = gr.Dropdown(
                         choices=get_model_choices(),
@@ -316,8 +316,8 @@ class GradioApp:
             return [{"role": "assistant", "content": error_msg}]
 
     def on_agent_change(self, agent_type: str):
-        """Show the grounding dropdown only when ReActAgent is selected."""
-        return gr.update(visible=(agent_type == "ReActAgent"))
+        """Show the grounding dropdown for VLMAgent and ReActAgent."""
+        return gr.update(visible=(agent_type in ("VLMAgent", "ReActAgent")))
 
     def on_model_change(self, model_name: str) -> Tuple:
         """Handle model selection change.

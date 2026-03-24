@@ -40,8 +40,6 @@ def create_agent(
 
     Args:
         agent_type: Agent class name ("VLMAgent", "AnthropicAgent", "ReActAgent").
-            Legacy names "OmniAgent" and "GTAAgent" are accepted as aliases for
-            "VLMAgent" with omniparser and gta1 grounding respectively.
         model_name: LLM model ID from LLM_MODELS (e.g. "gpt-4o").
         state: Application runtime state.
         tools_collection: Available tools.
@@ -107,12 +105,9 @@ def create_agent(
         extract_fields=extract_fields,
     )
 
-    if agent_type in ("VLMAgent", "OmniAgent", "GTAAgent"):
-        # Legacy aliases: OmniAgent → omniparser grounding, GTAAgent → gta1 grounding
-        effective_grounding = "omniparser" if agent_type == "OmniAgent" else \
-                              "gta1"        if agent_type == "GTAAgent" else grounding
+    if agent_type == "VLMAgent":
         strategy, grounding_kwargs = _resolve_grounding(
-            effective_grounding, omniparser_client, gta1_url, agent_type
+            grounding, omniparser_client, gta1_url, agent_type
         )
         return VLMAgent(grounding_strategy=strategy, **grounding_kwargs, **common)
 
