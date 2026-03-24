@@ -60,6 +60,14 @@ _SCROLL = {
                     "enum": ["up", "down"],
                     "description": "Scroll direction.",
                 },
+                "amount": {
+                    "type": "integer",
+                    "description": (
+                        "Scroll multiplier (default 1). "
+                        "Use 3–5 for longer pages or lazy-loading web content."
+                    ),
+                    "default": 1,
+                },
             },
             "required": ["direction"],
         },

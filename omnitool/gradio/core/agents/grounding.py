@@ -119,6 +119,7 @@ class GroundingStrategy(ABC):
         elif tool_name == "scroll":
             direction = arguments.get("direction", "down")
             dispatch["action"] = f"scroll_{direction}"
+            dispatch["amount"] = int(arguments.get("amount", 1))
         # "wait" — bare dispatch, no extra args needed
 
         return dispatch

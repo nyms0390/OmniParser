@@ -86,9 +86,9 @@ class ComputerTool(BaseTool):
             elif action == "cursor_position":
                 return self._cursor_position()
             elif action == "scroll_up":
-                return self._scroll(100)
+                return self._scroll(100 * kwargs.get("amount", 1))
             elif action == "scroll_down":
-                return self._scroll(-100)
+                return self._scroll(-100 * kwargs.get("amount", 1))
             elif action == "middle_click":
                 return self._middle_click()
             elif action == "hover":
@@ -314,11 +314,15 @@ class ComputerTool(BaseTool):
             return ToolResult(error=f"Drag failed: {str(e)}")
     
     def _type(self, kwargs: Dict) -> ToolResult:
-        """Type text using keyboard.
-        
+        """Type text by setting the clipboard and pasting via Ctrl+V.
+
+        Using paste instead of pyautogui.typewrite() avoids two problems:
+        - typewrite() silently drops non-ASCII characters (Unicode, CJK, symbols).
+        - typewrite() is slow due to per-character key delays.
+
         Args:
             kwargs: Must contain 'text' to type
-            
+
         Returns:
             ToolResult
         """
@@ -326,25 +330,26 @@ class ComputerTool(BaseTool):
             text = kwargs.get("text")
             if not text:
                 return ToolResult(error="text parameter required")
-            
-            logger.debug(f"Typing: {text}")
-            
-            # Click to focus before typing (matches legacy behavior)
-            self.windows_host_client.execute_pyautogui_command(
-                "pyautogui.click()",
-                parse_output=False
+
+            logger.debug(f"Typing (via paste): {text}")
+
+            # Set clipboard on the remote Windows host using pyperclip.
+            # repr() produces a properly-escaped Python string literal so that
+            # quotes, backslashes, and any Unicode in `text` survive the
+            # python -c argument boundary safely.
+            text_repr = repr(text)
+            self.windows_host_client.execute_command(
+                ["python", "-c", f"import pyperclip; pyperclip.copy({text_repr})"],
+                shell=False,
+                parse_output=False,
             )
-            
-            # Type text and click
+
+            # Paste into the focused field.
             self.windows_host_client.execute_pyautogui_command(
-                f"pyautogui.typewrite('{text}', interval=0.012)",
-                parse_output=False
+                "pyautogui.hotkey('ctrl', 'v')",
+                parse_output=False,
             )
-            self.windows_host_client.execute_pyautogui_command(
-                "pyautogui.click()",
-                parse_output=False
-            )
-            
+
             return ToolResult(output=f"Typed: {text}")
         except Exception as e:
             return ToolResult(error=f"Type failed: {str(e)}")
