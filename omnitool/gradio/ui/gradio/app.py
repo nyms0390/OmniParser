@@ -35,7 +35,7 @@ from omnitool.gradio.config import (
     create_argument_parser,
     get_settings,
     setup_logging,
-    TaskProcedure,
+    TaskTemplate,
     load_task_template,
 )
 from omnitool.gradio.core import (
@@ -380,19 +380,18 @@ class GradioApp:
 
         history = list(chatbot_history) if chatbot_history else []
 
-        # Resolve the selected procedure from the list stored in yaml_template_state.
+        # Resolve the selected procedure from the template stored in yaml_template_state.
         yaml_procedure = None
-        if isinstance(yaml_template, list) and yaml_template:
-            for p in yaml_template:
-                if p.id == selected_procedure_id:
-                    yaml_procedure = p
-                    break
-            if yaml_procedure is None:
-                yaml_procedure = yaml_template[0]
+        if isinstance(yaml_template, TaskTemplate):
+            try:
+                yaml_procedure = yaml_template.get_procedure(selected_procedure_id)
+            except (ValueError, TypeError):
+                yaml_procedure = yaml_template.procedures[0]
 
         # When a YAML template is loaded in TASK mode, override message and extract_fields.
         if yaml_procedure is not None and mode == AgentMode.TASK.value:
-            message = yaml_procedure.to_task_string()
+            resolved_inputs = yaml_template.resolve_inputs(yaml_procedure)
+            message = yaml_procedure.to_task_string(resolved_inputs)
             extract_fields_raw = "\n".join(
                 f"{k}: {v}" for k, v in yaml_procedure.to_extract_fields().items()
             )
@@ -457,7 +456,8 @@ class GradioApp:
             self.orchestrator = create_agent(**orchestrator_kwargs)
 
             if yaml_procedure is not None and mode == AgentMode.TASK.value:
-                self.orchestrator.task_template = yaml_procedure
+                self.orchestrator.task_template = yaml_template
+                self.orchestrator.task_procedure_id = yaml_procedure.id
 
             # Stream sampling loop updates to the chatbot
             status = "Running..."
@@ -627,9 +627,9 @@ class GradioApp:
         if file is None:
             return None, gr.update(choices=[], value=None, visible=False)
         try:
-            procedures = load_task_template(file.name)
-            choices = [(f"[{p.id}] {p.description}", p.id) for p in procedures]
-            return procedures, gr.update(choices=choices, value=procedures[0].id, visible=True)
+            template = load_task_template(file.name)
+            choices = [(f"[{p.id}] {p.description}", p.id) for p in template.procedures]
+            return template, gr.update(choices=choices, value=template.procedures[0].id, visible=True)
         except Exception as exc:
             logger.warning("Failed to load task template: %s", exc)
             return None, gr.update(choices=[], value=None, visible=False)

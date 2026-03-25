@@ -42,7 +42,7 @@ from omnitool.gradio.config import (
     REFLECT_PROMPT,
     REFLECT_SYSTEM_PROMPT,
     SCREENSHOT_MAX_WIDTH,
-    TaskProcedure,
+    TaskTemplate,
     get_llm_config,
     get_pricing,
 )
@@ -103,7 +103,6 @@ class BaseAgent(ABC):
         omniparser_client: Optional[OmniParserClient] = None,
         gta1_client: Optional[GTA1Client] = None,
         provider: Optional[str] = None,
-        task_template: Optional[TaskProcedure] = None,
         **kwargs,
     ):
         self.model_name = model_name
@@ -122,7 +121,8 @@ class BaseAgent(ABC):
         self.extract_fields = extract_fields
         self.omniparser_client = omniparser_client
         self.gta1_client = gta1_client
-        self.task_template = task_template
+        self.task_template: Optional[TaskTemplate] = None
+        self.task_procedure_id: Optional[int] = None
         self.screenshot_max_width = SCREENSHOT_MAX_WIDTH
 
         # LLM config for cost calculation
@@ -612,20 +612,25 @@ class BaseAgent(ABC):
 
         return checklist
 
-    def _init_checklist_from_template(self, template: TaskProcedure) -> Checklist:
-        """Load task description and checklist from a YAML TaskProcedure (TASK mode).
+    def _init_checklist_from_template(self, template: TaskTemplate) -> Checklist:
+        """Load task description and checklist from a YAML TaskTemplate (TASK mode).
 
         Sets ``wm.task`` to the procedure description and parses checklist
         items from the template's CUA steps.
 
         Args:
-            template: Parsed :class:`TaskProcedure` from the YAML task file.
+            template: Parsed :class:`TaskTemplate` from the YAML task file.
 
         Returns:
             :class:`Checklist` built from the template steps.
         """
-        self.working_memory.task = template.description
-        return Checklist.from_user_text(template.to_task_string())
+        if self.task_procedure_id is None:
+            raise ValueError("task_procedure_id must be set before initialising checklist from template.")
+        procedure = template.get_procedure(self.task_procedure_id)
+        self.working_memory.task = procedure.description
+        return Checklist.from_user_text(
+            procedure.to_task_string(template.resolve_inputs(procedure))
+        )
 
     def _reflect(
         self,

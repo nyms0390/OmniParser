@@ -22,7 +22,6 @@ from omnitool.gradio.clients.external.omniparser import OmniParserClient
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import (
     AgentMode,
-    TaskProcedure,
     build_vlm_tool_system_prompt,
 )
 from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images
@@ -58,7 +57,6 @@ class VLMAgent(BaseAgent):
         omniparser_client: Optional[OmniParserClient] = None,
         gta1_client: Optional[GTA1Client] = None,
         provider: Optional[str] = None,
-        task_template: Optional[TaskProcedure] = None,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -77,7 +75,6 @@ class VLMAgent(BaseAgent):
             omniparser_client=omniparser_client,
             gta1_client=gta1_client,
             provider=provider,
-            task_template=task_template,
             **kwargs,
         )
         self.grounding_strategy = grounding_strategy

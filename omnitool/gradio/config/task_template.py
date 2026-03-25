@@ -1,41 +1,46 @@
 """YAML task template loader for TASK mode.
 
-Parses a YAML file that is a top-level list of procedure definitions.
-Only the first procedure is used for execution.
+Parses a YAML file with top-level ``inputs`` and ``procedures`` keys.
 
-YAML schema (per procedure)::
+YAML schema::
 
-    - ID: 1
-      description: "Procedure description"
-      inputs:
-        - key: input1
-          value: 12345678       # pre-filled by user
-          description: "..."
-          format: 8 number digits
-          required: true
-      outputs:
-        - key: output1
-          description: "..."
-          format: string
-      executions:
-        - type: cua
-          system: EPA
-          steps: |
-            1. Step one.
-            2. Step two.
+    inputs:
+      - key: input1
+        value: 12345678
+        description: "..."
+        format: 8 number digits
+        required: true
+
+    procedures:
+      - ID: 1
+        description: "Procedure description"
+        inputs: [input1, input2]    # key references only
+        outputs:
+          - key: output1
+            description: "..."
+            format: string
+        executions:
+          - type: cua
+            system: EPA
+            steps: |
+              1. Step one using <input1>.
+              2. Step two.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import yaml
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class TaskInput:
-    """A single input parameter for a procedure."""
+    """A single input parameter defined at the template level."""
 
     key: str
     description: str = ""
@@ -98,7 +103,7 @@ class TaskProcedure:
 
     id: int
     description: str
-    inputs: List[TaskInput] = field(default_factory=list)
+    inputs: List[str] = field(default_factory=list)  # key references
     outputs: List[TaskOutput] = field(default_factory=list)
     executions: List[TaskExecution] = field(default_factory=list)
 
@@ -106,9 +111,9 @@ class TaskProcedure:
     # Conversion helpers
     # ------------------------------------------------------------------
 
-    def _substitute_inputs(self, text: str) -> str:
-        """Replace ``<key>`` placeholders in *text* with their input values."""
-        for inp in self.inputs:
+    def _substitute_inputs(self, text: str, inputs: List[TaskInput]) -> str:
+        """Replace ``<key>`` placeholders in *text* with resolved input values."""
+        for inp in inputs:
             if inp.value is not None:
                 text = text.replace(f"<{inp.key}>", str(inp.value))
         return text
@@ -121,28 +126,32 @@ class TaskProcedure:
                 parts.append(execution.steps.strip())
         return "\n".join(parts)
 
-    def to_task_string(self) -> str:
+    def to_task_string(self, inputs: List[TaskInput]) -> str:
         """Build a task string suitable for ``_init_checklist_from_template``.
 
         The string contains:
         - Procedure description
-        - Inputs summary (key: value or N/A)
+        - Inputs summary (key: value or N/A) for resolved inputs
         - Numbered steps from CUA executions (with input values substituted)
 
         The numbered steps are embedded so that
         ``Checklist.from_user_text()`` can parse them into checklist items.
+
+        Args:
+            inputs: Resolved :class:`TaskInput` objects for this procedure,
+                obtained via :meth:`TaskTemplate.resolve_inputs`.
         """
         lines = [self.description]
 
-        if self.inputs:
+        if inputs:
             lines.append("\nInputs:")
-            for inp in self.inputs:
+            for inp in inputs:
                 val = str(inp.value) if inp.value is not None else "N/A"
                 lines.append(f"  - {inp.key}: {val}")
 
         steps_raw = self._cua_steps()
         if steps_raw:
-            steps_substituted = self._substitute_inputs(steps_raw)
+            steps_substituted = self._substitute_inputs(steps_raw, inputs)
             lines.append("\nSteps:")
             lines.append(steps_substituted)
 
@@ -160,63 +169,95 @@ class TaskProcedure:
     def from_dict(cls, data: dict) -> "TaskProcedure":
         if "ID" not in data and "id" not in data:
             raise ValueError("Procedure dict missing 'ID' field.")
-        proc_id = data.get("ID") or data.get("id")
+        proc_id = data.get("ID", data.get("id"))
+        raw_inputs = data.get("inputs", [])
+        # Accept both plain strings and dicts with a "key" field.
+        input_keys = [
+            i if isinstance(i, str) else i["key"] for i in raw_inputs
+        ]
         return cls(
             id=int(proc_id),
             description=data.get("description", ""),
-            inputs=[TaskInput.from_dict(i) for i in data.get("inputs", [])],
+            inputs=input_keys,
             outputs=[TaskOutput.from_dict(o) for o in data.get("outputs", [])],
             executions=[TaskExecution.from_dict(e) for e in data.get("executions", [])],
         )
 
 
-def load_task_template(path: str) -> List[TaskProcedure]:
-    """Load a YAML task template and return all procedures.
+@dataclass
+class TaskTemplate:
+    """A fully parsed task template with shared inputs and procedures."""
 
-    Accepts two YAML formats:
+    inputs: List[TaskInput]
+    procedures: List[TaskProcedure]
 
-    1. Top-level list::
+    def get_procedure(self, proc_id: int) -> TaskProcedure:
+        """Return the procedure with the given ID, or raise :class:`ValueError`."""
+        for p in self.procedures:
+            if p.id == proc_id:
+                return p
+        raise ValueError(f"Procedure ID {proc_id} not found in template.")
 
-        - ID: 1
-          description: "..."
-          ...
+    def resolve_inputs(self, procedure: TaskProcedure) -> List[TaskInput]:
+        """Return :class:`TaskInput` objects for keys listed in *procedure*.
 
-    2. Procedures wrapped under a ``procedures`` key::
+        Keys not found in the top-level inputs produce a warning and are skipped.
+        """
+        input_map = {i.key: i for i in self.inputs}
+        resolved = []
+        for k in procedure.inputs:
+            if k in input_map:
+                resolved.append(input_map[k])
+            else:
+                logger.warning(
+                    "Procedure %d references unknown input key %r", procedure.id, k
+                )
+        return resolved
 
+
+def load_task_template(path: str) -> TaskTemplate:
+    """Load a YAML task template and return a :class:`TaskTemplate`.
+
+    The file must be a mapping with ``inputs`` and ``procedures`` keys::
+
+        inputs:
+          - key: input1
+            value: ...
+            description: ...
         procedures:
           - ID: 1
-            description: "..."
+            description: ...
+            inputs: [input1]
             ...
 
     Args:
         path: Filesystem path to the ``.yaml`` / ``.yml`` file.
 
     Returns:
-        List of :class:`TaskProcedure` objects, one per procedure in the file.
+        :class:`TaskTemplate` with all inputs and procedures parsed.
 
     Raises:
-        ValueError: If the file is empty, not a recognised format, or has
+        ValueError: If the file is empty, not in the expected format, or has
             no procedures.
         yaml.YAMLError: If the file cannot be parsed.
     """
     with open(path, "r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
 
-    if isinstance(data, list):
-        procedures = data
-    elif isinstance(data, dict) and "procedures" in data:
-        procedures = data["procedures"]
-        if not isinstance(procedures, list):
-            raise ValueError(
-                f"Task template '{path}': 'procedures' key must contain a list."
-            )
-    else:
+    if not isinstance(data, dict) or "procedures" not in data:
         raise ValueError(
-            f"Task template '{path}' must be either a top-level YAML list or a "
-            "mapping with a 'procedures' key."
+            f"Task template '{path}' must be a mapping with 'inputs' and 'procedures' keys."
         )
 
-    if not procedures:
-        raise ValueError(f"Task template '{path}' contains no procedures.")
+    raw_inputs = data.get("inputs", [])
+    raw_procs = data["procedures"]
 
-    return [TaskProcedure.from_dict(p) for p in procedures]
+    if not isinstance(raw_procs, list) or not raw_procs:
+        raise ValueError(
+            f"Task template '{path}': 'procedures' must be a non-empty list."
+        )
+
+    return TaskTemplate(
+        inputs=[TaskInput.from_dict(i) for i in raw_inputs],
+        procedures=[TaskProcedure.from_dict(p) for p in raw_procs],
+    )
