@@ -14,11 +14,9 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Tuple
 
 from omnitool.gradio.app.state import AppState
-from omnitool.gradio.clients.external.gta1 import GTA1Client
-from omnitool.gradio.clients.external.omniparser import OmniParserClient
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import (
     AgentMode,
@@ -47,16 +45,7 @@ class VLMAgent(BaseAgent):
         tools_collection,
         save_folder: Path,
         grounding_strategy: GroundingStrategy,
-        mode: AgentMode = AgentMode.INTERACTIVE,
-        platform: str = "windows",
-        max_steps: int = 20,
-        context_n: int = 15,
-        action_delay: float = 1.5,
-        output_callback=None,
-        extract_fields: Optional[Dict[str, str]] = None,
-        omniparser_client: Optional[OmniParserClient] = None,
-        gta1_client: Optional[GTA1Client] = None,
-        provider: Optional[str] = None,
+        **kwargs,
     ) -> None:
         super().__init__(
             model_name=model_name,
@@ -64,16 +53,7 @@ class VLMAgent(BaseAgent):
             state=state,
             tools_collection=tools_collection,
             save_folder=save_folder,
-            mode=mode,
-            platform=platform,
-            max_steps=max_steps,
-            context_n=context_n,
-            action_delay=action_delay,
-            output_callback=output_callback,
-            extract_fields=extract_fields,
-            omniparser_client=omniparser_client,
-            gta1_client=gta1_client,
-            provider=provider,
+            **kwargs,
         )
         self.grounding_strategy = grounding_strategy
         # Own tool-calling conversation history (separate from state.chat for LLM context).

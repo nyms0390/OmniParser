@@ -67,13 +67,8 @@ class ReActAgent(BaseAgent):
         tools_collection,
         save_folder: Path,
         grounding_strategy: GroundingStrategy,
-        mode: AgentMode = AgentMode.INTERACTIVE,
-        platform: str = "windows",
-        max_steps: int = 20,
-        action_delay: float = 1.5,
-        output_callback=None,
-        extract_fields: Optional[Dict[str, str]] = None,
         compaction_interval: int = COMPACTION_INTERVAL,
+        **kwargs,
     ) -> None:
         super().__init__(
             model_name=model_name,
@@ -81,12 +76,7 @@ class ReActAgent(BaseAgent):
             state=state,
             tools_collection=tools_collection,
             save_folder=save_folder,
-            mode=mode,
-            platform=platform,
-            max_steps=max_steps,
-            action_delay=action_delay,
-            output_callback=output_callback,
-            extract_fields=extract_fields,
+            **kwargs,
         )
         self.grounding_strategy = grounding_strategy
         self.compaction_interval = compaction_interval
