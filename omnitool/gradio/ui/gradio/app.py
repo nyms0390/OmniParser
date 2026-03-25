@@ -219,6 +219,13 @@ class GradioApp:
                         file_types=[".yaml", ".yml"],
                         visible=False,
                     )
+                    procedure_dropdown = gr.Dropdown(
+                        label="Select Procedure",
+                        choices=[],
+                        value=None,
+                        visible=False,
+                        interactive=True,
+                    )
 
             # Capture initial screenshot on app load (non-blocking)
             interface.load(
@@ -252,6 +259,7 @@ class GradioApp:
                     max_steps_slider,
                     extract_fields_input,
                     yaml_template_state,
+                    procedure_dropdown,
                 ],
                 outputs=[
                     chatbot,
@@ -270,7 +278,7 @@ class GradioApp:
             yaml_upload.change(
                 fn=self.on_yaml_upload,
                 inputs=[yaml_upload],
-                outputs=[yaml_template_state],
+                outputs=[yaml_template_state, procedure_dropdown],
             )
 
             file_upload.change(
@@ -349,6 +357,7 @@ class GradioApp:
         max_steps: int,
         extract_fields_raw: str,
         yaml_template,
+        selected_procedure_id,
     ) -> Generator:
         """Handle submit button click.
 
@@ -371,11 +380,21 @@ class GradioApp:
 
         history = list(chatbot_history) if chatbot_history else []
 
+        # Resolve the selected procedure from the list stored in yaml_template_state.
+        yaml_procedure = None
+        if isinstance(yaml_template, list) and yaml_template:
+            for p in yaml_template:
+                if p.id == selected_procedure_id:
+                    yaml_procedure = p
+                    break
+            if yaml_procedure is None:
+                yaml_procedure = yaml_template[0]
+
         # When a YAML template is loaded in TASK mode, override message and extract_fields.
-        if yaml_template is not None and mode == AgentMode.TASK.value:
-            message = yaml_template.to_task_string()
+        if yaml_procedure is not None and mode == AgentMode.TASK.value:
+            message = yaml_procedure.to_task_string()
             extract_fields_raw = "\n".join(
-                f"{k}: {v}" for k, v in yaml_template.to_extract_fields().items()
+                f"{k}: {v}" for k, v in yaml_procedure.to_extract_fields().items()
             )
 
         # Add user message
@@ -437,8 +456,8 @@ class GradioApp:
 
             self.orchestrator = create_agent(**orchestrator_kwargs)
 
-            if yaml_template is not None and mode == AgentMode.TASK.value:
-                self.orchestrator.task_template = yaml_template
+            if yaml_procedure is not None and mode == AgentMode.TASK.value:
+                self.orchestrator.task_template = yaml_procedure
 
             # Stream sampling loop updates to the chatbot
             status = "Running..."
@@ -595,7 +614,7 @@ class GradioApp:
         """
         return gr.update(visible=(mode == AgentMode.TASK.value))
 
-    def on_yaml_upload(self, file) -> Optional[TaskProcedure]:
+    def on_yaml_upload(self, file):
         """Parse an uploaded YAML task template file.
 
         Args:
@@ -603,16 +622,17 @@ class GradioApp:
                 or None if cleared.
 
         Returns:
-            Parsed :class:`TaskProcedure` (first procedure), or None.
+            Tuple of (procedures list or None, gr.update for procedure dropdown).
         """
         if file is None:
-            return None
+            return None, gr.update(choices=[], value=None, visible=False)
         try:
-            template = load_task_template(file.name)
-            return template
+            procedures = load_task_template(file.name)
+            choices = [(f"[{p.id}] {p.description}", p.id) for p in procedures]
+            return procedures, gr.update(choices=choices, value=procedures[0].id, visible=True)
         except Exception as exc:
             logger.warning("Failed to load task template: %s", exc)
-            return None
+            return None, gr.update(choices=[], value=None, visible=False)
 
     def on_file_upload(self, state, files) -> Tuple:
         """Handle file upload.

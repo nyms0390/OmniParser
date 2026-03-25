@@ -170,8 +170,8 @@ class TaskProcedure:
         )
 
 
-def load_task_template(path: str) -> TaskProcedure:
-    """Load a YAML task template and return the first procedure.
+def load_task_template(path: str) -> List[TaskProcedure]:
+    """Load a YAML task template and return all procedures.
 
     Accepts two YAML formats:
 
@@ -181,20 +181,18 @@ def load_task_template(path: str) -> TaskProcedure:
           description: "..."
           ...
 
-    2. Procedures wrapped under a ``procedure`` key::
+    2. Procedures wrapped under a ``procedures`` key::
 
-        procedure:
+        procedures:
           - ID: 1
             description: "..."
             ...
-
-    Only the first procedure is loaded and returned.
 
     Args:
         path: Filesystem path to the ``.yaml`` / ``.yml`` file.
 
     Returns:
-        :class:`TaskProcedure` for the first item in the procedure list.
+        List of :class:`TaskProcedure` objects, one per procedure in the file.
 
     Raises:
         ValueError: If the file is empty, not a recognised format, or has
@@ -215,10 +213,10 @@ def load_task_template(path: str) -> TaskProcedure:
     else:
         raise ValueError(
             f"Task template '{path}' must be either a top-level YAML list or a "
-            "mapping with a 'procedure' key."
+            "mapping with a 'procedures' key."
         )
 
     if not procedures:
         raise ValueError(f"Task template '{path}' contains no procedures.")
 
-    return TaskProcedure.from_dict(procedures[0])
+    return [TaskProcedure.from_dict(p) for p in procedures]
