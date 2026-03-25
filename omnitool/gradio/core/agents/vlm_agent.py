@@ -57,7 +57,6 @@ class VLMAgent(BaseAgent):
         omniparser_client: Optional[OmniParserClient] = None,
         gta1_client: Optional[GTA1Client] = None,
         provider: Optional[str] = None,
-        **kwargs,
     ) -> None:
         super().__init__(
             model_name=model_name,
@@ -75,7 +74,6 @@ class VLMAgent(BaseAgent):
             omniparser_client=omniparser_client,
             gta1_client=gta1_client,
             provider=provider,
-            **kwargs,
         )
         self.grounding_strategy = grounding_strategy
         # Own tool-calling conversation history (separate from state.chat for LLM context).
@@ -427,7 +425,7 @@ class VLMAgent(BaseAgent):
                     screen_after=screen_after,
                     had_tool_calls=bool(tool_calls),
                 )
-                if self._reflect_done:
+                if self.working_memory.reflect_done:
                     success = True
                     break
 

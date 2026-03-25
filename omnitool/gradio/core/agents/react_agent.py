@@ -74,7 +74,6 @@ class ReActAgent(BaseAgent):
         output_callback=None,
         extract_fields: Optional[Dict[str, str]] = None,
         compaction_interval: int = COMPACTION_INTERVAL,
-        **kwargs,
     ) -> None:
         super().__init__(
             model_name=model_name,
@@ -88,7 +87,6 @@ class ReActAgent(BaseAgent):
             action_delay=action_delay,
             output_callback=output_callback,
             extract_fields=extract_fields,
-            **kwargs,
         )
         self.grounding_strategy = grounding_strategy
         self.compaction_interval = compaction_interval

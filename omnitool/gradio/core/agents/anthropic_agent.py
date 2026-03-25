@@ -43,13 +43,12 @@ class AnthropicAgent(BaseAgent):
         max_steps: int = 20,
         context_n: int = 15,
         output_callback=None,
-        **kwargs,
     ):
         super().__init__(
             model_name, llm_client, state, tools_collection, save_folder,
             mode=mode, platform=platform, max_steps=max_steps,
             context_n=context_n, output_callback=output_callback,
-            omniparser_client=omniparser_client, **kwargs,
+            omniparser_client=omniparser_client,
         )
 
     # ------------------------------------------------------------------
@@ -322,7 +321,7 @@ class AnthropicAgent(BaseAgent):
                     screen_after=screen_after,
                     had_tool_calls=bool(tool_calls),
                 )
-                if self._reflect_done:
+                if self.working_memory.reflect_done:
                     success = True
                     break
 

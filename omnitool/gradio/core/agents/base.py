@@ -76,6 +76,7 @@ class WorkingMemory:
     parsed_screen: Optional[Dict[str, Any]] = None
     screen_data: Optional[Any] = None
     plan_steps: List[List[Dict[str, Any]]] = field(default_factory=list)
+    reflect_done: bool = False
 
 
 class BaseAgent(ABC):
@@ -103,7 +104,6 @@ class BaseAgent(ABC):
         omniparser_client: Optional[OmniParserClient] = None,
         gta1_client: Optional[GTA1Client] = None,
         provider: Optional[str] = None,
-        **kwargs,
     ):
         self.model_name = model_name
         self.provider = provider or ""
@@ -138,7 +138,6 @@ class BaseAgent(ABC):
 
         # Orchestration state
         self.working_memory = WorkingMemory()
-        self._reflect_done = False
 
     # ------------------------------------------------------------------
     # Lifecycle & accounting
@@ -1134,7 +1133,7 @@ class BaseAgent(ABC):
         """Call ``_reflect()``, emit the ledger event, and inject corrective hints.
 
         Only active in ORCHESTRATED/TASK mode; a no-op otherwise.
-        Sets ``self._reflect_done = True`` when the task is confirmed complete
+        Sets ``working_memory.reflect_done = True`` when the task is confirmed complete
         so the caller can break its loop.
 
         Args:
@@ -1142,7 +1141,7 @@ class BaseAgent(ABC):
             had_tool_calls: Whether the current step executed any tool calls.
                 Used to decide whether to inject a stall hint.
         """
-        self._reflect_done = False
+        self.working_memory.reflect_done = False
         if self.mode not in (AgentMode.ORCHESTRATED, AgentMode.TASK):
             return
 
@@ -1186,7 +1185,7 @@ class BaseAgent(ABC):
             if task_done and checklist_done:
                 logger.info("Reflect OK — task complete")
                 yield {"type": "assistant_reply", "message": "Task completed."}
-                self._reflect_done = True
+                self.working_memory.reflect_done = True
                 return
 
             if not had_tool_calls:
