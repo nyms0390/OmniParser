@@ -160,44 +160,6 @@ class VLMAgent(BaseAgent):
         return {"role": "user", "content": content}
 
     # ------------------------------------------------------------------
-    # read_field handler
-    # ------------------------------------------------------------------
-
-    def _handle_read_field(
-        self,
-        tc_args: Dict[str, Any],
-    ) -> str:
-        """Process a read_field tool call; store result in working_memory.facts.
-
-        Returns the result string to send back as the tool message.
-        """
-        field_name = tc_args.get("field_name", "")
-        value = tc_args.get("value", "")
-        target = tc_args.get("target")
-
-        if not field_name:
-            return "Error: field_name is required."
-
-        if field_name in self.working_memory.facts:
-            existing = self.working_memory.facts[field_name]
-            if existing == value:
-                return f"Field '{field_name}' already captured: {existing}"
-            logger.info("READ_FIELD — updating %r: %r → %r", field_name, existing, value)
-
-        corrected = value
-        if self.gta1_client and target:
-            try:
-                corrected = self._correct_field_via_clipboard(
-                    field_name, value, self.working_memory.parsed_screen or {}
-                )
-            except Exception as exc:
-                logger.warning("Field correction failed for '%s': %s", field_name, exc)
-                corrected = value
-
-        self.working_memory.facts[field_name] = corrected
-        return f"Captured: {field_name} = {corrected}"
-
-    # ------------------------------------------------------------------
     # Main loop
     # ------------------------------------------------------------------
 

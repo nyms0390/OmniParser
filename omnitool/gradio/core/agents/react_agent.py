@@ -29,7 +29,7 @@ from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import AgentMode, COMPACTION_PROMPT, build_react_system_prompt
 from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images, _extract_text_content
 from omnitool.gradio.core.agents.grounding import GroundingStrategy, ScreenData
-from omnitool.gradio.core.tools.schemas import FINISH_TOOL
+from omnitool.gradio.core.tools.schemas import FINISH_TOOL, READ_FIELD_TOOL
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class ReActAgent(BaseAgent):
             }
 
             system_prompt = self._get_system_prompt()
-            all_tools = self.grounding_strategy.get_tools() + [FINISH_TOOL]
+            all_tools = self.grounding_strategy.get_tools() + [READ_FIELD_TOOL, FINISH_TOOL]
             history: List[Dict[str, Any]] = []
             loop_tracker: deque = deque(maxlen=_LOOP_WINDOW)
 
@@ -249,7 +249,19 @@ class ReActAgent(BaseAgent):
                     }
                     return
 
-                # 6b. Computer action → grounding → execute
+                # 6b. read_field → store value in working_memory.facts
+                if tool_name == "read_field":
+                    result_text = self._handle_read_field(arguments)
+                    field_name = arguments.get("field_name", "")
+                    if field_name and field_name in self.working_memory.facts:
+                        yield {"type": "screen_reading", "fields": {field_name: self.working_memory.facts[field_name]}}
+                    history.append(_tool_msg(tool_call_id, result_text))
+                    if inject_stuck_hint:
+                        history.append({"role": "user", "content": _STUCK_HINT})
+                    logger.info("READ_FIELD — %s", result_text)
+                    continue
+
+                # 6c. Computer action → grounding → execute
                 try:
                     dispatch = self.grounding_strategy.resolve(tool_name, arguments, screen_data)
                 except ValueError as exc:
@@ -293,6 +305,14 @@ class ReActAgent(BaseAgent):
                         "tool": dispatch.get("action", tool_name),
                         "output": output_text,
                     }
+
+                # Save trajectory step
+                self._save_trajectory_step({
+                    "response_text": response_text,
+                    "tool_calls": tool_calls,
+                    "metadata": metadata,
+                    "cost": self.total_cost,
+                })
 
                 # Allow the UI to settle before the next screenshot.
                 if self.action_delay > 0:

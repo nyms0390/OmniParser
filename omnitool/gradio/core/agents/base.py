@@ -961,6 +961,41 @@ class BaseAgent(ABC):
         return result
 
     # ------------------------------------------------------------------
+    # read_field
+    # ------------------------------------------------------------------
+
+    def _handle_read_field(self, tc_args: Dict[str, Any]) -> str:
+        """Capture a screen value into working_memory.facts.
+
+        If gta1_client is available and target is provided, corrects the
+        LLM-read value using tri-click + clipboard extraction.
+        """
+        field_name = tc_args.get("field_name", "")
+        value = tc_args.get("value", "")
+        target = tc_args.get("target")
+
+        if not field_name:
+            return "Error: field_name is required."
+
+        if field_name in self.working_memory.facts:
+            existing = self.working_memory.facts[field_name]
+            if existing == value:
+                return f"Field '{field_name}' already captured: {existing}"
+            logger.info("READ_FIELD — updating %r: %r → %r", field_name, existing, value)
+
+        corrected = value
+        if self.gta1_client and target:
+            try:
+                corrected = self._correct_field_via_clipboard(
+                    field_name, value, self.working_memory.parsed_screen or {}
+                )
+            except Exception as exc:
+                logger.warning("Field correction failed for '%s': %s", field_name, exc)
+
+        self.working_memory.facts[field_name] = corrected
+        return f"Captured: {field_name} = {corrected}"
+
+    # ------------------------------------------------------------------
     # Trajectory
     # ------------------------------------------------------------------
 

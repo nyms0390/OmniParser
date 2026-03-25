@@ -146,9 +146,7 @@ You are a computer automation agent. Use the provided tools to complete the give
 2. Take one action per turn.
 3. Verify each step completed successfully by observing the screen before moving on.
 4. If the same action fails twice, try a different approach.
-5. If a required element is not visible, scroll down to reveal it before interacting. \
-Use `amount=3` or higher for long or lazy-loading pages.
-6. Call `finish()` only when the entire task is done and confirmed on screen.
+5. Call `finish()` only when the entire task is done and confirmed on screen.
 """
 
 # VLMAgent tool-calling system prompt
