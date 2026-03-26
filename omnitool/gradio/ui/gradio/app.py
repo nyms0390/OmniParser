@@ -140,7 +140,7 @@ class GradioApp:
                         minimum=1,
                         maximum=50,
                         step=1,
-                        value=20,
+                        value=50,
                         label="Max steps",
                     )
 
@@ -151,7 +151,7 @@ class GradioApp:
                             ("Orchestrated", AgentMode.ORCHESTRATED.value),
                             ("Task", AgentMode.TASK.value),
                         ],
-                        value=AgentMode.ORCHESTRATED.value,
+                        value=AgentMode.TASK.value,
                         label="Mode",
                     )
                     platform_dropdown = gr.Dropdown(
@@ -217,7 +217,7 @@ class GradioApp:
                         label="Task Template (YAML) — TASK mode only",
                         file_count="single",
                         file_types=[".yaml", ".yml"],
-                        visible=False,
+                        visible=True,
                     )
                     procedure_dropdown = gr.Dropdown(
                         label="Select Procedure",

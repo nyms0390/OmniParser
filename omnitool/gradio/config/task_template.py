@@ -24,7 +24,7 @@ YAML schema::
             system: EPA
             steps: |
               1. Step one using <input1>.
-              2. Step two.
+              2. Step two — record the result as {output1}.
 """
 
 from __future__ import annotations
@@ -126,6 +126,10 @@ class TaskProcedure:
                 parts.append(execution.steps.strip())
         return "\n".join(parts)
 
+    def _referenced_outputs(self, steps_text: str) -> List[TaskOutput]:
+        """Return outputs whose ``{key}`` placeholder appears in *steps_text*."""
+        return [out for out in self.outputs if f"{{{out.key}}}" in steps_text]
+
     def to_task_string(self, inputs: List[TaskInput]) -> str:
         """Build a task string suitable for ``_init_checklist_from_template``.
 
@@ -133,6 +137,7 @@ class TaskProcedure:
         - Procedure description
         - Inputs summary (key: value or N/A) for resolved inputs
         - Numbered steps from CUA executions (with input values substituted)
+        - Outputs to capture block for any ``<key>`` output references in steps
 
         The numbered steps are embedded so that
         ``Checklist.from_user_text()`` can parse them into checklist items.
@@ -154,6 +159,17 @@ class TaskProcedure:
             steps_substituted = self._substitute_inputs(steps_raw, inputs)
             lines.append("\nSteps:")
             lines.append(steps_substituted)
+
+            referenced = self._referenced_outputs(steps_raw)
+            if referenced:
+                lines.append("\nOutputs to capture:")
+                for out in referenced:
+                    entry = f"  - {out.key}"
+                    if out.description:
+                        entry += f": {out.description}"
+                    if out.format:
+                        entry += f" (format: {out.format})"
+                    lines.append(entry)
 
         return "\n".join(lines)
 
