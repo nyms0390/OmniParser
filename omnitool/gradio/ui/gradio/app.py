@@ -390,8 +390,8 @@ class GradioApp:
 
         # When a YAML template is loaded in TASK mode, override message and extract_fields.
         if yaml_procedure is not None and mode == AgentMode.TASK.value:
-            resolved_inputs = yaml_template.resolve_inputs(yaml_procedure)
-            message = yaml_procedure.to_task_string(resolved_inputs)
+            yaml_template.resolve_inputs(yaml_procedure)
+            message = yaml_procedure.to_task_string()
             extract_fields_raw = "\n".join(
                 f"{k}: {v}" for k, v in yaml_procedure.to_extract_fields().items()
             )
@@ -456,8 +456,7 @@ class GradioApp:
             self.orchestrator = create_agent(**orchestrator_kwargs)
 
             if yaml_procedure is not None and mode == AgentMode.TASK.value:
-                self.orchestrator.task_template = yaml_template
-                self.orchestrator.task_procedure_id = yaml_procedure.id
+                self.orchestrator.task_procedure = yaml_procedure
 
             # Stream sampling loop updates to the chatbot
             status = "Running..."

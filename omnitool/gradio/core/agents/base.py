@@ -42,7 +42,7 @@ from omnitool.gradio.config import (
     REFLECT_PROMPT,
     REFLECT_SYSTEM_PROMPT,
     SCREENSHOT_MAX_WIDTH,
-    TaskTemplate,
+    TaskProcedure,
     get_llm_config,
     get_pricing,
 )
@@ -121,8 +121,7 @@ class BaseAgent(ABC):
         self.extract_fields = extract_fields
         self.omniparser_client = omniparser_client
         self.gta1_client = gta1_client
-        self.task_template: Optional[TaskTemplate] = None
-        self.task_procedure_id: Optional[int] = None
+        self.task_procedure: Optional[TaskProcedure] = None
         self.screenshot_max_width = SCREENSHOT_MAX_WIDTH
 
         # LLM config for cost calculation
@@ -567,7 +566,7 @@ class BaseAgent(ABC):
         """Generate an initial checklist via LLM from the task description.
 
         Sets ``wm.task`` from the first chat message only when it has not
-        already been set (e.g. by :meth:`_init_checklist_from_template`),
+        already been set (e.g. by :meth:`_init_checklist_from_procedure`),
         so a TASK-mode fallback preserves the template description.
 
         Returns:
@@ -611,25 +610,18 @@ class BaseAgent(ABC):
 
         return checklist
 
-    def _init_checklist_from_template(self, template: TaskTemplate) -> Checklist:
-        """Load task description and checklist from a YAML TaskTemplate (TASK mode).
+    def _init_checklist_from_procedure(self) -> Checklist:
+        """Load task description and checklist from the resolved procedure (TASK mode).
 
         Sets ``wm.task`` to the procedure description and parses checklist
-        items from the template's CUA steps.
-
-        Args:
-            template: Parsed :class:`TaskTemplate` from the YAML task file.
+        items from the procedure's CUA steps.
 
         Returns:
-            :class:`Checklist` built from the template steps.
+            :class:`Checklist` built from the procedure steps.
         """
-        if self.task_procedure_id is None:
-            raise ValueError("task_procedure_id must be set before initialising checklist from template.")
-        procedure = template.get_procedure(self.task_procedure_id)
-        self.working_memory.task = procedure.description
-        return Checklist.from_user_text(
-            procedure.to_task_string(template.resolve_inputs(procedure))
-        )
+        proc = self.task_procedure
+        self.working_memory.task = proc.description
+        return Checklist.from_user_text(proc.to_task_string())
 
     def _reflect(
         self,
@@ -968,11 +960,18 @@ class BaseAgent(ABC):
     # read_field
     # ------------------------------------------------------------------
 
+    def _get_output_def(self, field_name: str):
+        """Return the TaskOutput for *field_name* from the current procedure, or None."""
+        if not self.task_procedure:
+            return None
+        return next((o for o in self.task_procedure.outputs if o.key == field_name), None)
+
     def _handle_read_field(self, tc_args: Dict[str, Any]) -> str:
         """Capture a screen value into working_memory.facts.
 
-        If gta1_client is available and target is provided, corrects the
-        LLM-read value using tri-click + clipboard extraction.
+        Clipboard-based correction is skipped when the matching TaskOutput has
+        ``clipboard_correction: false``, or when gta1_client is unavailable,
+        or when the LLM omits a grounding target.
         """
         field_name = tc_args.get("field_name", "")
         value = tc_args.get("value", "")
@@ -987,8 +986,11 @@ class BaseAgent(ABC):
                 return f"Field '{field_name}' already captured: {existing}"
             logger.info("READ_FIELD — updating %r: %r → %r", field_name, existing, value)
 
+        output_def = self._get_output_def(field_name)
+        use_correction = output_def.clipboard_correction if output_def is not None else True
+
         corrected = value
-        if self.gta1_client and target:
+        if use_correction and self.gta1_client and target:
             try:
                 corrected = self._correct_field_via_clipboard(
                     field_name, value, self.working_memory.parsed_screen or {}
@@ -1098,11 +1100,9 @@ class BaseAgent(ABC):
             user_task_msg = self.state.chat.messages[0]
             self._plan_add(user_task_msg["role"], str(user_task_msg["content"]))
 
-        if self.mode == AgentMode.TASK and self.task_template:
+        if self.mode == AgentMode.TASK and self.task_procedure:
             yield {"type": "status", "message": "Loading task checklist..."}
-            self.working_memory.checklist = self._init_checklist_from_template(
-                self.task_template
-            )
+            self.working_memory.checklist = self._init_checklist_from_procedure()
 
         # ORCHESTRATED mode, or TASK checklist was empty/invalid → LLM fallback
         if not self.working_memory.checklist or not self.working_memory.checklist.items:

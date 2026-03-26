@@ -68,6 +68,7 @@ class TaskOutput:
     key: str
     description: str = ""
     format: str = ""
+    clipboard_correction: bool = True
 
     @classmethod
     def from_dict(cls, data) -> "TaskOutput":
@@ -77,6 +78,7 @@ class TaskOutput:
             key=data["key"],
             description=data.get("description", ""),
             format=data.get("format", ""),
+            clipboard_correction=bool(data.get("clipboard_correction", True)),
         )
 
 
@@ -103,7 +105,7 @@ class TaskProcedure:
 
     id: int
     description: str
-    inputs: List[str] = field(default_factory=list)  # key references
+    inputs: List[TaskInput] = field(default_factory=list)
     outputs: List[TaskOutput] = field(default_factory=list)
     executions: List[TaskExecution] = field(default_factory=list)
 
@@ -111,9 +113,9 @@ class TaskProcedure:
     # Conversion helpers
     # ------------------------------------------------------------------
 
-    def _substitute_inputs(self, text: str, inputs: List[TaskInput]) -> str:
+    def _substitute_inputs(self, text: str) -> str:
         """Replace ``<key>`` placeholders in *text* with resolved input values."""
-        for inp in inputs:
+        for inp in self.inputs:
             if inp.value is not None:
                 text = text.replace(f"<{inp.key}>", str(inp.value))
         return text
@@ -130,35 +132,30 @@ class TaskProcedure:
         """Return outputs whose ``{key}`` placeholder appears in *steps_text*."""
         return [out for out in self.outputs if f"{{{out.key}}}" in steps_text]
 
-    def to_task_string(self, inputs: List[TaskInput]) -> str:
-        """Build a task string suitable for ``_init_checklist_from_template``.
+    def to_task_string(self) -> str:
+        """Build a task string suitable for ``_init_checklist_from_procedure``.
 
         The string contains:
         - Procedure description
         - Inputs summary (key: value or N/A) for resolved inputs
         - Numbered steps from CUA executions (with input values substituted)
-        - Outputs to capture block for any ``<key>`` output references in steps
+        - Outputs to capture block for any ``{key}`` output references in steps
 
         The numbered steps are embedded so that
         ``Checklist.from_user_text()`` can parse them into checklist items.
-
-        Args:
-            inputs: Resolved :class:`TaskInput` objects for this procedure,
-                obtained via :meth:`TaskTemplate.resolve_inputs`.
         """
         lines = [self.description]
 
-        if inputs:
+        if self.inputs:
             lines.append("\nInputs:")
-            for inp in inputs:
+            for inp in self.inputs:
                 val = str(inp.value) if inp.value is not None else "N/A"
                 lines.append(f"  - {inp.key}: {val}")
 
         steps_raw = self._cua_steps()
         if steps_raw:
-            steps_substituted = self._substitute_inputs(steps_raw, inputs)
             lines.append("\nSteps:")
-            lines.append(steps_substituted)
+            lines.append(self._substitute_inputs(steps_raw))
 
             referenced = self._referenced_outputs(steps_raw)
             if referenced:
@@ -187,14 +184,16 @@ class TaskProcedure:
             raise ValueError("Procedure dict missing 'ID' field.")
         proc_id = data.get("ID", data.get("id"))
         raw_inputs = data.get("inputs", [])
-        # Accept both plain strings and dicts with a "key" field.
-        input_keys = [
-            i if isinstance(i, str) else i["key"] for i in raw_inputs
+        # Accept both plain strings and dicts with a "key" field; create stubs
+        # (no value) that resolve_inputs() will later fill in.
+        input_stubs = [
+            TaskInput(key=i) if isinstance(i, str) else TaskInput(key=i["key"])
+            for i in raw_inputs
         ]
         return cls(
             id=int(proc_id),
             description=data.get("description", ""),
-            inputs=input_keys,
+            inputs=input_stubs,
             outputs=[TaskOutput.from_dict(o) for o in data.get("outputs", [])],
             executions=[TaskExecution.from_dict(e) for e in data.get("executions", [])],
         )
@@ -214,21 +213,22 @@ class TaskTemplate:
                 return p
         raise ValueError(f"Procedure ID {proc_id} not found in template.")
 
-    def resolve_inputs(self, procedure: TaskProcedure) -> List[TaskInput]:
-        """Return :class:`TaskInput` objects for keys listed in *procedure*.
+    def resolve_inputs(self, procedure: TaskProcedure) -> None:
+        """Resolve input values into *procedure* in-place.
 
-        Keys not found in the top-level inputs produce a warning and are skipped.
+        Replaces each stub in ``procedure.inputs`` with the corresponding
+        :class:`TaskInput` from the template-level inputs (which carry values).
+        Keys not found in the top-level inputs produce a warning and are left
+        as stubs.
         """
         input_map = {i.key: i for i in self.inputs}
-        resolved = []
-        for k in procedure.inputs:
-            if k in input_map:
-                resolved.append(input_map[k])
+        for idx, stub in enumerate(procedure.inputs):
+            if stub.key in input_map:
+                procedure.inputs[idx] = input_map[stub.key]
             else:
                 logger.warning(
-                    "Procedure %d references unknown input key %r", procedure.id, k
+                    "Procedure %d references unknown input key %r", procedure.id, stub.key
                 )
-        return resolved
 
 
 def load_task_template(path: str) -> TaskTemplate:
