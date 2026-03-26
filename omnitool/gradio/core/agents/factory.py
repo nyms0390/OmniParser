@@ -90,6 +90,7 @@ def create_agent(
         azure_endpoint=azure_endpoint if provider == "azure" else None,
     )
 
+    gta1_client = GTA1Client(base_url=gta1_url)
     common = dict(
         model_name=model_name,
         provider=provider,
@@ -103,11 +104,12 @@ def create_agent(
         context_n=context_n,
         action_delay=action_delay,
         extract_fields=extract_fields,
+        gta1_client=gta1_client,
     )
 
     if agent_type == "VLMAgent":
         strategy, grounding_kwargs = _resolve_grounding(
-            grounding, omniparser_client, gta1_url, agent_type
+            grounding, omniparser_client, gta1_client, agent_type
         )
         return VLMAgent(grounding_strategy=strategy, **grounding_kwargs, **common)
 
@@ -118,7 +120,7 @@ def create_agent(
 
     elif agent_type == "ReActAgent":
         strategy, grounding_kwargs = _resolve_grounding(
-            grounding, omniparser_client, gta1_url, agent_type
+            grounding, omniparser_client, gta1_client, agent_type
         )
         return ReActAgent(grounding_strategy=strategy, **grounding_kwargs, **common)
 
@@ -129,17 +131,12 @@ def create_agent(
 def _resolve_grounding(
     grounding: str,
     omniparser_client: Optional[OmniParserClient],
-    gta1_url: str,
+    gta1_client: GTA1Client,
     agent_type: str,
 ) -> tuple:
-    """Return (GroundingStrategy, extra_kwargs) for the requested grounding mode.
-
-    extra_kwargs are forwarded to the agent constructor so BaseAgent stores the
-    raw client (used for clipboard-based field correction).
-    """
+    """Return (GroundingStrategy, extra_kwargs) for the requested grounding mode."""
     if grounding == "gta1":
-        gta1_client = GTA1Client(base_url=gta1_url)
-        return GTA1Grounding(gta1_client), {"gta1_client": gta1_client}
+        return GTA1Grounding(gta1_client), {}
     else:
         if omniparser_client is None:
             raise ValueError(
