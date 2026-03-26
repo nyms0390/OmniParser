@@ -146,11 +146,13 @@ class BaseLLMClient(ABC):
             if isinstance(new_msg.get('content'), str):
                 content = new_msg['content']
 
-                # Pattern to match file paths (simplified)
-                # Matches: /path/to/image.png or ./image.png or C:\\path\\image.png
+                # Pattern to match file paths.
+                # Only matches absolute paths (/foo/bar.png, C:\foo\bar.png)
+                # or explicit file:// URIs to avoid false positives on
+                # relative path-like strings in user-authored text content.
                 image_pattern = (
-                    r'(?:file://)?(?:[A-Za-z]:)?(?:[./\\]+)?'
-                    r'(?:[A-Za-z0-9_/-]+[./\\])*[A-Za-z0-9_-]+'
+                    r'(?:file://|(?:[A-Za-z]:[/\\])|/)'
+                    r'[A-Za-z0-9_/\\.-]+'
                     r'\.(?:jpg|jpeg|png|gif|webp)'
                 )
 

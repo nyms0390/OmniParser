@@ -2,6 +2,7 @@
 Azure OpenAI LLM client implementation supporting GPT-4o via Azure OpenAI Service.
 """
 
+import json
 from typing import Any, Dict, List, Tuple
 
 from omnitool.gradio.clients.llm.base import BaseLLMClient
@@ -96,10 +97,21 @@ class AzureOpenAIClient(BaseLLMClient):
         generation_params = {k: v for k, v in generation_params.items() if v is not None}
 
         tools = kwargs.get("tools")
+        response_format = kwargs.get("response_format")
+
+        if tools and response_format:
+            raise ValueError(
+                "Cannot use 'tools' and 'response_format' simultaneously. "
+                "Azure OpenAI does not support structured outputs with tool calling."
+            )
+
         if tools:
             generation_params["tools"] = tools
             generation_params["tool_choice"] = "auto"
             generation_params["parallel_tool_calls"] = False
+
+        if response_format is not None:
+            generation_params["response_format"] = response_format
 
         try:
             # Call API
@@ -111,11 +123,10 @@ class AzureOpenAIClient(BaseLLMClient):
             # Extract tool calls when present.
             tool_calls_out = []
             if msg.tool_calls:
-                import json as _json
                 for tc in msg.tool_calls:
                     try:
-                        arguments = _json.loads(tc.function.arguments or "{}")
-                    except (_json.JSONDecodeError, TypeError):
+                        arguments = json.loads(tc.function.arguments or "{}")
+                    except (json.JSONDecodeError, TypeError):
                         arguments = {}
                     tool_calls_out.append({
                         "id": tc.id,
@@ -126,7 +137,6 @@ class AzureOpenAIClient(BaseLLMClient):
             # Build assistant message dict for history (preserves tool_calls).
             assistant_message: dict = {"role": "assistant", "content": msg.content}
             if msg.tool_calls:
-                import json as _json
                 assistant_message["tool_calls"] = [
                     {
                         "id": tc.id,
@@ -142,10 +152,11 @@ class AzureOpenAIClient(BaseLLMClient):
             response_text = msg.content or ""
 
             # Prepare metadata
+            usage = response.usage
             metadata = {
-                "tokens": response.usage.total_tokens,
-                "input_tokens": response.usage.prompt_tokens,
-                "output_tokens": response.usage.completion_tokens,
+                "tokens": usage.total_tokens if usage else 0,
+                "input_tokens": usage.prompt_tokens if usage else 0,
+                "output_tokens": usage.completion_tokens if usage else 0,
                 "model": self.model,
                 "provider": "azure",
                 "tool_calls": tool_calls_out,
@@ -155,4 +166,4 @@ class AzureOpenAIClient(BaseLLMClient):
             return response_text, metadata
 
         except Exception as e:
-            raise Exception(f"Azure API call failed: {str(e)}")
+            raise RuntimeError(f"Azure API call failed: {str(e)}") from e
