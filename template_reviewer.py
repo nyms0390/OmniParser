@@ -14,8 +14,9 @@ import difflib
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 import gradio as gr
 import yaml
@@ -25,6 +26,8 @@ from omnitool.gradio.config import setup_logging
 
 
 logger = logging.getLogger("template_reviewer")
+
+_previous_download_path: Optional[str] = None
 
 TEMPLATE_GUIDE_PATH = Path(__file__).parent / "TEMPLATE_GUIDE.md"
 DEFAULT_MODEL = "gpt-4.1"
@@ -167,13 +170,15 @@ def review_template(
     azure_endpoint: str,
     model_name: str,
     guide_text: str,
-) -> Tuple[str, str, str, str]:
-    """Call the LLM and return (corrected_yaml, changes, diff_html, status)."""
+) -> Tuple[str, str, str, str, Optional[str]]:
+    """Call the LLM and return (corrected_yaml, changes, diff_html, status, download_path)."""
+    _cleanup_previous_download()
+
     if not original_text or not original_text.strip():
-        return "", "", "", "Please upload a YAML file first."
+        return "", "", "", "Please upload a YAML file first.", None
 
     if not azure_endpoint or not azure_endpoint.strip():
-        return "", "", "", "Azure endpoint is required. Set it in the configuration panel or via --azure-endpoint."
+        return "", "", "", "Azure endpoint is required. Set it in the configuration panel or via --azure-endpoint.", None
 
     # Warn but proceed if original YAML is malformed
     status_warnings = []
@@ -195,7 +200,7 @@ def review_template(
         )
     except Exception as e:
         logger.error(f"LLM call failed: {e}")
-        return "", "", "", f"LLM call failed: {e}"
+        return "", "", "", f"LLM call failed: {e}", None
 
     logger.info(f"LLM call complete. Tokens: {metadata.get('tokens', '?')}")
 
@@ -205,7 +210,7 @@ def review_template(
         corrected_yaml = data["corrected_yaml"]
         changes_list = data["changes"]
     except (json.JSONDecodeError, KeyError) as e:
-        return response_text, "", "", f"Failed to parse structured response: {e}"
+        return response_text, "", "", f"Failed to parse structured response: {e}", None
 
     changes_text = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(changes_list)) if changes_list else "No changes required."
 
@@ -221,8 +226,44 @@ def review_template(
         else:
             diff_html = build_html_diff(original_text, corrected_yaml)
 
+    # Write corrected YAML to a temp file for download
+    download_path = _write_download_file(corrected_yaml) if corrected_yaml.strip() else None
+
     status = "\n".join(status_warnings) if status_warnings else "Review complete."
-    return corrected_yaml, changes_text, diff_html, status
+    download_update = gr.update(value=download_path, visible=download_path is not None)
+    return corrected_yaml, changes_text, diff_html, status, download_update
+
+
+def _cleanup_previous_download() -> None:
+    global _previous_download_path
+    if _previous_download_path:
+        try:
+            os.unlink(_previous_download_path)
+        except OSError:
+            pass
+        _previous_download_path = None
+
+
+def _write_download_file(text: str) -> str:
+    """Write text to a new temp file and return its path."""
+    global _previous_download_path
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", prefix="corrected_template_", suffix=".yaml",
+        delete=False, encoding="utf-8",
+    )
+    with tmp:
+        tmp.write(text)
+    _previous_download_path = tmp.name
+    return tmp.name
+
+
+def update_download_file(text: str):
+    """Rewrite the temp download file when the user finishes editing the corrected YAML."""
+    _cleanup_previous_download()
+    if not text or not text.strip():
+        return gr.update(value=None, visible=False)
+    path = _write_download_file(text)
+    return gr.update(value=path, visible=True)
 
 
 def build_ui(default_endpoint: str, default_model: str, guide_text: str) -> gr.Blocks:
@@ -262,9 +303,9 @@ def build_ui(default_endpoint: str, default_model: str, guide_text: str) -> gr.B
 
         with gr.Row():
             corrected_yaml = gr.Textbox(
-                label="Corrected YAML",
+                label="Corrected YAML (editable)",
                 lines=20,
-                interactive=False,
+                interactive=True,
                 show_copy_button=True,
             )
             changes_text = gr.Textbox(
@@ -273,7 +314,15 @@ def build_ui(default_endpoint: str, default_model: str, guide_text: str) -> gr.B
                 interactive=False,
             )
 
+        re_review_btn = gr.Button("Re-review Edited YAML", variant="secondary")
+
         diff_html = gr.HTML(label="Diff View")
+
+        download_file = gr.File(
+            label="Download Corrected YAML",
+            interactive=False,
+            visible=False,
+        )
 
         status_box = gr.Textbox(
             label="Status",
@@ -290,7 +339,24 @@ def build_ui(default_endpoint: str, default_model: str, guide_text: str) -> gr.B
         review_btn.click(
             fn=lambda orig, endpoint, model: review_template(orig, endpoint, model, guide_text),
             inputs=[original_yaml, azure_endpoint_input, model_name_input],
-            outputs=[corrected_yaml, changes_text, diff_html, status_box],
+            outputs=[corrected_yaml, changes_text, diff_html, status_box, download_file],
+        )
+
+        corrected_yaml.blur(
+            fn=update_download_file,
+            inputs=[corrected_yaml],
+            outputs=[download_file],
+        )
+
+        def _re_review(edited, endpoint, model):
+            if not edited or not edited.strip():
+                return "", "", "", "No corrected YAML to re-review. Run an initial review first.", gr.update(value=None, visible=False)
+            return review_template(edited, endpoint, model, guide_text)
+
+        re_review_btn.click(
+            fn=_re_review,
+            inputs=[corrected_yaml, azure_endpoint_input, model_name_input],
+            outputs=[corrected_yaml, changes_text, diff_html, status_box, download_file],
         )
 
     return demo
