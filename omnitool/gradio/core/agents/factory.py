@@ -33,7 +33,7 @@ def create_agent(
     provider: Optional[str] = None,
     extract_fields: Optional[Dict[str, str]] = None,
     azure_endpoint: Optional[str] = None,
-    gta1_url: str = "http://localhost:8002",
+    gta1_client: Optional[GTA1Client] = None,
     grounding: str = "omniparser",
 ) -> BaseAgent:
     """Factory function — returns the right BaseAgent subclass.
@@ -53,8 +53,8 @@ def create_agent(
         provider: LLM provider (e.g. "openai", "azure"). Defaults to first
             supported provider of the model.
         azure_endpoint: Azure OpenAI endpoint URL (required when provider="azure").
-        gta1_url: GTA1 server URL (required for VLMAgent / ReActAgent with gta1
-            grounding).
+        gta1_client: Pre-constructed GTA1Client (required for VLMAgent / ReActAgent
+            with gta1 grounding; also enables clipboard correction in all agents).
         grounding: Grounding strategy for VLMAgent and ReActAgent — "omniparser"
             or "gta1".
 
@@ -90,7 +90,8 @@ def create_agent(
         azure_endpoint=azure_endpoint if provider == "azure" else None,
     )
 
-    gta1_client = GTA1Client(base_url=gta1_url)
+    if gta1_client is None:
+        gta1_client = GTA1Client()
     common = dict(
         model_name=model_name,
         provider=provider,

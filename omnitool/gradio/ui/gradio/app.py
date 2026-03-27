@@ -28,7 +28,7 @@ import gradio as gr
 from PIL import Image
 
 from omnitool.gradio.clients.external import (
-    OmniParserClient, PaddleOCRClient, WindowsHostClient, ServiceValidator,
+    GTA1Client, OmniParserClient, PaddleOCRClient, WindowsHostClient, ServiceValidator,
 )
 from omnitool.gradio.config import (
     AgentMode,
@@ -79,6 +79,7 @@ class GradioApp:
         self.omniparser_client = OmniParserClient(settings.omniparser_url)
         self.windows_host_client = WindowsHostClient(settings.windows_host_url)
         self.paddleocr_client = PaddleOCRClient(settings.paddleocr_url)
+        self.gta1_client = GTA1Client(settings.gta1_url)
         self.tools = ToolCollection(windows_host_client=self.windows_host_client)
         self.orchestrator = None
 
@@ -87,6 +88,7 @@ class GradioApp:
         validator.register("OmniParser", self.omniparser_client)
         validator.register("Windows Host", self.windows_host_client)
         validator.register("PaddleOCR", self.paddleocr_client)
+        validator.register("GTA1", self.gta1_client)
         validator.validate_all()
 
     def build_interface(self):
@@ -449,7 +451,7 @@ class GradioApp:
                 "context_n": context_n,
                 "extract_fields": extract_fields,
                 "azure_endpoint": self.settings.azure_endpoint,
-                "gta1_url": self.settings.gta1_url,
+                "gta1_client": self.gta1_client,
                 "grounding": grounding,
             }
 

@@ -67,7 +67,7 @@ Rules:
 - If the YAML is syntactically malformed, fix it while preserving as much original content as possible.
 - Do not add, remove, or alter steps unless they violate a guide rule.
 - The corrected_yaml field must contain valid YAML that passes yaml.safe_load() without error.
-- The changes field must list each correction as a separate string. If no changes were needed, return an empty list.
+- The changes field must list each correction as a separate string in Chinese. If no changes were needed, return an empty list.
 """
 
 

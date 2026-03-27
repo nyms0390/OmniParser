@@ -5,7 +5,6 @@ All external dependencies (LLM, OmniParser, screen capture) are mocked.
 """
 
 import json
-from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
