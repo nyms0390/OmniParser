@@ -96,22 +96,24 @@ Provide clear, structured responses in the requested JSON format.\
 CHECKLIST_GEN_PROMPT = """\
 Please devise a step-by-step plan for the following task: {task}
 
-Output a JSON array where each element describes one step and how to verify it. Example:
+Output a JSON object with a "steps" array, where each element describes one step and how to verify it. Example:
 ```json
-[
-  {{
-    "id": 1,
-    "step": "Open the browser and navigate to the target website",
-    "verification_hint": "Browser is open and the URL bar shows the target domain"
-  }},
-  {{
-    "id": 2,
-    "step": "Click the Login button",
-    "verification_hint": "A login form or dialog is visible on screen"
-  }}
-]
+{{
+  "steps": [
+    {{
+      "id": 1,
+      "step": "Open the browser and navigate to the target website",
+      "verification_hint": "Browser is open and the URL bar shows the target domain"
+    }},
+    {{
+      "id": 2,
+      "step": "Click the Login button",
+      "verification_hint": "A login form or dialog is visible on screen"
+    }}
+  ]
+}}
 ```
-Keep steps concise and actionable. Output only valid JSON. Start directly.\
+Keep steps concise and actionable.\
 """
 
 
@@ -215,7 +217,7 @@ STEP 4 — TASK COMPLETE
 Are ALL checklist items "done" AND is the task fully satisfied per the screen? \
 Set True only when the screen confirms the end state.
 
-Output pure JSON only. DO NOT DEVIATE FROM THIS SCHEMA:
+Respond using exactly this structure:
 
     {{
         "screen_observation": string,
@@ -253,75 +255,7 @@ Output only the summary text, no extra formatting.\
 
 
 # ---------------------------------------------------------------------------
-# 6. Post-loop — result extraction after the action loop completes
-# ---------------------------------------------------------------------------
-
-EXTRACTION_SYSTEM_PROMPT = """\
-You are a precise screen reader assistant. Your job is to extract specific information \
-from a screenshot of a computer screen. Use both the visual image and any parsed screen \
-elements provided. Copy values exactly as they appear on screen.\
-"""
-
-EXTRACTION_PROMPT = """\
-Extract the following fields from the current screen:
-
-{fields_block}
-
-{ocr_block}\
-Please output an answer in pure JSON format according to the following schema. \
-The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, \
-AND DO NOT DEVIATE FROM THIS SCHEMA:
-
-    {{
-        "<field_name>": "<value as shown on screen, satisfying the constraint, or null if not visible>"
-    }}
-
-Example — if asked for price (2 decimal places) and status:
-
-    {{
-        "price": "12.99",
-        "status": "In stock"
-    }}\
-"""
-
-# Clipboard-based extraction — coordinate localisation prompts.
-# Used by BaseAgent._read_fields_via_clipboard() to ask the LLM where each
-# field lives on-screen so the agent can drag-select and copy via clipboard.
-
-CLIPBOARD_COORD_SYSTEM_PROMPT = """\
-You are a screen coordinate assistant. Given a screenshot and a list of fields, \
-return the pixel bounding box of the on-screen area that contains each field's value. \
-Output pure JSON only — no explanation, no markdown.\
-"""
-
-CLIPBOARD_COORD_PROMPT = """\
-The screenshot is attached. Identify the pixel region containing the value of each \
-field listed below and return its bounding box.
-
-Fields to locate:
-{fields_block}
-
-Respond in pure JSON only. DO NOT OUTPUT ANYTHING OTHER THAN JSON:
-
-    {{
-        "<field_name>": {{"x1": <int>, "y1": <int>, "x2": <int>, "y2": <int>}}
-    }}
-
-- x1, y1 is the upper-left corner of the text area (pixels).
-- x2, y2 is the lower-right corner of the text area (pixels).
-- If a field is not visible, set all coordinates to 0.
-
-Example — two fields located on screen:
-
-    {{
-        "order_id": {{"x1": 120, "y1": 340, "x2": 280, "y2": 360}},
-        "total_price": {{"x1": 120, "y1": 380, "x2": 220, "y2": 400}}
-    }}\
-"""
-
-
-# ---------------------------------------------------------------------------
-# 7. Builder functions — assemble fully-rendered prompts from templates above
+# 6. Builder functions — assemble fully-rendered prompts from templates above
 # ---------------------------------------------------------------------------
 
 def build_anthropic_system_prompt(platform: str = "windows") -> str:

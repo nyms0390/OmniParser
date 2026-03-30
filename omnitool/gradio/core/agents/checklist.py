@@ -144,12 +144,18 @@ class Checklist:
     def from_llm_json(cls, raw_json: str) -> "Checklist":
         """Parse the LLM's JSON plan/task-parse response.
 
-        Expected format::
+        Primary format (``response_format``-enforced calls)::
 
-            [
-              {"id": 1, "step": "...", "verification_hint": "..."},
-              ...
-            ]
+            {
+              "steps": [
+                {"id": 1, "step": "...", "verification_hint": "..."},
+                ...
+              ]
+            }
+
+        Also accepts a bare array for backwards compatibility::
+
+            [{"id": 1, "step": "...", "verification_hint": "..."}, ...]
 
         Falls back to a single-item checklist containing the raw text on
         any parse failure.
@@ -158,6 +164,8 @@ class Checklist:
         cleaned = re.sub(r"```(?:json)?\s*([\s\S]*?)```", r"\1", raw_json).strip()
         try:
             data = json.loads(cleaned)
+            if isinstance(data, dict):
+                data = data.get("steps", [])
             if isinstance(data, list):
                 items = []
                 for i, entry in enumerate(data):

@@ -252,6 +252,24 @@ class TestChecklistFromLLMJson:
         assert len(c.items) == 1
         assert c.items[0].step == "Valid"
 
+    def test_unwraps_steps_object(self):
+        raw = json.dumps({
+            "steps": [
+                {"id": 1, "step": "Open browser", "verification_hint": "Browser visible"},
+                {"id": 2, "step": "Login", "verification_hint": "Dashboard shown"},
+            ]
+        })
+        c = Checklist.from_llm_json(raw)
+        assert len(c.items) == 2
+        assert c.items[0].step == "Open browser"
+        assert c.items[1].verification_hint == "Dashboard shown"
+
+    def test_dict_without_steps_key_falls_back(self):
+        raw = json.dumps({"something_else": "value"})
+        c = Checklist.from_llm_json(raw)
+        assert len(c.items) == 1
+        assert c.items[0].step == raw
+
 
 class TestChecklistMutations:
     def test_apply_updates_status(self):

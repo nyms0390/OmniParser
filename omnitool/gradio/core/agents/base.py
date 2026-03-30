@@ -601,10 +601,10 @@ class BaseAgent(ABC):
         response_text, metadata = self.llm_client.generate(
             messages=plan_messages,
             system_prompt=CHECKLIST_GEN_SYSTEM_PROMPT,
+            response_format={"type": "json_object"},
         )
         self.update_token_usage(metadata.get("tokens", 0))
-        raw_plan = self._extract_data(response_text, "json")
-        checklist = self._parse_checklist(raw_plan)
+        checklist = self._parse_checklist(response_text)
 
         plan_path = self.save_folder / "plan.json"
         try:
@@ -697,9 +697,10 @@ class BaseAgent(ABC):
         response_text, metadata = self.llm_client.generate(
             messages=ledger_messages,
             system_prompt=REFLECT_SYSTEM_PROMPT,
+            response_format={"type": "json_object"},
         )
         self.update_token_usage(metadata.get("tokens", 0))
-        wm.ledger = self._extract_data(response_text, "json")
+        wm.ledger = response_text
 
         if wm.checklist:
             try:

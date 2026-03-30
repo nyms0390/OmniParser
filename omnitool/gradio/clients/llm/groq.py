@@ -96,7 +96,11 @@ class GroqClient(BaseLLMClient):
         
         # Remove None values
         generation_params = {k: v for k, v in generation_params.items() if v is not None}
-        
+
+        response_format = kwargs.get("response_format")
+        if response_format is not None:
+            generation_params["response_format"] = response_format
+
         try:
             # Call API
             response = self.client.chat.completions.create(**generation_params)

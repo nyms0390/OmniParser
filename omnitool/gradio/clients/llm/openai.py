@@ -90,6 +90,10 @@ class OpenAIClient(BaseLLMClient):
             generation_params["tool_choice"] = "auto"
             generation_params["parallel_tool_calls"] = False
 
+        response_format = kwargs.get("response_format")
+        if response_format is not None:
+            generation_params["response_format"] = response_format
+
         try:
             response = self.client.chat.completions.create(**generation_params)
 
