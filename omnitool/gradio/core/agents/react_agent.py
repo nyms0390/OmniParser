@@ -24,7 +24,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 
-from omnitool.gradio.app.state import AppState
+from omnitool.gradio.services.state import AppState
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import AgentMode, COMPACTION_PROMPT, build_react_system_prompt
 from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images, _extract_text_content
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 COMPACTION_INTERVAL = 8
 # How many recent actions to inspect for loop detection.
 _LOOP_WINDOW = 5
-# How many identical consecutive actions trigger the stuck hint.
+# How many times the same action must appear in the last _LOOP_WINDOW steps to trigger the stuck hint.
 _LOOP_THRESHOLD = 3
 
 _STUCK_HINT = (

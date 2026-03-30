@@ -8,7 +8,7 @@ are mocked.  No network calls are made.
 import json
 from unittest.mock import Mock
 
-from omnitool.gradio.app import AppState
+from omnitool.gradio.services import AppState
 from omnitool.gradio.core.agents.grounding import ScreenData
 from omnitool.gradio.core.agents.react_agent import (
     ReActAgent,
@@ -237,6 +237,22 @@ class TestReActAgentFinish:
 # ReActAgent — loop detection
 # ===========================================================================
 
+def _all_user_message_texts(generate_mock) -> list:
+    """Extract all text strings from user-role messages passed to generate()."""
+    texts = []
+    for call in generate_mock.call_args_list:
+        messages = call.args[0] if call.args else call.kwargs.get("messages", [])
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                texts.append(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        texts.append(block["text"])
+    return texts
+
+
 class TestReActAgentLoopDetection:
     def test_no_stuck_hint_below_threshold(self, tmp_path):
         """Fewer than _LOOP_THRESHOLD identical actions do not inject stuck hint."""
@@ -247,29 +263,31 @@ class TestReActAgentLoopDetection:
             _tool_response("left_click", {"box_id": 0}),
             _finish_response(),
         ]
-        events = list(agent.run())
-        # Stuck hint would appear in LLM output, not events directly — verifying
-        # complete event was reached (no infinite loop / crash)
-        assert any(e["type"] == "complete" for e in events)
+        list(agent.run())
+        all_texts = _all_user_message_texts(agent.llm_client.generate)
+        assert not any("repeated the same action" in t for t in all_texts), (
+            "Stuck hint should NOT be injected below the loop threshold"
+        )
 
     def test_stuck_hint_injected_at_threshold(self, tmp_path):
         """Exactly _LOOP_THRESHOLD identical actions triggers loop detection."""
         agent = _make_agent(tmp_path, max_steps=10)
-        # Repeat the same action _LOOP_THRESHOLD times, then finish
         repeat_responses = [
             _tool_response("left_click", {"box_id": 0})
         ] * _LOOP_THRESHOLD
         agent.llm_client.generate.side_effect = repeat_responses + [_finish_response()]
 
         events = list(agent.run())
-        # After threshold actions the agent should still run (not crash)
         assert any(e["type"] == "complete" for e in events)
+
+        all_texts = _all_user_message_texts(agent.llm_client.generate)
+        assert any("repeated the same action" in t for t in all_texts), (
+            "Stuck hint was not injected into LLM messages after hitting the loop threshold"
+        )
 
     def test_loop_detection_uses_last_window_only(self, tmp_path):
         """Actions outside the _LOOP_WINDOW are not counted toward loop detection."""
         agent = _make_agent(tmp_path, max_steps=20)
-        # 4 unique actions to fill the window, then 3 identical — should detect loop
-        # only because the window is 5 (the 3 identical fit within it)
         unique_responses = [
             _tool_response("left_click", {"box_id": i}) for i in range(1, _LOOP_WINDOW)
         ]
@@ -278,23 +296,30 @@ class TestReActAgentLoopDetection:
         ] * _LOOP_THRESHOLD
         agent.llm_client.generate.side_effect = unique_responses + repeat_responses + [_finish_response()]
         events = list(agent.run())
+        # Unique actions reset the window; the later repeat block should still trigger the hint
         assert any(e["type"] == "complete" for e in events)
+        all_texts = _all_user_message_texts(agent.llm_client.generate)
+        assert any("repeated the same action" in t for t in all_texts), (
+            "Stuck hint was not injected even though the repeat block exceeded the threshold"
+        )
 
-    def test_loop_detection_resets_on_different_action(self, tmp_path):
-        """A different action in between breaks the run count."""
+    def test_no_stuck_hint_when_count_stays_below_threshold_in_window(self, tmp_path):
+        """Alternating different actions keep every action's window-count below threshold."""
         agent = _make_agent(tmp_path, max_steps=10)
-        # 2 × same, 1 different, 2 × same — should never trigger (max run = 2)
+        # Alternating box_id=0 and box_id=1 — each appears at most 2 times in any window of 5.
         responses = [
             _tool_response("left_click", {"box_id": 0}),
+            _tool_response("left_click", {"box_id": 1}),
             _tool_response("left_click", {"box_id": 0}),
-            _tool_response("left_click", {"box_id": 1}),   # different
-            _tool_response("left_click", {"box_id": 0}),
-            _tool_response("left_click", {"box_id": 0}),
+            _tool_response("left_click", {"box_id": 1}),
             _finish_response(),
         ]
         agent.llm_client.generate.side_effect = responses
-        events = list(agent.run())
-        assert any(e["type"] == "complete" for e in events)
+        list(agent.run())
+        all_texts = _all_user_message_texts(agent.llm_client.generate)
+        assert not any("repeated the same action" in t for t in all_texts), (
+            "Stuck hint fired even though no action appeared 3+ times in the window"
+        )
 
 
 # ===========================================================================

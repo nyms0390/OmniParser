@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Tuple
 
-from omnitool.gradio.app.state import AppState
+from omnitool.gradio.services.state import AppState
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import (
     AgentMode,

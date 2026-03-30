@@ -47,7 +47,7 @@ from omnitool.gradio.config import (
     get_pricing,
 )
 from omnitool.gradio.core.agents.checklist import Checklist
-from omnitool.gradio.app.state import AppState
+from omnitool.gradio.services.state import AppState
 
 logger = logging.getLogger(__name__)
 

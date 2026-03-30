@@ -8,6 +8,10 @@ Usage:
     python gradio_demo.py --omniparser-url http://127.0.0.1:8000
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import argparse
 import base64
 import io

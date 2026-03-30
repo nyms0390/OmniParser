@@ -84,8 +84,8 @@ gradio_refactored/
 - Orchestrator handles orchestrated variant logic (ledger, trajectory)
 
 ### 2. **UI Architecture**
-- ✅ **Monolithic `ui/gradio/app.py`** with helper functions
-- Components in `ui/gradio/components/` for modular callbacks
+- ✅ **Monolithic `ui/app.py`** with helper functions
+- Components in `ui/components/` for modular callbacks
 - Streamlit reuses same services/config/core layers
 
 ### 3. **State Management**
@@ -166,7 +166,7 @@ run_folder: "./runs"
 
 **Option C: CLI Arguments**
 ```bash
-python ui/gradio/app.py \
+python ui/app.py \
   --run_folder ./runs \
   --omniparser_server_url http://localhost:8000 \
   --windows_host_url http://localhost:8006 \
@@ -177,13 +177,13 @@ python ui/gradio/app.py \
 
 ```bash
 # Basic
-python ui/gradio/app.py
+python ui/app.py
 
 # With custom config
-python ui/gradio/app.py --config-file ./config.yaml
+python ui/app.py --config-file ./config.yaml
 
 # With CLI args
-python ui/gradio/app.py --run_folder /data/runs --omniparser_server_url http://192.168.1.100:8000
+python ui/app.py --run_folder /data/runs --omniparser_server_url http://192.168.1.100:8000
 ```
 
 ### 4. Running Tests

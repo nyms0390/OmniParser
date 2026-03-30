@@ -3,17 +3,17 @@ Agent factory — creates the appropriate BaseAgent subclass from model and prov
 """
 
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from omnitool.gradio.clients import BaseLLMClient, get_llm_client
 from omnitool.gradio.clients.external.gta1 import GTA1Client
 from omnitool.gradio.clients.external.omniparser import OmniParserClient
 from omnitool.gradio.config import AgentMode, get_llm_config, get_provider_config
-from omnitool.gradio.app import AppState, get_api_key, AuthProvider
+from omnitool.gradio.services import AppState, get_api_key, AuthProvider
 
 from .anthropic_agent import AnthropicAgent
 from .base import BaseAgent
-from .grounding import GTA1Grounding, OmniParserGrounding
+from .grounding import GTA1Grounding, GroundingStrategy, OmniParserGrounding
 from .react_agent import ReActAgent
 from .vlm_agent import VLMAgent
 
@@ -90,7 +90,9 @@ def create_agent(
         azure_endpoint=azure_endpoint if provider == "azure" else None,
     )
 
-    if gta1_client is None:
+    # Only construct GTA1Client when the agent/grounding actually needs it.
+    # AnthropicAgent doesn't use GTA1 grounding and doesn't need the client.
+    if gta1_client is None and agent_type != "AnthropicAgent":
         gta1_client = GTA1Client()
     common = dict(
         model_name=model_name,
@@ -134,7 +136,7 @@ def _resolve_grounding(
     omniparser_client: Optional[OmniParserClient],
     gta1_client: GTA1Client,
     agent_type: str,
-) -> tuple:
+) -> Tuple[GroundingStrategy, Dict]:
     """Return (GroundingStrategy, extra_kwargs) for the requested grounding mode."""
     if grounding == "gta1":
         return GTA1Grounding(gta1_client), {}

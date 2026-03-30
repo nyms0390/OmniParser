@@ -6,20 +6,10 @@ Manages session lifecycle, chat state, authentication, file state, and configura
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-
-class AuthProvider(StrEnum):
-    """Authentication providers."""
-    OPENAI = "openai"
-    ANTHROPIC = "anthropic"
-    GROQ = "groq"
-    DASHSCOPE = "dashscope"
-    BEDROCK = "bedrock"
-    VERTEX = "vertex"
-    AZURE = "azure"
+from omnitool.gradio.services.auth import AuthProvider
 
 
 @dataclass
@@ -77,7 +67,6 @@ class AuthState:
     """API authentication state."""
     provider: AuthProvider = AuthProvider.OPENAI
     auth_validated: bool = False
-    provider_api_keys: Dict[AuthProvider, str] = field(default_factory=dict)
 
     def get_api_key(self, provider: Optional[AuthProvider] = None) -> str:
         """Get API key for a provider from environment variables.

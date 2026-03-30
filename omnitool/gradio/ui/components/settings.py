@@ -40,21 +40,10 @@ def get_provider_options_for_model(model_name: str) -> List[str]:
         return []
 
 
-def create_settings_panel() -> dict:
-    """Return default settings panel configuration."""
-    return {
-        "agent_choices": get_agent_choices(),
-        "default_agent": DEFAULT_AGENT,
-        "model_choices": get_model_choices(),
-        "default_model": DEFAULT_MODEL,
-    }
-
-
 __all__ = [
     "get_agent_choices",
     "get_model_choices",
     "get_provider_options_for_model",
-    "create_settings_panel",
     "AGENT_CHOICES",
     "DEFAULT_AGENT",
     "DEFAULT_MODEL",

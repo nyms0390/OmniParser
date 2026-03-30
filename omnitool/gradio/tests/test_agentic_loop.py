@@ -12,7 +12,7 @@ import pytest
 from omnitool.gradio.config import AgentMode
 from omnitool.gradio.config.prompts import CHECKLIST_GEN_PROMPT, REFLECT_PROMPT
 from omnitool.gradio.core.agents.checklist import Checklist, ChecklistItem
-from omnitool.gradio.app import AppState
+from omnitool.gradio.services import AppState
 
 
 # ---------------------------------------------------------------------------

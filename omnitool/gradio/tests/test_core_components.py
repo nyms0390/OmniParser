@@ -7,7 +7,7 @@ import pytest
 
 from omnitool.gradio.config import get_all_model_names, get_llm_config, get_pricing
 from omnitool.gradio.core import BaseTool, ToolCollection, ToolResult
-from omnitool.gradio.app import AppState, AuthValidator
+from omnitool.gradio.services import AppState, AuthValidator
 
 
 # ---------------------------------------------------------------------------
@@ -191,13 +191,13 @@ class TestToolCollection:
 
 @pytest.mark.slow
 class TestAgentCreation:
-    def test_vlm_agent_creation_placeholder(self, app_state, tool_collection, mock_llm_client, tmp_path):
-        """Placeholder — VLMAgent creation requires live LLM client."""
-        pass
+    @pytest.mark.skip(reason="VLMAgent creation requires live LLM client; covered in test_factory.py with mocks")
+    def test_vlm_agent_creation(self, app_state, tool_collection, mock_llm_client, tmp_path):
+        ...
 
-    def test_anthropic_agent_creation_placeholder(self, app_state, tool_collection, mock_llm_client, tmp_path):
-        """Placeholder — AnthropicAgent creation requires live Anthropic client."""
-        pass
+    @pytest.mark.skip(reason="AnthropicAgent creation requires live Anthropic client; covered in test_factory.py with mocks")
+    def test_anthropic_agent_creation(self, app_state, tool_collection, mock_llm_client, tmp_path):
+        ...
 
 
 if __name__ == "__main__":

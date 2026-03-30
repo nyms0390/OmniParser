@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from omnitool.gradio.app import AppState
+from omnitool.gradio.services import AppState
 from omnitool.gradio.config import AgentMode
 from omnitool.gradio.core.agents.factory import create_agent, _resolve_grounding
 from omnitool.gradio.core.agents.grounding import OmniParserGrounding, GTA1Grounding
@@ -106,24 +106,11 @@ class TestResolveGrounding:
 # ===========================================================================
 
 class TestCreateAgentUnknownType:
-    def test_unknown_agent_type_raises_value_error(
+    def test_unknown_agent_type_raises_value_error_with_name(
         self, app_state, tools_collection, mock_llm_client, tmp_path
     ):
         with _patch_factory(mock_llm_client):
-            with pytest.raises(ValueError, match="Unknown agent_type"):
-                create_agent(
-                    agent_type="BogusAgent",
-                    model_name="gpt-4o",
-                    state=app_state,
-                    tools_collection=tools_collection,
-                    save_folder=tmp_path,
-                )
-
-    def test_error_message_includes_agent_type_name(
-        self, app_state, tools_collection, mock_llm_client, tmp_path
-    ):
-        with _patch_factory(mock_llm_client):
-            with pytest.raises(ValueError, match="BogusAgent"):
+            with pytest.raises(ValueError, match=r"Unknown agent_type.*BogusAgent"):
                 create_agent(
                     agent_type="BogusAgent",
                     model_name="gpt-4o",
@@ -465,7 +452,7 @@ class TestCalculateCost:
     def test_cost_positive_for_nonzero_tokens(self, tmp_path):
         agent = self._make_agent(tmp_path)
         cost = agent._calculate_cost({"input_tokens": 1000, "output_tokens": 500})
-        assert cost >= 0.0
+        assert cost > 0.0
 
     def test_returns_zero_on_exception(self, tmp_path):
         agent = self._make_agent(tmp_path)
@@ -477,4 +464,4 @@ class TestCalculateCost:
         agent = self._make_agent(tmp_path)
         low = agent._calculate_cost({"input_tokens": 100, "output_tokens": 50})
         high = agent._calculate_cost({"input_tokens": 1_000_000, "output_tokens": 500_000})
-        assert high >= low
+        assert high > low

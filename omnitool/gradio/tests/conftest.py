@@ -9,7 +9,7 @@ import pytest
 from omnitool.gradio.clients import BaseLLMClient
 from omnitool.gradio.config import get_settings
 from omnitool.gradio.core import BaseTool, ToolCollection, ToolResult
-from omnitool.gradio.app import AppState
+from omnitool.gradio.services import AppState
 
 
 @pytest.fixture

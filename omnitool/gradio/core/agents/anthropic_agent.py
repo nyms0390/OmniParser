@@ -15,7 +15,7 @@ from typing import Any, Dict, Generator, List
 from omnitool.gradio.clients.external.omniparser import OmniParserClient
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import AgentMode, build_anthropic_system_prompt
-from omnitool.gradio.app.state import AppState
+from omnitool.gradio.services.state import AppState
 
 from .base import BaseAgent
 

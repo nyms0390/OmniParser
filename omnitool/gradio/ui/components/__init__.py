@@ -2,9 +2,7 @@
 Gradio components module initialization.
 """
 
-from omnitool.gradio.ui.gradio.components.chat import format_message_for_display, render_chatbot_message
-from omnitool.gradio.ui.gradio.components.file_viewer import render_file_list, render_file_viewer
-from omnitool.gradio.ui.gradio.components.formatters import (
+from omnitool.gradio.ui.components.formatters import (
     render_image,
     format_action_result,
     format_extraction_result,
@@ -15,8 +13,7 @@ from omnitool.gradio.ui.gradio.components.formatters import (
     format_raw_screen,
     format_thinking,
 )
-from omnitool.gradio.ui.gradio.components.settings import (
-    create_settings_panel,
+from omnitool.gradio.ui.components.settings import (
     get_agent_choices,
     get_model_choices,
     get_provider_options_for_model,
@@ -28,10 +25,6 @@ from omnitool.gradio.ui.gradio.components.settings import (
 
 __all__ = [
     "render_image",
-    "format_message_for_display",
-    "render_chatbot_message",
-    "render_file_list",
-    "render_file_viewer",
     "format_parsed_screen",
     "format_raw_screen",
     "format_grounding",
@@ -47,5 +40,4 @@ __all__ = [
     "DEFAULT_MODEL",
     "GROUNDING_CHOICES",
     "DEFAULT_GROUNDING",
-    "create_settings_panel",
 ]
