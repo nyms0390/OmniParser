@@ -11,6 +11,8 @@ from omnitool.gradio.clients.external.omniparser import OmniParserClient
 from omnitool.gradio.config import AgentMode, get_llm_config, get_provider_config
 from omnitool.gradio.services import AppState, get_api_key, AuthProvider
 
+from omnitool.gradio.core.agents.preprocessing import PreprocessingMode
+
 from .anthropic_agent import AnthropicAgent
 from .base import BaseAgent
 from .grounding import GTA1Grounding, GroundingStrategy, OmniParserGrounding
@@ -35,6 +37,7 @@ def create_agent(
     azure_endpoint: Optional[str] = None,
     gta1_client: Optional[GTA1Client] = None,
     grounding: str = "omniparser",
+    preprocessing_mode: str = "raw",
 ) -> BaseAgent:
     """Factory function — returns the right BaseAgent subclass.
 
@@ -57,6 +60,9 @@ def create_agent(
             with gta1 grounding; also enables clipboard correction in all agents).
         grounding: Grounding strategy for VLMAgent and ReActAgent — "omniparser"
             or "gta1".
+        preprocessing_mode: Image preprocessing variant applied to screenshots
+            before grounding/LLM. One of "raw", "clahe", "adaptive_thresh",
+            "edge_overlay", "clahe+edges". Defaults to "raw" (no processing).
 
     Returns:
         Initialised BaseAgent subclass.
@@ -108,6 +114,7 @@ def create_agent(
         action_delay=action_delay,
         extract_fields=extract_fields,
         gta1_client=gta1_client,
+        preprocessing_mode=_resolve_preprocessing(preprocessing_mode),
     )
 
     if agent_type == "VLMAgent":
@@ -129,6 +136,17 @@ def create_agent(
 
     else:
         raise ValueError(f"Unknown agent_type: {agent_type!r}")
+
+
+def _resolve_preprocessing(preprocessing_mode: str) -> PreprocessingMode:
+    """Parse and validate a preprocessing mode string."""
+    try:
+        return PreprocessingMode(preprocessing_mode)
+    except ValueError:
+        valid = [m.value for m in PreprocessingMode]
+        raise ValueError(
+            f"Unknown preprocessing_mode {preprocessing_mode!r}. Valid options: {valid}"
+        )
 
 
 def _resolve_grounding(

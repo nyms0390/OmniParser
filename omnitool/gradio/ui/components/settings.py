@@ -5,6 +5,7 @@ Settings UI components.
 from typing import List
 
 from omnitool.gradio.config import get_all_model_names, get_supported_providers
+from omnitool.gradio.core.agents.preprocessing import PreprocessingMode
 
 
 AGENT_CHOICES = ["VLMAgent", "AnthropicAgent", "ReActAgent"]
@@ -13,6 +14,9 @@ DEFAULT_MODEL = "gpt-4o"
 
 GROUNDING_CHOICES = ["omniparser", "gta1"]
 DEFAULT_GROUNDING = "omniparser"
+
+PREPROCESSING_CHOICES = [mode.value for mode in PreprocessingMode]
+DEFAULT_PREPROCESSING = PreprocessingMode.RAW.value
 
 
 def get_agent_choices() -> List[str]:
@@ -49,4 +53,6 @@ __all__ = [
     "DEFAULT_MODEL",
     "GROUNDING_CHOICES",
     "DEFAULT_GROUNDING",
+    "PREPROCESSING_CHOICES",
+    "DEFAULT_PREPROCESSING",
 ]

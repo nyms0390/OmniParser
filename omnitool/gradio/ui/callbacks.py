@@ -92,6 +92,7 @@ class GradioCallbacks:
         message: str,
         agent_type: str,
         grounding: str,
+        preprocessing_mode: str,
         model_name: str,
         provider: str,
         chatbot_history,
@@ -195,6 +196,7 @@ class GradioCallbacks:
                 "azure_endpoint": self.settings.azure_endpoint,
                 "gta1_client": self.gta1_client,
                 "grounding": grounding,
+                "preprocessing_mode": preprocessing_mode,
             }
 
             self.orchestrator = create_agent(**orchestrator_kwargs)

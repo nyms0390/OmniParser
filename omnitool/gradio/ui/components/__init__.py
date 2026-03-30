@@ -21,6 +21,8 @@ from omnitool.gradio.ui.components.settings import (
     DEFAULT_MODEL,
     GROUNDING_CHOICES,
     DEFAULT_GROUNDING,
+    PREPROCESSING_CHOICES,
+    DEFAULT_PREPROCESSING,
 )
 
 __all__ = [
@@ -40,4 +42,6 @@ __all__ = [
     "DEFAULT_MODEL",
     "GROUNDING_CHOICES",
     "DEFAULT_GROUNDING",
+    "PREPROCESSING_CHOICES",
+    "DEFAULT_PREPROCESSING",
 ]

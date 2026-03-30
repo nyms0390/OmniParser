@@ -35,6 +35,7 @@ from PIL import Image
 from omnitool.gradio.clients.external.omniparser import OmniParserClient
 from omnitool.gradio.clients.external.gta1 import GTA1Client
 from omnitool.gradio.clients.llm.base import BaseLLMClient
+from omnitool.gradio.core.agents.preprocessing import PreprocessingMode, preprocess_b64
 from omnitool.gradio.config import (
     AgentMode,
     CHECKLIST_GEN_PROMPT,
@@ -104,6 +105,7 @@ class BaseAgent(ABC):
         omniparser_client: Optional[OmniParserClient] = None,
         gta1_client: Optional[GTA1Client] = None,
         provider: Optional[str] = None,
+        preprocessing_mode: PreprocessingMode = PreprocessingMode.RAW,
     ):
         self.model_name = model_name
         self.provider = provider or ""
@@ -123,6 +125,7 @@ class BaseAgent(ABC):
         self.gta1_client = gta1_client
         self.task_procedure: Optional[TaskProcedure] = None
         self.screenshot_max_width = SCREENSHOT_MAX_WIDTH
+        self.preprocessing_mode = preprocessing_mode
 
         # LLM config for cost calculation
         try:
@@ -221,6 +224,7 @@ class BaseAgent(ABC):
             logger.warning("Could not read original image dimensions: %s", exc)
 
         resized_b64 = self._resize_b64(screenshot_b64, self.screenshot_max_width)
+        resized_b64 = preprocess_b64(resized_b64, self.preprocessing_mode)
 
         # Read dimensions of the resized image sent to the VLM.
         resized_w, resized_h = screen_width, screen_height

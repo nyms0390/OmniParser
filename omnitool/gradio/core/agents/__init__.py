@@ -7,6 +7,7 @@ from .react_agent import ReActAgent
 from .vlm_agent import VLMAgent
 from .grounding import GroundingStrategy, OmniParserGrounding, GTA1Grounding, ScreenData
 from .factory import create_agent
+from .preprocessing import PreprocessingMode, preprocess_b64
 
 __all__ = [
     "BaseAgent",
@@ -20,4 +21,6 @@ __all__ = [
     "GTA1Grounding",
     "ScreenData",
     "create_agent",
+    "PreprocessingMode",
+    "preprocess_b64",
 ]

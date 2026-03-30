@@ -12,8 +12,9 @@ import pytest
 
 from omnitool.gradio.services import AppState
 from omnitool.gradio.config import AgentMode
-from omnitool.gradio.core.agents.factory import create_agent, _resolve_grounding
+from omnitool.gradio.core.agents.factory import create_agent, _resolve_grounding, _resolve_preprocessing
 from omnitool.gradio.core.agents.grounding import OmniParserGrounding, GTA1Grounding
+from omnitool.gradio.core.agents.preprocessing import PreprocessingMode
 from omnitool.gradio.core.agents.react_agent import ReActAgent
 from omnitool.gradio.core.agents.vlm_agent import VLMAgent
 from omnitool.gradio.core.agents.anthropic_agent import AnthropicAgent
@@ -99,6 +100,59 @@ class TestResolveGrounding:
     def test_gta1_grounding_kwargs_empty(self):
         _, kwargs = _resolve_grounding("gta1", None, Mock(), "ReActAgent")
         assert kwargs == {}
+
+
+# ===========================================================================
+# _resolve_preprocessing — unit tests
+# ===========================================================================
+
+class TestResolvePreprocessing:
+    def test_valid_string_returns_enum(self):
+        assert _resolve_preprocessing("clahe") == PreprocessingMode.CLAHE
+
+    def test_all_valid_strings_accepted(self):
+        for mode in PreprocessingMode:
+            assert _resolve_preprocessing(mode.value) == mode
+
+    def test_invalid_string_raises_value_error_with_valid_options(self):
+        with pytest.raises(ValueError, match="bogus"):
+            _resolve_preprocessing("bogus")
+
+    def test_invalid_string_error_lists_valid_options(self):
+        with pytest.raises(ValueError, match="raw"):
+            _resolve_preprocessing("not_a_mode")
+
+    def test_create_agent_passes_preprocessing_mode_to_agent(
+        self, app_state, tools_collection, mock_llm_client, mock_omniparser_client, mock_gta1_client, tmp_path
+    ):
+        with _patch_factory(mock_llm_client):
+            agent = create_agent(
+                agent_type="ReActAgent",
+                model_name="gpt-4o",
+                state=app_state,
+                tools_collection=tools_collection,
+                save_folder=tmp_path,
+                omniparser_client=mock_omniparser_client,
+                gta1_client=mock_gta1_client,
+                preprocessing_mode="clahe",
+            )
+        assert agent.preprocessing_mode == PreprocessingMode.CLAHE
+
+    def test_create_agent_invalid_preprocessing_mode_raises(
+        self, app_state, tools_collection, mock_llm_client, mock_omniparser_client, mock_gta1_client, tmp_path
+    ):
+        with _patch_factory(mock_llm_client):
+            with pytest.raises(ValueError, match="invalid_mode"):
+                create_agent(
+                    agent_type="ReActAgent",
+                    model_name="gpt-4o",
+                    state=app_state,
+                    tools_collection=tools_collection,
+                    save_folder=tmp_path,
+                    omniparser_client=mock_omniparser_client,
+                    gta1_client=mock_gta1_client,
+                    preprocessing_mode="invalid_mode",
+                )
 
 
 # ===========================================================================

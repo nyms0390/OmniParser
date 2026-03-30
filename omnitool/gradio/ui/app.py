@@ -39,6 +39,8 @@ from omnitool.gradio.ui.components import (
     DEFAULT_MODEL,
     GROUNDING_CHOICES,
     DEFAULT_GROUNDING,
+    PREPROCESSING_CHOICES,
+    DEFAULT_PREPROCESSING,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,6 +95,11 @@ class GradioApp(GradioCallbacks):
                         value=DEFAULT_GROUNDING,
                         label="Grounding",
                         visible=(DEFAULT_AGENT in ("VLMAgent", "ReActAgent")),
+                    )
+                    preprocessing_dropdown = gr.Dropdown(
+                        choices=PREPROCESSING_CHOICES,
+                        value=DEFAULT_PREPROCESSING,
+                        label="Image Preprocessing",
                     )
                     model_dropdown = gr.Dropdown(
                         choices=get_model_choices(),
@@ -231,6 +238,7 @@ class GradioApp(GradioCallbacks):
                     message_input,
                     agent_dropdown,
                     grounding_dropdown,
+                    preprocessing_dropdown,
                     model_dropdown,
                     provider_dropdown,
                     chatbot,
