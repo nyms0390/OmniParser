@@ -336,6 +336,34 @@ class BaseAgent(ABC):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _crop_b64(b64: str, x1: int, y1: int, x2: int, y2: int, padding: int = 20) -> Optional[str]:
+        """Crop a base64 PNG to the given pixel region with optional padding.
+
+        Args:
+            b64: Base64-encoded PNG image (in resized image space).
+            x1, y1, x2, y2: Crop coordinates in image pixel space.
+            padding: Extra pixels to include on each side (clamped to image bounds).
+
+        Returns:
+            Base64-encoded cropped PNG, or ``None`` on failure.
+        """
+        try:
+            img = Image.open(BytesIO(base64.b64decode(b64)))
+            w, h = img.size
+            box = (
+                max(0, x1 - padding),
+                max(0, y1 - padding),
+                min(w, x2 + padding),
+                min(h, y2 + padding),
+            )
+            buf = BytesIO()
+            img.crop(box).save(buf, format="PNG")
+            return base64.b64encode(buf.getvalue()).decode("utf-8")
+        except Exception as exc:
+            logger.warning("_crop_b64 failed: %s", exc)
+            return None
+
+    @staticmethod
     def _resize_b64(b64: str, max_width: int) -> str:
         """Resize a base64 PNG to at most *max_width* pixels wide.
 
@@ -1004,6 +1032,32 @@ class BaseAgent(ABC):
         self.working_memory.facts[field_name] = corrected
         return f"Captured: {field_name} = {corrected}"
 
+    def _handle_focus_region(self, tc_args: Dict[str, Any]) -> Optional[str]:
+        """Crop the current screenshot to the requested bbox.
+
+        Args:
+            tc_args: Tool call arguments dict; expects ``bbox: [x1, y1, x2, y2]``
+                in resized image pixel coordinates.
+
+        Returns:
+            Base64-encoded cropped PNG, or ``None`` when the crop cannot be
+            performed (missing screenshot, invalid bbox, or crop failure).
+        """
+        bbox = tc_args.get("bbox", [])
+        parsed = self.working_memory.parsed_screen or {}
+        raw_b64 = parsed.get("raw_image_base64", "")
+        if not raw_b64 or len(bbox) != 4:
+            logger.warning(
+                "_handle_focus_region: missing screenshot or invalid bbox %r", bbox
+            )
+            return None
+        try:
+            x1, y1, x2, y2 = (int(v) for v in bbox)
+            return self._crop_b64(raw_b64, x1, y1, x2, y2)
+        except Exception as exc:
+            logger.warning("_handle_focus_region crop failed: %s", exc)
+            return None
+
     # ------------------------------------------------------------------
     # Trajectory
     # ------------------------------------------------------------------
@@ -1247,10 +1301,10 @@ def _extract_text_content(content) -> str:
 
 
 def _evict_old_images(history: List[Dict[str, Any]]) -> None:
-    """Replace image_url blocks in all but the last user message with a placeholder.
+    """Replace image_url blocks in stale messages with a placeholder.
 
-    Keeps only the most recent screenshot in the token budget while
-    preserving the full action/result text history.
+    - User messages: evicts all but the last (keeps only the most recent screenshot).
+    - Tool messages: evicts all image_url blocks (focus_region crops are one-time aids).
 
     Args:
         history: Mutable list of chat messages (modified in place).
@@ -1265,4 +1319,17 @@ def _evict_old_images(history: List[Dict[str, Any]]) -> None:
                     new_content.append({"type": "text", "text": "[screenshot]"})
                 else:
                     new_content.append(block)
+            history[i] = {**msg, "content": new_content}
+
+    last_assistant = max(
+        (i for i, m in enumerate(history) if m.get("role") == "assistant"),
+        default=-1,
+    )
+    for i in range(last_assistant):
+        msg = history[i]
+        if msg.get("role") == "tool" and isinstance(msg.get("content"), list):
+            new_content = [
+                {"type": "text", "text": "[focus_region]"} if block.get("type") == "image_url" else block
+                for block in msg["content"]
+            ]
             history[i] = {**msg, "content": new_content}

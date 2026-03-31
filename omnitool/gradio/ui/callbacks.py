@@ -17,6 +17,7 @@ from omnitool.gradio.services import AppState, FileHandler, validate_api_key
 from omnitool.gradio.ui.components import (
     format_action_result,
     format_extraction_result,
+    format_focus_region,
     format_grounding,
     format_ledger,
     format_parsed_screen,
@@ -272,6 +273,15 @@ class GradioCallbacks:
                     if reply_msg:
                         history.append({"role": "assistant", "content": reply_msg})
                     yield history, "", "Agent finished", state
+
+                elif update_type == "focus_region":
+                    img_b64 = update.get("image_base64", "")
+                    if img_b64:
+                        history.append({
+                            "role": "assistant",
+                            "content": format_focus_region(img_b64),
+                        })
+                    yield history, "", status, state
 
                 elif update_type == "screen_reading":
                     fields = update.get("fields", {})

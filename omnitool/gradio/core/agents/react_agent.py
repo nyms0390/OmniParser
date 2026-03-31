@@ -29,7 +29,7 @@ from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import AgentMode, COMPACTION_PROMPT, build_react_system_prompt
 from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images, _extract_text_content
 from omnitool.gradio.core.agents.grounding import GroundingStrategy, ScreenData
-from omnitool.gradio.core.tools.schemas import FINISH_TOOL, READ_FIELD_TOOL
+from omnitool.gradio.core.tools.schemas import FINISH_TOOL, FOCUS_TOOL, READ_FIELD_TOOL
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ class ReActAgent(BaseAgent):
             }
 
             system_prompt = self._get_system_prompt()
-            all_tools = self.grounding_strategy.get_tools() + [READ_FIELD_TOOL, FINISH_TOOL]
+            all_tools = self.grounding_strategy.get_tools() + [READ_FIELD_TOOL, FOCUS_TOOL, FINISH_TOOL]
             history: List[Dict[str, Any]] = []
             loop_tracker: deque = deque(maxlen=_LOOP_WINDOW)
 
@@ -249,7 +249,28 @@ class ReActAgent(BaseAgent):
                     logger.info("READ_FIELD — %s", result_text)
                     continue
 
-                # 6c. Computer action → grounding → execute
+                # 6c. focus_region → crop screenshot and return image
+                if tool_name == "focus_region":
+                    crop_b64 = self._handle_focus_region(arguments)
+                    if crop_b64:
+                        history.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": [
+                                {"type": "text", "text": "Focused region:"},
+                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{crop_b64}"}},
+                            ],
+                        })
+                        yield {"type": "focus_region", "image_base64": crop_b64}
+                        logger.info("FOCUS_REGION — crop returned for bbox %s", arguments.get("bbox"))
+                    else:
+                        history.append(_tool_msg(tool_call_id, "focus_region failed: invalid bbox or no screenshot available."))
+                        logger.warning("FOCUS_REGION — failed for bbox %s", arguments.get("bbox"))
+                    if inject_stuck_hint:
+                        history.append({"role": "user", "content": _STUCK_HINT})
+                    continue
+
+                # 6d. Computer action → grounding → execute
                 try:
                     dispatch = self.grounding_strategy.resolve(tool_name, arguments, screen_data)
                 except ValueError as exc:

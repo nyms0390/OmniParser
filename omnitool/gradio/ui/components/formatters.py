@@ -107,6 +107,18 @@ def format_raw_screen(raw_image_base64: str, auto_expand: bool = False) -> str:
     return "\n".join(parts)
 
 
+def format_focus_region(image_base64: str) -> str:
+    """Format a focus_region crop as a collapsed HTML block."""
+    parts: list[str] = [
+        '<details style="margin: 6px 0;">'
+        "<summary>[Focus] Zoomed region (click to expand)</summary>"
+    ]
+    if image_base64:
+        parts.append(render_image(image_base64))
+    parts.append("</details>")
+    return "\n".join(parts)
+
+
 def format_grounding(events: list) -> str:
     """Format GTA1 grounding results as HTML.
 
@@ -263,6 +275,7 @@ __all__ = [
     "render_image",
     "format_parsed_screen",
     "format_raw_screen",
+    "format_focus_region",
     "format_grounding",
     "format_thinking",
     "format_action_result",

@@ -24,7 +24,7 @@ from omnitool.gradio.config import (
 )
 from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images
 from omnitool.gradio.core.agents.grounding import GroundingStrategy, ScreenData
-from omnitool.gradio.core.tools.schemas import READ_FIELD_TOOL
+from omnitool.gradio.core.tools.schemas import FOCUS_TOOL, READ_FIELD_TOOL
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ class VLMAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def _get_tools(self) -> List[dict]:
-        return self.grounding_strategy.get_tools() + [READ_FIELD_TOOL]
+        return self.grounding_strategy.get_tools() + [READ_FIELD_TOOL, FOCUS_TOOL]
 
     # ------------------------------------------------------------------
     # Screen capture
@@ -271,7 +271,7 @@ class VLMAgent(BaseAgent):
                     logger.info("Plan OK — no tool calls; running REFLECT")
 
                 # ---- ACT ----
-                tc_results: List[Tuple[str, str]] = []  # (tool_call_id, result_text)
+                tc_results: List[Tuple[str, Any]] = []  # (tool_call_id, result_text or content list)
                 dispatched_tool_calls: List[Dict[str, Any]] = []  # for trajectory
                 all_tool_results: List[Dict[str, Any]] = []  # for _verify_step
                 screen_before = self.working_memory.parsed_screen  # snapshot before actions
@@ -300,6 +300,23 @@ class VLMAgent(BaseAgent):
                             tc_results.append((tc_id, result_text))
                             all_tool_results.append({"tool": "read_field", "status": "success"})
                             logger.info("READ_FIELD — %s", result_text)
+
+                        elif tc_name == "focus_region":
+                            # Handle focus_region inline — crop and return image
+                            crop_b64 = self._handle_focus_region(tc_args)
+                            if crop_b64:
+                                content = [
+                                    {"type": "text", "text": "Focused region:"},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{crop_b64}"}},
+                                ]
+                                all_tool_results.append({"tool": "focus_region", "status": "success"})
+                                yield {"type": "focus_region", "image_base64": crop_b64}
+                                logger.info("FOCUS_REGION — crop returned for bbox %s", tc_args.get("bbox"))
+                            else:
+                                content = "focus_region failed: invalid bbox or no screenshot available."
+                                all_tool_results.append({"tool": "focus_region", "status": "error"})
+                                logger.warning("FOCUS_REGION — failed for bbox %s", tc_args.get("bbox"))
+                            tc_results.append((tc_id, content))
 
                         else:
                             # Computer action via grounding strategy
@@ -351,12 +368,12 @@ class VLMAgent(BaseAgent):
 
                             tc_results.append((tc_id, result_text))
 
-                    # Append tool results to tc_history
-                    for tc_id, result_text in tc_results:
+                    # Append tool results to tc_history (content may be str or list for image results)
+                    for tc_id, tc_content in tc_results:
                         self._tc_history.append({
                             "role": "tool",
                             "tool_call_id": tc_id,
-                            "content": result_text,
+                            "content": tc_content,
                         })
 
                     # Save trajectory

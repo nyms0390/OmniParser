@@ -235,10 +235,43 @@ READ_FIELD_TOOL: dict = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# focus_region tool — crops the current screenshot for a closer look
+# ---------------------------------------------------------------------------
+
+FOCUS_TOOL: dict = {
+    "type": "function",
+    "function": {
+        "name": "focus_region",
+        "description": (
+            "Crop the current screenshot to a specific region to get a clearer, "
+            "zoomed-in view of any area that is hard to read from the full screenshot."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "bbox": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": (
+                        "Region to focus as [x1, y1, x2, y2] in resized image "
+                        "pixel coordinates (the same coordinate space as the "
+                        "screenshot shown to you)."
+                    ),
+                    "minItems": 4,
+                    "maxItems": 4,
+                },
+            },
+            "required": ["bbox"],
+        },
+    },
+}
+
 __all__ = [
     "OMNIPARSER_COMPUTER_TOOLS",
     "GTA1_COMPUTER_TOOLS",
     "FINISH_TOOL",
     "POSITIONAL_ACTIONS",
     "READ_FIELD_TOOL",
+    "FOCUS_TOOL",
 ]
