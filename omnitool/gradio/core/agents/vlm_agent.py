@@ -418,13 +418,6 @@ class VLMAgent(BaseAgent):
                 }
 
             # ---- End of loop ----
-            if self.working_memory.facts:
-                yield {
-                    "type": "extraction_result",
-                    "fields": self.working_memory.facts,
-                    "collected_facts": self.working_memory.facts,
-                }
-
             logger.info(
                 "VLMAgent COMPLETE — steps=%d tokens=%d cost=$%.6f",
                 self.step_count, self.total_tokens, self.total_cost,
@@ -436,6 +429,7 @@ class VLMAgent(BaseAgent):
                 "total_steps": self.step_count,
                 "total_tokens": self.total_tokens,
                 "total_cost": f"${self.total_cost:.6f}",
+                "facts": self.working_memory.facts,
             }
 
         except Exception as exc:

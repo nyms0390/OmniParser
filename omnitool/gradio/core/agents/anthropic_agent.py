@@ -328,15 +328,6 @@ class AnthropicAgent(BaseAgent):
                     "cost_total": f"${self.total_cost:.6f}",
                 }
 
-            if self.working_memory.facts:
-                facts = self.working_memory.facts
-                logger.info("Extraction OK — fields: %s", list(facts.keys()))
-                yield {
-                    "type": "extraction_result",
-                    "fields": facts,
-                    "collected_facts": facts,
-                }
-
             logger.info(
                 "Agent COMPLETE — steps=%d tokens=%d cost=$%.6f",
                 self.step_count, self.total_tokens, self.total_cost,
@@ -348,6 +339,7 @@ class AnthropicAgent(BaseAgent):
                 "total_steps": self.step_count,
                 "total_tokens": self.total_tokens,
                 "total_cost": f"${self.total_cost:.6f}",
+                "facts": self.working_memory.facts,
             }
 
         except Exception as e:

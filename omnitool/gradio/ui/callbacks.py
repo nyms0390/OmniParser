@@ -282,24 +282,6 @@ class GradioCallbacks:
                         })
                     yield history, "", status, state
 
-                elif update_type == "extraction_result":
-                    fields = update.get("fields", {})
-                    collected_facts = update.get("collected_facts", {})
-                    if fields:
-                        history.append({
-                            "role": "assistant",
-                            "content": format_extraction_result(fields),
-                        })
-                    if collected_facts:
-                        history.append({
-                            "role": "assistant",
-                            "content": (
-                                "**Collected facts (mid-loop readings)**\n"
-                                + format_extraction_result(collected_facts)
-                            ),
-                        })
-                    yield history, "", "Extraction complete", state
-
                 elif update_type == "complete":
                     facts = update.get("facts", {})
                     if facts:

@@ -606,8 +606,7 @@ class TestOnSubmitEventRouting:
 
     def test_extraction_result_event_appended_to_history(self, tmp_path):
         events = [
-            {"type": "extraction_result", "fields": {"price": "9.99"}, "collected_facts": {}},
-            {"type": "complete", "total_steps": 1, "total_tokens": 10, "total_cost": 0},
+            {"type": "complete", "facts": {"price": "9.99"}, "total_steps": 1, "total_tokens": 10, "total_cost": 0},
         ]
         app, mock_orch = _make_submit_app(tmp_path, events)
         updates = _run_submit(app, tmp_path, mock_orchestrator=mock_orch)
