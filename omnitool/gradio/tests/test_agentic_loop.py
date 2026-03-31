@@ -604,43 +604,49 @@ class TestVLMAgentReadField:
 
     def test_new_field_captured(self, tmp_path):
         agent = self._make_agent(tmp_path)
-        result = agent._handle_read_field({"fields": [{"field_name": "price", "value": "12.99"}]})
+        result, captured = agent._handle_read_field({"fields": [{"field_name": "price", "value": "12.99"}]})
         assert agent.working_memory.facts["price"] == "12.99"
+        assert captured == {"price": "12.99"}
         assert "12.99" in result
 
     def test_empty_field_name_returns_error(self, tmp_path):
         agent = self._make_agent(tmp_path)
-        result = agent._handle_read_field({"fields": [{"field_name": "", "value": "x"}]})
+        result, captured = agent._handle_read_field({"fields": [{"field_name": "", "value": "x"}]})
         assert "error" in result.lower()
+        assert not captured
         assert not agent.working_memory.facts
 
     def test_empty_fields_list_returns_error(self, tmp_path):
         agent = self._make_agent(tmp_path)
-        result = agent._handle_read_field({"fields": []})
+        result, captured = agent._handle_read_field({"fields": []})
         assert "error" in result.lower()
+        assert not captured
 
     def test_same_value_returns_existing_value(self, tmp_path):
         agent = self._make_agent(tmp_path)
         agent.working_memory.facts["price"] = "12.99"
-        result = agent._handle_read_field({"fields": [{"field_name": "price", "value": "12.99"}]})
+        result, captured = agent._handle_read_field({"fields": [{"field_name": "price", "value": "12.99"}]})
         assert "12.99" in result
         assert agent.working_memory.facts["price"] == "12.99"  # unchanged
+        assert not captured  # already-captured fields are not re-emitted
 
     def test_different_value_overwrites(self, tmp_path):
         agent = self._make_agent(tmp_path)
         agent.working_memory.facts["price"] = "12.99"
-        result = agent._handle_read_field({"fields": [{"field_name": "price", "value": "9.99"}]})
+        result, captured = agent._handle_read_field({"fields": [{"field_name": "price", "value": "9.99"}]})
         assert agent.working_memory.facts["price"] == "9.99"
+        assert captured == {"price": "9.99"}
         assert "9.99" in result
 
     def test_multiple_fields_captured_in_one_call(self, tmp_path):
         agent = self._make_agent(tmp_path)
-        result = agent._handle_read_field({"fields": [
+        result, captured = agent._handle_read_field({"fields": [
             {"field_name": "order_id", "value": "ORD-123"},
             {"field_name": "total", "value": "$42.00"},
         ]})
         assert agent.working_memory.facts["order_id"] == "ORD-123"
         assert agent.working_memory.facts["total"] == "$42.00"
+        assert captured == {"order_id": "ORD-123", "total": "$42.00"}
         assert "ORD-123" in result
         assert "$42.00" in result
 

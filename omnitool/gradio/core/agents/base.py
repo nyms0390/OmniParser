@@ -997,18 +997,23 @@ class BaseAgent(ABC):
             return None
         return next((o for o in self.task_procedure.outputs if o.key == field_name), None)
 
-    def _handle_read_field(self, tc_args: Dict[str, Any]) -> str:
+    def _handle_read_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         """Capture one or more screen values into working_memory.facts.
 
         Clipboard-based correction is skipped when the matching TaskOutput has
         ``clipboard_correction: false``, or when gta1_client is unavailable,
         or when the LLM omits a grounding target.
+
+        Returns:
+            A tuple of (result_text, captured) where captured contains only the
+            fields written during this call (keyed by field_name).
         """
         items = tc_args.get("fields", [])
         if not items:
-            return "Error: fields list is required and must not be empty."
+            return "Error: fields list is required and must not be empty.", {}
 
         results = []
+        captured: Dict[str, Any] = {}
         for item in items:
             field_name = item.get("field_name", "")
             value = item.get("value", "")
@@ -1038,9 +1043,10 @@ class BaseAgent(ABC):
                     logger.warning("Field correction failed for '%s': %s", field_name, exc)
 
             self.working_memory.facts[field_name] = corrected
+            captured[field_name] = corrected
             results.append(f"Captured: {field_name} = {corrected}")
 
-        return "\n".join(results)
+        return "\n".join(results), captured
 
     def _handle_focus_region(self, tc_args: Dict[str, Any]) -> Optional[str]:
         """Crop the current screenshot to the requested bbox.

@@ -287,12 +287,7 @@ class VLMAgent(BaseAgent):
 
                         if tc_name == "read_field":
                             # Handle read_field inline
-                            result_text = self._handle_read_field(tc_args)
-                            stored = {
-                                item["field_name"]: self.working_memory.facts[item["field_name"]]
-                                for item in tc_args.get("fields", [])
-                                if item.get("field_name") and item["field_name"] in self.working_memory.facts
-                            }
+                            result_text, stored = self._handle_read_field(tc_args)
                             if stored:
                                 screen_reading_msg = (
                                     f"<screen_reading>\n{json.dumps(stored, indent=2)}\n</screen_reading>"
