@@ -187,17 +187,6 @@ class GradioApp(GradioCallbacks):
                     with gr.Column(scale=1):
                         submit_button = gr.Button("Send")
 
-                with gr.Row():
-                    extract_fields_input = gr.Textbox(
-                        label="Extract fields after task (optional)",
-                        placeholder=(
-                            "e.g. price: 2 decimal places\n"
-                            "status\nunified_number: 4 digits"
-                        ),
-                        lines=3,
-                        show_label=True,
-                    )
-
                 # YAML task template upload — visible only in TASK mode
                 yaml_template_state = gr.State(None)
                 with gr.Row():
@@ -246,7 +235,6 @@ class GradioApp(GradioCallbacks):
                     platform_dropdown,
                     context_n_slider,
                     max_steps_slider,
-                    extract_fields_input,
                     yaml_template_state,
                     procedure_dropdown,
                 ],

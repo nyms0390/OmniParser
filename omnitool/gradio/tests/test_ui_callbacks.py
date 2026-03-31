@@ -398,7 +398,6 @@ def _run_submit(app, tmp_path, message="test task", extra_kwargs=None, mock_orch
         platform="windows",
         context_n=10,
         max_steps=50,
-        extract_fields_raw="",
         yaml_template=None,
         selected_procedure_id=None,
     )
@@ -450,7 +449,6 @@ class TestOnSubmitEventRouting:
                 platform="windows",
                 context_n=10,
                 max_steps=50,
-                extract_fields_raw="",
                 yaml_template=None,
                 selected_procedure_id=None,
             ))
@@ -599,7 +597,6 @@ class TestOnSubmitEventRouting:
                 platform="windows",
                 context_n=10,
                 max_steps=50,
-                extract_fields_raw="",
                 yaml_template=None,
                 selected_procedure_id=None,
             ))
@@ -629,80 +626,8 @@ class TestOnSubmitEventRouting:
         assert any("Task complete!" in c for c in all_contents)
 
 
-class TestOnSubmitExtractFieldsParsing:
-    """Verify that extract_fields_raw is correctly parsed into key:constraint pairs."""
-
-    def test_key_colon_constraint_parsed(self, tmp_path):
-        events = [{"type": "complete", "total_steps": 0, "total_tokens": 0, "total_cost": 0}]
-        app, mock_orch = _make_submit_app(tmp_path, events)
-        state = AppState(run_folder=tmp_path)
-
-        with patch(
-            "omnitool.gradio.ui.callbacks.validate_api_key",
-            return_value=(True, ""),
-        ), patch(
-            "omnitool.gradio.ui.callbacks.create_agent",
-            return_value=mock_orch,
-        ) as mock_factory:
-            list(app.on_submit(
-                state=state,
-                message="task",
-                agent_type="ReActAgent",
-                grounding="omniparser",
-                preprocessing_mode="raw",
-                model_name="gpt-4o",
-                provider="openai",
-                chatbot_history=[],
-                mode=AgentMode.TASK.value,
-                platform="windows",
-                context_n=10,
-                max_steps=50,
-                extract_fields_raw="price: 2 decimal places\nstatus",
-                yaml_template=None,
-                selected_procedure_id=None,
-            ))
-
-        call_kwargs = mock_factory.call_args.kwargs
-        assert call_kwargs["extract_fields"]["price"] == "2 decimal places"
-        assert call_kwargs["extract_fields"]["status"] == ""
-
-    def test_blank_lines_in_extract_fields_ignored(self, tmp_path):
-        events = [{"type": "complete", "total_steps": 0, "total_tokens": 0, "total_cost": 0}]
-        app, mock_orch = _make_submit_app(tmp_path, events)
-        state = AppState(run_folder=tmp_path)
-
-        with patch(
-            "omnitool.gradio.ui.callbacks.validate_api_key",
-            return_value=(True, ""),
-        ), patch(
-            "omnitool.gradio.ui.callbacks.create_agent",
-            return_value=mock_orch,
-        ) as mock_factory:
-            list(app.on_submit(
-                state=state,
-                message="task",
-                agent_type="ReActAgent",
-                grounding="omniparser",
-                preprocessing_mode="raw",
-                model_name="gpt-4o",
-                provider="openai",
-                chatbot_history=[],
-                mode=AgentMode.TASK.value,
-                platform="windows",
-                context_n=10,
-                max_steps=50,
-                extract_fields_raw="\n\nname: string\n\n",
-                yaml_template=None,
-                selected_procedure_id=None,
-            ))
-
-        call_kwargs = mock_factory.call_args.kwargs
-        assert "name" in call_kwargs["extract_fields"]
-        assert "" not in call_kwargs["extract_fields"]
-
-
 class TestOnSubmitYamlTemplateIntegration:
-    """Verify YAML template overrides message and extract_fields in TASK mode."""
+    """Verify YAML template overrides message in TASK mode."""
 
     def test_yaml_procedure_overrides_message_in_task_mode(self, tmp_path):
         procedure = _make_procedure(description="Automated procedure")
@@ -732,7 +657,6 @@ class TestOnSubmitYamlTemplateIntegration:
                 platform="windows",
                 context_n=10,
                 max_steps=50,
-                extract_fields_raw="",
                 yaml_template=template,
                 selected_procedure_id=1,
             ))
@@ -769,7 +693,6 @@ class TestOnSubmitYamlTemplateIntegration:
                 platform="windows",
                 context_n=10,
                 max_steps=50,
-                extract_fields_raw="",
                 yaml_template=template,
                 selected_procedure_id=1,
             ))

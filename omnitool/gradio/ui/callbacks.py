@@ -7,7 +7,7 @@ Extracted from app.py so that UI layout (build_interface) and event dispatch
 
 import logging
 from pathlib import Path
-from typing import Dict, Generator, Tuple
+from typing import Generator, Tuple
 
 import gradio as gr
 
@@ -100,7 +100,6 @@ class GradioCallbacks:
         platform: str,
         context_n: int,
         max_steps: int,
-        extract_fields_raw: str,
         yaml_template,
         selected_procedure_id,
     ) -> Generator:
@@ -133,14 +132,10 @@ class GradioCallbacks:
             except (ValueError, TypeError):
                 yaml_procedure = yaml_template.procedures[0]
 
-        # When a YAML template is loaded in TASK mode, override message and extract_fields.
+        # When a YAML template is loaded in TASK mode, override message.
         if yaml_procedure is not None and mode == AgentMode.TASK.value:
             yaml_template.resolve_inputs(yaml_procedure)
             message = yaml_procedure.to_task_string()
-            extract_fields_raw = "\n".join(
-                f"{k}: {v}" for k, v in yaml_procedure.to_extract_fields().items()
-            )
-
         # Add user message
         state.chat.add_message("user", message)
         history.append({"role": "user", "content": message})
@@ -167,18 +162,6 @@ class GradioCallbacks:
             except ValueError:
                 agent_mode = AgentMode.INTERACTIVE
 
-            # Parse extract_fields — supports "field: constraint" per line or plain names.
-            extract_fields: Dict[str, str] = {}
-            for line in extract_fields_raw.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                if ":" in line:
-                    name, _, constraint = line.partition(":")
-                    extract_fields[name.strip()] = constraint.strip()
-                else:
-                    extract_fields[line] = ""
-
             # Prepare orchestrator kwargs
             orchestrator_kwargs = {
                 "agent_type": agent_type,
@@ -192,7 +175,6 @@ class GradioCallbacks:
                 "mode": agent_mode,
                 "platform": platform,
                 "context_n": context_n,
-                "extract_fields": extract_fields,
                 "azure_endpoint": self.settings.azure_endpoint,
                 "gta1_client": self.gta1_client,
                 "grounding": grounding,
@@ -319,6 +301,12 @@ class GradioCallbacks:
                     yield history, "", "Extraction complete", state
 
                 elif update_type == "complete":
+                    facts = update.get("facts", {})
+                    if facts:
+                        history.append({
+                            "role": "assistant",
+                            "content": format_extraction_result(facts),
+                        })
                     status = (
                         f"[OK] Complete - "
                         f"Steps: {update.get('total_steps')}, "

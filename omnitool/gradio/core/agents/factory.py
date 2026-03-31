@@ -33,7 +33,6 @@ def create_agent(
     context_n: int = 15,
     action_delay: float = 1.5,
     provider: Optional[str] = None,
-    extract_fields: Optional[Dict[str, str]] = None,
     azure_endpoint: Optional[str] = None,
     gta1_client: Optional[GTA1Client] = None,
     grounding: str = "omniparser",
@@ -112,7 +111,6 @@ def create_agent(
         max_steps=max_steps,
         context_n=context_n,
         action_delay=action_delay,
-        extract_fields=extract_fields,
         gta1_client=gta1_client,
         preprocessing_mode=_resolve_preprocessing(preprocessing_mode),
     )

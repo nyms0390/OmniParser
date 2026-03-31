@@ -101,7 +101,6 @@ class BaseAgent(ABC):
         context_n: int = 15,
         action_delay: float = 1.5,
         output_callback=None,
-        extract_fields: Optional[Dict[str, str]] = None,
         omniparser_client: Optional[OmniParserClient] = None,
         gta1_client: Optional[GTA1Client] = None,
         provider: Optional[str] = None,
@@ -120,7 +119,6 @@ class BaseAgent(ABC):
         self.context_n = context_n
         self.action_delay = action_delay
         self.output_callback = output_callback
-        self.extract_fields = extract_fields
         self.omniparser_client = omniparser_client
         self.gta1_client = gta1_client
         self.task_procedure: Optional[TaskProcedure] = None
