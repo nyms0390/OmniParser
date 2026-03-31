@@ -998,39 +998,49 @@ class BaseAgent(ABC):
         return next((o for o in self.task_procedure.outputs if o.key == field_name), None)
 
     def _handle_read_field(self, tc_args: Dict[str, Any]) -> str:
-        """Capture a screen value into working_memory.facts.
+        """Capture one or more screen values into working_memory.facts.
 
         Clipboard-based correction is skipped when the matching TaskOutput has
         ``clipboard_correction: false``, or when gta1_client is unavailable,
         or when the LLM omits a grounding target.
         """
-        field_name = tc_args.get("field_name", "")
-        value = tc_args.get("value", "")
-        target = tc_args.get("target")
+        items = tc_args.get("fields", [])
+        if not items:
+            return "Error: fields list is required and must not be empty."
 
-        if not field_name:
-            return "Error: field_name is required."
+        results = []
+        for item in items:
+            field_name = item.get("field_name", "")
+            value = item.get("value", "")
+            target = item.get("target")
 
-        if field_name in self.working_memory.facts:
-            existing = self.working_memory.facts[field_name]
-            if existing == value:
-                return f"Field '{field_name}' already captured: {existing}"
-            logger.info("READ_FIELD — updating %r: %r → %r", field_name, existing, value)
+            if not field_name:
+                results.append("Error: field_name is required.")
+                continue
 
-        output_def = self._get_output_def(field_name)
-        use_correction = output_def.clipboard_correction if output_def is not None else True
+            if field_name in self.working_memory.facts:
+                existing = self.working_memory.facts[field_name]
+                if existing == value:
+                    results.append(f"Field '{field_name}' already captured: {existing}")
+                    continue
+                logger.info("READ_FIELD — updating %r: %r → %r", field_name, existing, value)
 
-        corrected = value
-        if use_correction and self.gta1_client and target:
-            try:
-                corrected = self._correct_field_via_clipboard(
-                    field_name, value, self.working_memory.parsed_screen or {}
-                )
-            except Exception as exc:
-                logger.warning("Field correction failed for '%s': %s", field_name, exc)
+            output_def = self._get_output_def(field_name)
+            use_correction = output_def.clipboard_correction if output_def is not None else True
 
-        self.working_memory.facts[field_name] = corrected
-        return f"Captured: {field_name} = {corrected}"
+            corrected = value
+            if use_correction and self.gta1_client and target:
+                try:
+                    corrected = self._correct_field_via_clipboard(
+                        field_name, value, self.working_memory.parsed_screen or {}
+                    )
+                except Exception as exc:
+                    logger.warning("Field correction failed for '%s': %s", field_name, exc)
+
+            self.working_memory.facts[field_name] = corrected
+            results.append(f"Captured: {field_name} = {corrected}")
+
+        return "\n".join(results)
 
     def _handle_focus_region(self, tc_args: Dict[str, Any]) -> Optional[str]:
         """Crop the current screenshot to the requested bbox.

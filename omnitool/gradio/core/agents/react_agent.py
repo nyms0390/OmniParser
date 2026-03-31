@@ -240,9 +240,13 @@ class ReActAgent(BaseAgent):
                 # 6b. read_field → store value in working_memory.facts
                 if tool_name == "read_field":
                     result_text = self._handle_read_field(arguments)
-                    field_name = arguments.get("field_name", "")
-                    if field_name and field_name in self.working_memory.facts:
-                        yield {"type": "screen_reading", "fields": {field_name: self.working_memory.facts[field_name]}}
+                    stored = {
+                        item["field_name"]: self.working_memory.facts[item["field_name"]]
+                        for item in arguments.get("fields", [])
+                        if item.get("field_name") and item["field_name"] in self.working_memory.facts
+                    }
+                    if stored:
+                        yield {"type": "screen_reading", "fields": stored}
                     history.append(_tool_msg(tool_call_id, result_text))
                     if inject_stuck_hint:
                         history.append({"role": "user", "content": _STUCK_HINT})

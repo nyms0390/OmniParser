@@ -51,7 +51,11 @@ _SCROLL = {
     "type": "function",
     "function": {
         "name": "scroll",
-        "description": "Scroll the current view up or down.",
+        "description": (
+            "Scroll the current view up or down. "
+            "Use this when a value or element you need may be off-screen or "
+            "partially hidden — scroll to bring it fully into view before reading or clicking."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -205,32 +209,41 @@ READ_FIELD_TOOL: dict = {
     "function": {
         "name": "read_field",
         "description": (
-            "Capture a text value visible on the current screen into memory. "
-            "Use this to record values (e.g. confirmation number, price, status) "
-            "before navigating away. The value will be verified via clipboard "
-            "if a grounding target is provided."
+            "Capture one or more text values visible on the current screen into memory. "
+            "All fields visible in the current screenshot can be captured in a single call. "
+            "Values will be verified via clipboard if grounding targets are provided."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "field_name": {
-                    "type": "string",
-                    "description": "Key name to store the captured value under (e.g. 'order_total').",
-                },
-                "value": {
-                    "type": "string",
-                    "description": "The exact value as you read it from the screen.",
-                },
-                "target": {
-                    "type": "string",
-                    "description": (
-                        "Natural-language description of the on-screen element showing "
-                        "this value (e.g. 'the order total amount near the bottom'). "
-                        "Used for clipboard-based verification — omit if not needed."
-                    ),
+                "fields": {
+                    "type": "array",
+                    "description": "List of fields to capture from the current screen.",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "field_name": {
+                                "type": "string",
+                                "description": "Key name to store the captured value under (e.g. 'order_total').",
+                            },
+                            "value": {
+                                "type": "string",
+                                "description": "The exact value as you read it from the screen.",
+                            },
+                            "target": {
+                                "type": "string",
+                                "description": (
+                                    "Natural-language description of the on-screen element showing "
+                                    "this value. Used for clipboard-based verification — omit if not needed."
+                                ),
+                            },
+                        },
+                        "required": ["field_name", "value"],
+                    },
                 },
             },
-            "required": ["field_name", "value"],
+            "required": ["fields"],
         },
     },
 }
@@ -244,8 +257,10 @@ FOCUS_TOOL: dict = {
     "function": {
         "name": "focus_region",
         "description": (
-            "Crop the current screenshot to a specific region to get a clearer, "
-            "zoomed-in view of any area that is hard to read from the full screenshot."
+            "Crop the current screenshot to a specific region for a clearer, zoomed-in view. "
+            "Call this whenever text, numbers, or labels are small, dense, or ambiguous in the "
+            "full screenshot — especially before calling read_field or verifying a value. "
+            "Provide the tight bounding box around the area of interest."
         ),
         "parameters": {
             "type": "object",
