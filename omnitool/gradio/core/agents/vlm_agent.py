@@ -81,7 +81,7 @@ class VLMAgent(BaseAgent):
         """Capture + preprocess screen; update working_memory."""
         raw = super()._capture_screen()
         screen_data = self.grounding_strategy.preprocess(
-            raw_b64=raw["raw_image_base64"],
+            raw_b64=raw["preprocessed_image_base64"],
             screen_width=raw["screen_width"],
             screen_height=raw["screen_height"],
             resized_width=raw["resized_screen_width"],
@@ -90,7 +90,7 @@ class VLMAgent(BaseAgent):
         self.working_memory.screen_data = screen_data
         # Keep parsed_screen up-to-date for base helpers
         self.working_memory.parsed_screen = {
-            "raw_image_base64": screen_data.raw_image_b64,
+            "resized_image_base64": raw["resized_image_base64"],
             "screen_width": screen_data.screen_width,
             "screen_height": screen_data.screen_height,
             "resized_screen_width": screen_data.resized_width,

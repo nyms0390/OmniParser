@@ -149,7 +149,7 @@ def _make_orchestrator(app_state, mode=AgentMode.INTERACTIVE, max_steps=3):
     def do_capture():
         orch.working_memory.screen_data = screen_data
         orch.working_memory.parsed_screen = {
-            "raw_image_base64": screen_data.raw_image_b64,
+            "resized_image_base64": screen_data.raw_image_b64,
             "som_image_base64": screen_data.display_image_b64,
             "screen_width": screen_data.screen_width,
             "screen_height": screen_data.screen_height,

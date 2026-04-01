@@ -53,7 +53,9 @@ class AnthropicAgent(BaseAgent):
     def _capture_screen(self) -> Dict[str, Any]:
         """Screenshot + resize (base) + OmniParser → screen dict."""
         screen = super()._capture_screen()
-        parsed = self._parse_screen(screen["raw_image_base64"])
+        # Drop the full-res original — resized_image_base64 is sufficient for all consumers.
+        screen.pop("raw_image_base64", None)
+        parsed = self._parse_screen(screen["preprocessed_image_base64"])
         screen["som_image_base64"] = parsed.get("som_image_base64", "")
         screen["parsed_content_list"] = parsed.get("parsed_content_list", [])
         return screen
@@ -104,7 +106,7 @@ class AnthropicAgent(BaseAgent):
             yield {
                 "type": "parsed_screen",
                 "som_image_base64": self.working_memory.parsed_screen.get("som_image_base64", ""),
-                "raw_image_base64": self.working_memory.parsed_screen.get("raw_image_base64", ""),
+                "raw_image_base64": self.working_memory.parsed_screen.get("resized_image_base64", ""),
                 "screen_info": str(
                     self.working_memory.parsed_screen.get("parsed_content_list", [])
                 ),
@@ -280,7 +282,7 @@ class AnthropicAgent(BaseAgent):
                     yield {
                         "type": "parsed_screen",
                         "som_image_base64": screen_after.get("som_image_base64", ""),
-                        "raw_image_base64": screen_after.get("raw_image_base64", ""),
+                        "raw_image_base64": screen_after.get("resized_image_base64", ""),
                         "screen_info": str(screen_after.get("parsed_content_list", [])),
                     }
 

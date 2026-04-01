@@ -134,16 +134,20 @@ class ReActAgent(BaseAgent):
                 yield {"type": "status", "message": f"Step {self.step_count}: Observing..."}
                 raw_screen = self._capture_screen()
                 screen_data = self.grounding_strategy.preprocess(
-                    raw_b64=raw_screen["raw_image_base64"],
+                    raw_b64=raw_screen["preprocessed_image_base64"],
                     screen_width=raw_screen["screen_width"],
                     screen_height=raw_screen["screen_height"],
                     resized_width=raw_screen["resized_screen_width"],
                     resized_height=raw_screen["resized_screen_height"],
                 )
                 self.working_memory.parsed_screen = {
-                    **raw_screen,
-                    "som_image_base64": screen_data.display_image_b64,
-                    "parsed_content_list": screen_data.elements,
+                    "resized_image_base64": raw_screen["resized_image_base64"],
+                    "screen_width":         raw_screen["screen_width"],
+                    "screen_height":        raw_screen["screen_height"],
+                    "resized_screen_width": raw_screen["resized_screen_width"],
+                    "resized_screen_height":raw_screen["resized_screen_height"],
+                    "som_image_base64":     screen_data.display_image_b64,
+                    "parsed_content_list":  screen_data.elements,
                 }
                 # Only set som_image_base64 when OmniParser produced a labeled image.
                 # For GTA1 (no SOM), leave it empty so the UI uses format_raw_screen.

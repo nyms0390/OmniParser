@@ -125,7 +125,9 @@ def _make_agent(tmp_path, max_steps=10, compaction_interval=COMPACTION_INTERVAL)
 
     # Mock _capture_screen so no real screen capture happens
     agent._capture_screen = Mock(return_value={
-        "raw_image_base64": "rawb64",
+        "raw_image_base64":          "rawb64",
+        "resized_image_base64":      "rawb64",
+        "preprocessed_image_base64": "rawb64",
         "screen_width": 1920,
         "screen_height": 1080,
         "resized_screen_width": 1920,

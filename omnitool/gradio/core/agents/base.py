@@ -191,13 +191,15 @@ class BaseAgent(ABC):
         """Capture and resize the current screen.
 
         Takes a screenshot, records the original dimensions, resizes the image
-        to :attr:`screenshot_max_width`, and returns a dict with both original
-        and resized dimensions.  Subclasses may override to augment this dict
-        (e.g. with OmniParser SOM data).
+        to :attr:`screenshot_max_width`, applies preprocessing, and returns a
+        dict with all three image variants.  Subclasses may override to augment
+        this dict (e.g. with OmniParser SOM data).
 
         Returns:
             Dict with keys:
-            - ``raw_image_base64``: resized screenshot PNG (base64)
+            - ``raw_image_base64``: original full-resolution screenshot (base64)
+            - ``resized_image_base64``: after resize, before preprocessing (base64)
+            - ``preprocessed_image_base64``: after resize + preprocessing (base64)
             - ``screen_width``, ``screen_height``: actual screen dimensions
             - ``resized_screen_width``, ``resized_screen_height``: VLM image dims
         """
@@ -222,7 +224,7 @@ class BaseAgent(ABC):
             logger.warning("Could not read original image dimensions: %s", exc)
 
         resized_b64 = self._resize_b64(screenshot_b64, self.screenshot_max_width)
-        resized_b64 = preprocess_b64(resized_b64, self.preprocessing_mode)
+        preprocessed_b64 = preprocess_b64(resized_b64, self.preprocessing_mode)
 
         # Read dimensions of the resized image sent to the VLM.
         resized_w, resized_h = screen_width, screen_height
@@ -233,11 +235,13 @@ class BaseAgent(ABC):
             logger.warning("Could not read resized image dimensions: %s", exc)
 
         return {
-            "raw_image_base64": resized_b64,
-            "screen_width": screen_width,
-            "screen_height": screen_height,
-            "resized_screen_width": resized_w,
-            "resized_screen_height": resized_h,
+            "raw_image_base64":          screenshot_b64,
+            "resized_image_base64":      resized_b64,
+            "preprocessed_image_base64": preprocessed_b64,
+            "screen_width":              screen_width,
+            "screen_height":             screen_height,
+            "resized_screen_width":      resized_w,
+            "resized_screen_height":     resized_h,
         }
 
     def _format_messages(
@@ -500,7 +504,7 @@ class BaseAgent(ABC):
         """
         if not screen_before or not screen_after:
             return False
-        for key in ("som_image_base64", "raw_image_base64"):
+        for key in ("som_image_base64", "resized_image_base64"):
             before_b64 = screen_before.get(key, "")
             after_b64 = screen_after.get(key, "")
             if before_b64 and after_b64:
@@ -612,7 +616,7 @@ class BaseAgent(ABC):
         if initial_screen:
             img_b64 = (
                 initial_screen.get("som_image_base64")
-                or initial_screen.get("raw_image_base64", "")
+                or initial_screen.get("resized_image_base64", "")
             )
             if img_b64:
                 plan_messages.append({
@@ -707,7 +711,7 @@ class BaseAgent(ABC):
         if screen_after:
             img_b64 = (
                 screen_after.get("som_image_base64")
-                or screen_after.get("raw_image_base64", "")
+                or screen_after.get("resized_image_base64", "")
             )
             if img_b64:
                 ledger_messages.append({
@@ -888,15 +892,15 @@ class BaseAgent(ABC):
             Stripped clipboard text, ``"null"`` when the field is not found or
             empty, or ``"extraction failed"`` on unexpected errors.
         """
-        raw_b64 = parsed_screen.get("raw_image_base64", "")
-        if not raw_b64:
+        resized_b64 = parsed_screen.get("resized_image_base64", "")
+        if not resized_b64:
             logger.warning(
                 "_read_field_via_clipboard: no screenshot for %r", field_name
             )
             return "extraction failed"
 
         try:
-            result = self.gta1_client.ground(raw_b64, description)
+            result = self.gta1_client.ground(resized_b64, description)
             rx, ry = result["x"], result["y"]
         except Exception as exc:
             logger.warning(
@@ -1061,15 +1065,15 @@ class BaseAgent(ABC):
         """
         bbox = tc_args.get("bbox", [])
         parsed = self.working_memory.parsed_screen or {}
-        raw_b64 = parsed.get("raw_image_base64", "")
-        if not raw_b64 or len(bbox) != 4:
+        resized_b64 = parsed.get("resized_image_base64", "")
+        if not resized_b64 or len(bbox) != 4:
             logger.warning(
                 "_handle_focus_region: missing screenshot or invalid bbox %r", bbox
             )
             return None
         try:
             x1, y1, x2, y2 = (int(v) for v in bbox)
-            return self._crop_b64(raw_b64, x1, y1, x2, y2)
+            return self._crop_b64(resized_b64, x1, y1, x2, y2)
         except Exception as exc:
             logger.warning("_handle_focus_region crop failed: %s", exc)
             return None

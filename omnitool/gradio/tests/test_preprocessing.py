@@ -196,8 +196,8 @@ def _make_tools_collection_mock(screenshot_b64: str) -> Mock:
 class TestCaptureScreenPreprocessing:
     """Verify that _capture_screen() applies preprocess_b64 to the resized image."""
 
-    def test_clahe_mode_modifies_raw_image_base64(self, tmp_path):
-        """_capture_screen() with CLAHE must return a raw_image_base64 different from
+    def test_clahe_mode_modifies_preprocessed_image(self, tmp_path):
+        """_capture_screen() with CLAHE must return a preprocessed_image_base64 different from
         the resized-but-unprocessed screenshot."""
         # Use a 64x48 synthetic screenshot — small enough to be fast
         screenshot_b64 = _make_b64_image(64, 48)
@@ -210,12 +210,12 @@ class TestCaptureScreenPreprocessing:
         result = agent._capture_screen()
 
         # The returned value must be a valid base64 PNG
-        returned_b64 = result["raw_image_base64"]
+        returned_b64 = result["preprocessed_image_base64"]
         assert isinstance(returned_b64, str) and len(returned_b64) > 0
 
         # After resize (no-op here) the CLAHE transform must alter the bytes
-        assert returned_b64 != screenshot_b64, (
-            "CLAHE mode must produce a different raw_image_base64 than the input screenshot"
+        assert returned_b64 != result["resized_image_base64"], (
+            "CLAHE mode must produce a different preprocessed_image_base64 than resized_image_base64"
         )
 
     def test_clahe_mode_result_is_decodable_png(self, tmp_path):
@@ -227,7 +227,7 @@ class TestCaptureScreenPreprocessing:
         agent.screenshot_max_width = 9999
 
         result = agent._capture_screen()
-        img = _b64_to_image(result["raw_image_base64"])
+        img = _b64_to_image(result["preprocessed_image_base64"])
         assert img.width == 64 and img.height == 48, (
             "CLAHE processing must preserve image dimensions"
         )
@@ -241,7 +241,15 @@ class TestCaptureScreenPreprocessing:
 
         result = agent._capture_screen()
 
-        for key in ("screen_width", "screen_height", "resized_screen_width", "resized_screen_height"):
+        for key in (
+            "raw_image_base64",
+            "resized_image_base64",
+            "preprocessed_image_base64",
+            "screen_width",
+            "screen_height",
+            "resized_screen_width",
+            "resized_screen_height",
+        ):
             assert key in result, f"_capture_screen() result missing key '{key}'"
 
 
@@ -252,8 +260,8 @@ class TestCaptureScreenPreprocessing:
 class TestCaptureScreenRawMode:
     """Verify that _capture_screen() with RAW mode does not alter pixel data."""
 
-    def test_raw_mode_raw_image_matches_resized_screenshot(self, tmp_path):
-        """With RAW preprocessing, raw_image_base64 must equal the resized screenshot
+    def test_raw_mode_preprocessed_matches_resized(self, tmp_path):
+        """With RAW preprocessing, preprocessed_image_base64 must equal resized_image_base64
         (i.e. no additional transformation is applied)."""
         # Use a screenshot that is already within screenshot_max_width so resize is a no-op
         screenshot_b64 = _make_b64_image(64, 48)
@@ -264,8 +272,8 @@ class TestCaptureScreenRawMode:
 
         result = agent._capture_screen()
 
-        assert result["raw_image_base64"] == screenshot_b64, (
-            "RAW mode must return the resized screenshot bytes unchanged"
+        assert result["preprocessed_image_base64"] == result["resized_image_base64"], (
+            "RAW mode must leave preprocessed_image_base64 identical to resized_image_base64"
         )
 
     def test_raw_mode_result_is_decodable_png(self, tmp_path):
@@ -277,5 +285,5 @@ class TestCaptureScreenRawMode:
         agent.screenshot_max_width = 9999
 
         result = agent._capture_screen()
-        img = _b64_to_image(result["raw_image_base64"])
+        img = _b64_to_image(result["preprocessed_image_base64"])
         assert img.size == (64, 48), "RAW mode must preserve original dimensions"
