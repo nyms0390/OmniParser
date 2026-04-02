@@ -118,6 +118,7 @@ OMNIPARSER_COMPUTER_TOOLS: List[dict] = [
     _omni_positional("left_click", "Left-click a UI element by box_id."),
     _omni_positional("right_click", "Right-click a UI element by box_id."),
     _omni_positional("double_click", "Double-click a UI element by box_id."),
+    _omni_positional("triple_click", "Triple-click a UI element by box_id to select all text inside it."),
     _omni_positional("hover", "Move the mouse cursor over a UI element by box_id."),
     _TYPE_TEXT,
     _KEY_PRESS,
@@ -156,6 +157,7 @@ GTA1_COMPUTER_TOOLS: List[dict] = [
     _gta1_positional("left_click", "Left-click a UI element described in natural language."),
     _gta1_positional("right_click", "Right-click a UI element described in natural language."),
     _gta1_positional("double_click", "Double-click a UI element described in natural language."),
+    _gta1_positional("triple_click", "Triple-click a UI element described in natural language to select all text inside it."),
     _gta1_positional("hover", "Move the cursor over a UI element described in natural language."),
     _TYPE_TEXT,
     _KEY_PRESS,
@@ -198,7 +200,7 @@ FINISH_TOOL: dict = {
 }
 
 # Positional action names — need coordinate resolution
-POSITIONAL_ACTIONS = frozenset({"left_click", "right_click", "double_click", "hover"})
+POSITIONAL_ACTIONS = frozenset({"left_click", "right_click", "double_click", "triple_click", "hover"})
 
 # ---------------------------------------------------------------------------
 # read_field tool — captures a text value from screen into working memory

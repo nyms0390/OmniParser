@@ -66,6 +66,16 @@ PLATFORM_PROMPTS: Dict[str, PlatformPrompt] = {
 }
 
 
+# Input field interaction guidance (injected into agent system prompts)
+INPUT_FIELD_INSTRUCTIONS = """\
+## Input Field Interaction
+- **Empty field**: click to focus, then type.
+- **Placeholder text** (grayed-out hint): click and type directly — the placeholder disappears automatically; do NOT clear it first.
+- **Prefilled value** (dark, selectable text): triple-click the field to select all existing text, then type the replacement value (selected text is replaced automatically — no explicit delete needed). If the text is not selected, delete it first with Backspace/Delete before typing.
+After typing, verify the field shows the intended value before proceeding.\
+"""
+
+
 # Thinking-model instruction variants (inserted as note #2 in VLM prompts)
 
 THINKING_INSTRUCTION_STANDARD = (
@@ -143,6 +153,8 @@ You are a computer automation agent. Use the provided tools to complete the give
 ## Element Reference
 {element_reference_hint}
 
+{input_field_instructions}
+
 ## Rules
 1. Before taking your first action, briefly outline your plan in 2-4 bullet points.
 2. Take one action per turn.
@@ -164,6 +176,8 @@ You are a computer automation agent. Use the provided tools to complete the give
 You will receive a screenshot and a current subtask at each turn.
 1. Observe the screen carefully.
 2. Take exactly ONE action using the provided tools.
+
+{input_field_instructions}
 
 ## Rules
 - One tool call per turn.
@@ -291,6 +305,7 @@ def build_react_system_prompt(
         platform_description=pp.description,
         interaction_constraints=pp.constraints,
         element_reference_hint=element_reference_hint,
+        input_field_instructions=INPUT_FIELD_INSTRUCTIONS,
     )
 
 
@@ -312,4 +327,5 @@ def build_vlm_tool_system_prompt(
         platform_description=pp.description,
         interaction_constraints=pp.constraints,
         element_reference_hint=element_reference_hint,
+        input_field_instructions=INPUT_FIELD_INSTRUCTIONS,
     )
