@@ -210,7 +210,8 @@ READ_FIELD_TOOL: dict = {
         "name": "read_field",
         "description": (
             "Capture one or more text values visible on the current screen into memory. "
-            "All fields visible in the current screenshot can be captured in a single call. "
+            "Pass every value you want to record as an item in the `fields` array — "
+            "all fields visible in the current screenshot can be captured in a single call. "
             "Values will be verified via clipboard if grounding targets are provided."
         ),
         "parameters": {

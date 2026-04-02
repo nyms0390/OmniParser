@@ -129,12 +129,12 @@ outputs:
 
 | Field | Required? | What to put here |
 |---|---|---|
-| `key` | **Yes** | Short name with no spaces. Reference it in steps as `{key}` to signal the agent to capture that value. Each key maps to exactly one value — do not reuse the same key for multiple pieces of information. |
+| `key` | **Yes** | Short name with no spaces. Reference it in steps as `{key}` to signal the agent to capture that value. |
 | `description` | No | Tells the agent what to look for on screen. |
 | `format` | No | Expected format of the captured value. |
 | `clipboard_correction` | No | `true` (default) or `false`. When `true`, the agent captures the value by tri-clicking the field to select its content, then reading the clipboard. **Before enabling this, verify that the target system's input fields support tri-click selection** (triple-click selects the full field content). Set to `false` for fields where tri-click does not select text, or where the value only needs to be visually confirmed rather than extracted. |
 
-> **One key, one value.** Each input and output key must correspond to a single, specific piece of information. Do not try to pack multiple values into one key (e.g., one key for "first name and last name"). Define a separate key for each distinct value you need.
+> **Key rules:** All key names must be unique across the entire template — no input and output may share the same name. Each key also holds exactly one value; do not pack multiple pieces of information into a single key (e.g., use `first_name` and `last_name`, not one `full_name` key for both).
 
 ### `executions`
 Where the actual step-by-step instructions live.
@@ -256,7 +256,8 @@ procedures:
 | Writing `required: True` with capital T | Use lowercase: `true` / `false` |
 | Defining inputs inside the procedure (old format) | All inputs must be at the **top level**, not inside a procedure |
 | Using `<key>` for outputs | Outputs use curly braces: `{key}`, not angle brackets |
-| Mapping multiple values to one key | Each input/output key must hold exactly one value — define separate keys for separate pieces of information |
+| Duplicate key names across inputs/outputs | All key names must be unique across the entire template |
+| Mapping multiple values to one key | Define a separate key for each distinct piece of information |
 | Vague `verify:` hints like "page updates" | Name the exact element, text, or screen state: which message, what it says, where it appears |
 | No scroll step before an off-screen element | Add an explicit step: "Scroll down until the Submit button is visible." |
 
@@ -273,7 +274,7 @@ procedures:
 - [ ] Steps text is indented further than `steps:`
 - [ ] Input values are referenced as `<key>` in steps
 - [ ] Output values to capture are referenced as `{key}` in steps
-- [ ] Each input and output key maps to exactly one value (no many-to-one)
+- [ ] All key names are unique across inputs and outputs; each key holds exactly one value
 - [ ] Scroll steps are written explicitly before any element that may be off-screen
 - [ ] Ambiguous UI elements are identified by their neighboring labeled elements
 - [ ] Each `verify:` line names a specific element, text, or screen state

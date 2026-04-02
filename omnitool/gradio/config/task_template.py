@@ -155,18 +155,11 @@ class TaskProcedure:
         steps_raw = self._cua_steps()
         if steps_raw:
             lines.append("\nSteps:")
-            lines.append(self._substitute_inputs(steps_raw))
-
-            referenced = self._referenced_outputs(steps_raw)
-            if referenced:
-                lines.append("\nOutputs to capture:")
-                for out in referenced:
-                    entry = f"  - {out.key}"
-                    if out.description:
-                        entry += f": {out.description}"
-                    if out.format:
-                        entry += f" (format: {out.format})"
-                    lines.append(entry)
+            substituted = self._substitute_inputs(steps_raw)
+            for raw_line, sub_line in zip(steps_raw.splitlines(), substituted.splitlines()):
+                lines.append(sub_line)
+                for out in self._referenced_outputs(raw_line):
+                    lines.append(f"   capture: {out.key}")
 
         return "\n".join(lines)
 
