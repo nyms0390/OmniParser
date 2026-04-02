@@ -14,3 +14,4 @@ omnitool/gradio/uploads/
 .DS_Store
 *.DS_Store
 omniparser.egg-info/
+.claude/settings.local.json
