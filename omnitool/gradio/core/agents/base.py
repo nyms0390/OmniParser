@@ -135,6 +135,7 @@ class BaseAgent(ABC):
         self.step_count = 0
         self.total_tokens = 0
         self.total_cost = 0.0
+        self._focus_crop_count: int = 0
 
         # Orchestration state
         self.working_memory = WorkingMemory()
@@ -148,10 +149,12 @@ class BaseAgent(ABC):
         self.step_count = 0
         self.total_tokens = 0
         self.total_cost = 0.0
+        self._focus_crop_count = 0
 
     def update_step_count(self):
         """Increment the step counter by one."""
         self.step_count += 1
+        self._focus_crop_count = 0
 
     def update_token_usage(self, tokens: int):
         """Add *tokens* to the cumulative token count."""
@@ -1050,6 +1053,13 @@ class BaseAgent(ABC):
             captured[field_name] = corrected
             results.append(f"Captured: {field_name} = {corrected}")
 
+        if captured:
+            facts_file = self.save_folder / "facts.json"
+            try:
+                facts_file.write_text(json.dumps(self.working_memory.facts, indent=2))
+            except Exception as exc:
+                logger.warning("Failed to save facts.json: %s", exc)
+
         return "\n".join(results), captured
 
     def _handle_focus_region(self, tc_args: Dict[str, Any]) -> Optional[str]:
@@ -1073,10 +1083,43 @@ class BaseAgent(ABC):
             return None
         try:
             x1, y1, x2, y2 = (int(v) for v in bbox)
-            return self._crop_b64(resized_b64, x1, y1, x2, y2)
+            crop_b64 = self._crop_b64(resized_b64, x1, y1, x2, y2)
         except Exception as exc:
             logger.warning("_handle_focus_region crop failed: %s", exc)
             return None
+        crop_file = f"step_{self.step_count:03d}_focus_{self._focus_crop_count:02d}.png"
+        self._focus_crop_count += 1
+        try:
+            (self.save_folder / crop_file).write_bytes(base64.b64decode(crop_b64))
+        except Exception as exc:
+            logger.warning("Failed to save focus crop %s: %s", crop_file, exc)
+        return crop_b64
+
+    def _handle_mark_screenshot(self, reason: str = "") -> str:
+        """Flag the current step's screenshot as important in trajectory.json.
+
+        Appends a flag record (separate from the step record) so the file
+        remains append-only and no previous entries need to be rewritten.
+
+        Returns:
+            Confirmation string for the tool result message.
+        """
+        screenshot_file = f"step_{self.step_count:03d}.png"
+        flag_record = {
+            "type": "flag",
+            "step": self.step_count,
+            "reason": reason,
+            "screenshot_file": screenshot_file,
+        }
+        trajectory_file = self.save_folder / "trajectory.json"
+        try:
+            with open(trajectory_file, "a") as f:
+                json.dump(flag_record, f)
+                f.write("\n")
+        except Exception as exc:
+            logger.warning("Failed to save screenshot flag: %s", exc)
+            return f"Error flagging {screenshot_file}: {exc}"
+        return f"Flagged {screenshot_file}: {reason}"
 
     # ------------------------------------------------------------------
     # Trajectory
@@ -1140,13 +1183,13 @@ class BaseAgent(ABC):
             plan_response: Dict with keys ``"response_text"``, ``"tool_calls"``,
                 ``"metadata"``, and ``"cost"`` from the plan LLM call.
         """
+        parsed = self.working_memory.parsed_screen or {}
+        screenshot_file = f"step_{self.step_count:03d}.png"
         step_data = {
             "step": self.step_count,
             "timestamp": datetime.now().isoformat(),
-            "screen_info": str(
-                self.working_memory.parsed_screen.get("parsed_content_list", [])
-                if self.working_memory.parsed_screen else []
-            ),
+            "screenshot_file": screenshot_file,
+            "screen_info": str(parsed.get("parsed_content_list", [])),
             "agent_response": plan_response.get("response_text", ""),
             "tool_calls": plan_response.get("tool_calls", []),
             "tokens": plan_response.get("metadata", {}).get("tokens"),
@@ -1161,6 +1204,13 @@ class BaseAgent(ABC):
                 f.write("\n")
         except Exception as exc:
             logger.warning("Failed to save trajectory: %s", exc)
+        # Save resized screenshot alongside the trajectory entry
+        resized_b64 = parsed.get("resized_image_base64", "")
+        if resized_b64:
+            try:
+                (self.save_folder / screenshot_file).write_bytes(base64.b64decode(resized_b64))
+            except Exception as exc:
+                logger.warning("Failed to save screenshot %s: %s", screenshot_file, exc)
 
     # ------------------------------------------------------------------
     # Shared loop helpers

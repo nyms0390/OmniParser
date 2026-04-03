@@ -29,7 +29,7 @@ from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import AgentMode, COMPACTION_PROMPT, build_react_system_prompt
 from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images, _extract_text_content
 from omnitool.gradio.core.agents.grounding import GroundingStrategy, ScreenData
-from omnitool.gradio.core.tools.schemas import FINISH_TOOL, FOCUS_TOOL, READ_FIELD_TOOL
+from omnitool.gradio.core.tools.schemas import FINISH_TOOL, FOCUS_TOOL, MARK_SCREENSHOT_TOOL, READ_FIELD_TOOL
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,9 @@ class ReActAgent(BaseAgent):
         self.grounding_strategy = grounding_strategy
         self.compaction_interval = compaction_interval
 
+    def _get_tools(self) -> List[dict]:
+        return self.grounding_strategy.get_tools() + [READ_FIELD_TOOL, FOCUS_TOOL, FINISH_TOOL, MARK_SCREENSHOT_TOOL]
+
     def _get_system_prompt(self) -> str:
         return build_react_system_prompt(
             platform=self.platform,
@@ -107,7 +110,7 @@ class ReActAgent(BaseAgent):
             }
 
             system_prompt = self._get_system_prompt()
-            all_tools = self.grounding_strategy.get_tools() + [READ_FIELD_TOOL, FOCUS_TOOL, FINISH_TOOL]
+            all_tools = self._get_tools()
             history: List[Dict[str, Any]] = []
             loop_tracker: deque = deque(maxlen=_LOOP_WINDOW)
 
@@ -273,7 +276,15 @@ class ReActAgent(BaseAgent):
                         history.append({"role": "user", "content": _STUCK_HINT})
                     continue
 
-                # 6d. Computer action → grounding → execute
+                # 6d. mark_screenshot → flag current step in trajectory
+                if tool_name == "mark_screenshot":
+                    result_text = self._handle_mark_screenshot(arguments.get("reason", ""))
+                    history.append(_tool_msg(tool_call_id, result_text))
+                    if inject_stuck_hint:
+                        history.append({"role": "user", "content": _STUCK_HINT})
+                    continue
+
+                # 6e. Computer action → grounding → execute
                 try:
                     dispatch = self.grounding_strategy.resolve(tool_name, arguments, screen_data)
                 except ValueError as exc:

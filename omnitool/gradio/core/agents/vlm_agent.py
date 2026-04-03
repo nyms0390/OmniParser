@@ -24,7 +24,7 @@ from omnitool.gradio.config import (
 )
 from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images
 from omnitool.gradio.core.agents.grounding import GroundingStrategy, ScreenData
-from omnitool.gradio.core.tools.schemas import FOCUS_TOOL, READ_FIELD_TOOL
+from omnitool.gradio.core.tools.schemas import FOCUS_TOOL, MARK_SCREENSHOT_TOOL, READ_FIELD_TOOL
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ class VLMAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def _get_tools(self) -> List[dict]:
-        return self.grounding_strategy.get_tools() + [READ_FIELD_TOOL, FOCUS_TOOL]
+        return self.grounding_strategy.get_tools() + [READ_FIELD_TOOL, FOCUS_TOOL, MARK_SCREENSHOT_TOOL]
 
     # ------------------------------------------------------------------
     # Screen capture
@@ -315,6 +315,12 @@ class VLMAgent(BaseAgent):
                                 all_tool_results.append({"tool": "focus_region", "status": "error"})
                                 logger.warning("FOCUS_REGION — failed for bbox %s", tc_args.get("bbox"))
                             tc_results.append((tc_id, content))
+
+                        elif tc_name == "mark_screenshot":
+                            result_text = self._handle_mark_screenshot(tc_args.get("reason", ""))
+                            tc_results.append((tc_id, result_text))
+                            all_tool_results.append({"tool": "mark_screenshot", "status": "success"})
+                            logger.info("MARK_SCREENSHOT — %s", tc_args.get("reason"))
 
                         else:
                             # Computer action via grounding strategy

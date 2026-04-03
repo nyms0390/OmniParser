@@ -11,6 +11,12 @@ Zip changed source files and deliver them via email.
 **Use this when:** a recipient needs the actual source files and doesn't have git access.
 **Not this skill:** if you need to document progress for the next agent/session — use `/handoff` for that.
 
+## Exclusions
+
+Always exclude:
+- Files matched by `.gitignore` (use `git ls-files --ignored --exclude-standard` to check)
+- Claude config files: anything under `.claude/` (settings, memory, skills, etc.)
+
 ## Current State
 - Branch: !`git branch --show-current`
 - Changed files (committed on branch): !`git diff --name-only master...HEAD`
@@ -22,14 +28,22 @@ Zip changed source files and deliver them via email.
 - **"Pack the latest commit"** → use only the files from `git diff-tree --no-commit-id -r --name-only HEAD`
 - **"Pack changes"** / **"Pack branch"** → combine all three lists above into a deduplicated set; skip deleted files
 
+After collecting the file list, filter out:
+1. Any path starting with `.claude/`
+2. Any path that is gitignore'd: `git check-ignore -q <file> && echo ignored`
+
 ## Steps
 
-1. **Collect files** per the scope above.
+1. **Collect files** per the scope above, then apply the exclusions.
 
 2. **Create the archive** from the repo root. Use a descriptive slug and timestamp in the filename:
    ```bash
    ZIPFILE=~/Desktop/omniparser-<slug>-<YYYYMMDD-HHMM>.zip
-   zip "$ZIPFILE" <file1> <file2> ...   # no -r needed for explicit file lists
+   # Filter: remove .claude/ paths and gitignore'd files
+   FILES=$(echo "<file list>" | tr ' ' '\n' | grep -v '^\.claude/' | while read f; do
+     git check-ignore -q "$f" || echo "$f"
+   done | tr '\n' ' ')
+   zip "$ZIPFILE" $FILES   # no -r needed for explicit file lists
    echo "Created: $ZIPFILE"
    ```
 

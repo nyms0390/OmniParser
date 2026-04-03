@@ -285,6 +285,32 @@ FOCUS_TOOL: dict = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# mark_screenshot tool — flag the current screenshot as important
+# ---------------------------------------------------------------------------
+
+MARK_SCREENSHOT_TOOL: dict = {
+    "type": "function",
+    "function": {
+        "name": "mark_screenshot",
+        "description": (
+            "Flag the current screenshot as important for later review. "
+            "Use this when the screen shows a key result, confirmation, or error "
+            "worth preserving — e.g. after completing a task step or verifying a value."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Why this screenshot is important (e.g. 'order confirmed', 'error state').",
+                },
+            },
+            "required": ["reason"],
+        },
+    },
+}
+
 __all__ = [
     "OMNIPARSER_COMPUTER_TOOLS",
     "GTA1_COMPUTER_TOOLS",
@@ -292,4 +318,5 @@ __all__ = [
     "POSITIONAL_ACTIONS",
     "READ_FIELD_TOOL",
     "FOCUS_TOOL",
+    "MARK_SCREENSHOT_TOOL",
 ]
