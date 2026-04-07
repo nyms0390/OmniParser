@@ -1152,9 +1152,20 @@ class BaseAgent(ABC):
             "facts": dict(self.working_memory.facts),
         }
         try:
-            (self.save_folder / "summary.json").write_text(json.dumps(summary, indent=2))
+            (self.save_folder / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception as exc:
             logger.warning("Failed to write summary.json: %s", exc)
+        try:
+            screen = self._capture_screen()
+            raw_b64 = screen.get("raw_image_base64")
+            if not raw_b64:
+                logger.warning("Failed to save final screenshot: raw_image_base64 not in screen dict")
+            else:
+                (self.save_folder / "final_screenshot.png").write_bytes(
+                    base64.b64decode(raw_b64)
+                )
+        except Exception as exc:
+            logger.warning("Failed to save final screenshot: %s", exc)
 
     # ------------------------------------------------------------------
     # Trajectory
@@ -1234,8 +1245,8 @@ class BaseAgent(ABC):
         self.working_memory.trajectory.append(step_data)
         trajectory_file = self.save_folder / "trajectory.json"
         try:
-            with open(trajectory_file, "a") as f:
-                json.dump(step_data, f)
+            with open(trajectory_file, "a", encoding="utf-8") as f:
+                json.dump(step_data, f, ensure_ascii=False)
                 f.write("\n")
         except Exception as exc:
             logger.warning("Failed to save trajectory: %s", exc)
