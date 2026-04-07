@@ -185,20 +185,5 @@ class TestToolCollection:
         assert not collection.has_tool("temp")
 
 
-# ---------------------------------------------------------------------------
-# Placeholder slow/integration tests (marked to skip by default)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.slow
-class TestAgentCreation:
-    @pytest.mark.skip(reason="VLMAgent creation requires live LLM client; covered in test_factory.py with mocks")
-    def test_vlm_agent_creation(self, app_state, tool_collection, mock_llm_client, tmp_path):
-        ...
-
-    @pytest.mark.skip(reason="AnthropicAgent creation requires live Anthropic client; covered in test_factory.py with mocks")
-    def test_anthropic_agent_creation(self, app_state, tool_collection, mock_llm_client, tmp_path):
-        ...
-
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
