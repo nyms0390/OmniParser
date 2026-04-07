@@ -90,6 +90,7 @@ class AnthropicAgent(BaseAgent):
     def run(self) -> Generator[Dict[str, Any], None, None]:
         """Full Plan→Act→Verify→Reflect loop."""
         try:
+            self._record_start()
             logger.info("Agent START — model=%s mode=%s", self.model_name, self.mode.value)
             yield {
                 "type": "status",
@@ -334,6 +335,10 @@ class AnthropicAgent(BaseAgent):
                 "Agent COMPLETE — steps=%d tokens=%d cost=$%.6f",
                 self.step_count, self.total_tokens, self.total_cost,
             )
+            self._write_run_summary(
+                success=success,
+                message="Task completed successfully." if success else "Agent stopped.",
+            )
             yield {
                 "type": "complete",
                 "message": "Task completed successfully." if success else "Agent stopped.",
@@ -346,4 +351,5 @@ class AnthropicAgent(BaseAgent):
 
         except Exception as e:
             logger.error("Agent error: %s", e, exc_info=True)
+            self._write_run_summary(success=False, message=f"Crashed: {e}")
             yield {"type": "error", "message": str(e)}

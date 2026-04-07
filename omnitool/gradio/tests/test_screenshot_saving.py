@@ -284,31 +284,30 @@ class TestFactsSave:
         agent.gta1_client = None  # disable clipboard correction
         return agent
 
-    def test_facts_json_written_after_read_field(self, tmp_path):
+    def test_facts_stored_in_working_memory_after_read_field(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
         agent._handle_read_field({"fields": [{"field_name": "order_id", "value": "12345"}]})
-        assert (tmp_path / "facts.json").exists()
+        assert agent.working_memory.facts["order_id"] == "12345"
+        assert not (tmp_path / "facts.json").exists()
 
-    def test_facts_json_contains_captured_value(self, tmp_path):
+    def test_facts_captured_value_in_working_memory(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
         agent._handle_read_field({"fields": [{"field_name": "total", "value": "$99.00"}]})
-        data = json.loads((tmp_path / "facts.json").read_text())
-        assert data["total"] == "$99.00"
+        assert agent.working_memory.facts["total"] == "$99.00"
+        assert not (tmp_path / "facts.json").exists()
 
-    def test_facts_json_accumulates_across_calls(self, tmp_path):
+    def test_facts_accumulate_across_calls_in_working_memory(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
         agent._handle_read_field({"fields": [{"field_name": "a", "value": "1"}]})
         agent._handle_read_field({"fields": [{"field_name": "b", "value": "2"}]})
-        data = json.loads((tmp_path / "facts.json").read_text())
-        assert data == {"a": "1", "b": "2"}
+        assert agent.working_memory.facts == {"a": "1", "b": "2"}
+        assert not (tmp_path / "facts.json").exists()
 
-    def test_facts_json_not_written_when_no_new_fields_captured(self, tmp_path):
+    def test_duplicate_field_is_not_overwritten(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        # Pre-seed a fact so read_field skips it (duplicate with same value)
         agent.working_memory.facts["x"] = "v"
         agent._handle_read_field({"fields": [{"field_name": "x", "value": "v"}]})
-        # facts.json should NOT be written (captured dict was empty)
-        assert not (tmp_path / "facts.json").exists()
+        assert agent.working_memory.facts == {"x": "v"}
 
 
 # ===========================================================================
@@ -428,3 +427,66 @@ class TestMarkScreenshotSchema:
     def test_schema_exported_in_all(self):
         from omnitool.gradio.core.tools import schemas
         assert "MARK_SCREENSHOT_TOOL" in schemas.__all__
+
+
+# ===========================================================================
+# _write_run_summary
+# ===========================================================================
+
+class TestWriteRunSummary:
+    def test_summary_json_written_after_run(self, tmp_path):
+        agent = _make_react_agent(tmp_path, [])
+        list(agent.run())
+        assert (tmp_path / "summary.json").exists()
+
+    def test_summary_contains_expected_keys(self, tmp_path):
+        agent = _make_react_agent(tmp_path, [])
+        list(agent.run())
+        summary = json.loads((tmp_path / "summary.json").read_text())
+        for key in ("task", "start_time", "end_time", "duration_seconds",
+                    "success", "message", "total_steps", "total_tokens",
+                    "total_cost_usd", "flags", "facts"):
+            assert key in summary, f"missing key: {key}"
+
+    def test_summary_success_true_on_finish(self, tmp_path):
+        agent = _make_react_agent(tmp_path, [])
+        list(agent.run())
+        summary = json.loads((tmp_path / "summary.json").read_text())
+        assert summary["success"] is True
+
+    def test_summary_flags_populated_from_mark_screenshot(self, tmp_path):
+        agent = _make_react_agent(tmp_path, [
+            _tool_response("mark_screenshot", {"reason": "confirmed"}),
+        ])
+        list(agent.run())
+        summary = json.loads((tmp_path / "summary.json").read_text())
+        assert any(f["reason"] == "confirmed" for f in summary["flags"])
+
+    def test_summary_facts_populated_from_read_field(self, tmp_path):
+        agent = _make_react_agent(tmp_path, [
+            _tool_response("read_field", {"fields": [{"field_name": "order_id", "value": "99"}]}),
+        ])
+        list(agent.run())
+        summary = json.loads((tmp_path / "summary.json").read_text())
+        assert summary["facts"].get("order_id") == "99"
+
+    def test_summary_written_on_crash(self, tmp_path):
+        agent = _make_react_agent(tmp_path, [])
+        agent._capture_screen = Mock(side_effect=RuntimeError("boom"))
+        list(agent.run())
+        assert (tmp_path / "summary.json").exists()
+        summary = json.loads((tmp_path / "summary.json").read_text())
+        assert summary["success"] is False
+        assert "boom" in summary["message"]
+
+    def test_summary_duration_seconds_is_non_negative(self, tmp_path):
+        agent = _make_react_agent(tmp_path, [])
+        list(agent.run())
+        summary = json.loads((tmp_path / "summary.json").read_text())
+        assert summary["duration_seconds"] >= 0
+
+    def test_summary_total_cost_usd_is_float(self, tmp_path):
+        agent = _make_react_agent(tmp_path, [])
+        list(agent.run())
+        summary = json.loads((tmp_path / "summary.json").read_text())
+        assert isinstance(summary["total_cost_usd"], float)

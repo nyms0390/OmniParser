@@ -136,6 +136,8 @@ class BaseAgent(ABC):
         self.total_tokens = 0
         self.total_cost = 0.0
         self._focus_crop_count: int = 0
+        self._start_time: Optional[datetime] = None
+        self._flags: List[Dict[str, Any]] = []
 
         # Orchestration state
         self.working_memory = WorkingMemory()
@@ -145,11 +147,23 @@ class BaseAgent(ABC):
     # ------------------------------------------------------------------
 
     def reset(self):
-        """Reset all per-run counters to zero."""
+        """Reset all per-run counters and state.
+
+        Note: subclass ``run()`` methods call ``_record_start()`` which re-initialises
+        ``_start_time`` and ``_flags``; ``reset()`` is provided for external callers
+        that need to reinitialise an agent between runs without calling ``run()``.
+        """
         self.step_count = 0
         self.total_tokens = 0
         self.total_cost = 0.0
         self._focus_crop_count = 0
+        self._start_time = None
+        self._flags = []
+
+    def _record_start(self) -> None:
+        """Record run start time. Called once at the top of each subclass ``run()``."""
+        self._start_time = datetime.now()
+        self._flags = []
 
     def update_step_count(self):
         """Increment the step counter by one."""
@@ -1053,13 +1067,6 @@ class BaseAgent(ABC):
             captured[field_name] = corrected
             results.append(f"Captured: {field_name} = {corrected}")
 
-        if captured:
-            facts_file = self.save_folder / "facts.json"
-            try:
-                facts_file.write_text(json.dumps(self.working_memory.facts, indent=2))
-            except Exception as exc:
-                logger.warning("Failed to save facts.json: %s", exc)
-
         return "\n".join(results), captured
 
     def _handle_focus_region(self, tc_args: Dict[str, Any]) -> Optional[str]:
@@ -1111,6 +1118,7 @@ class BaseAgent(ABC):
             "reason": reason,
             "screenshot_file": screenshot_file,
         }
+        self._flags.append(flag_record)
         trajectory_file = self.save_folder / "trajectory.json"
         try:
             with open(trajectory_file, "a") as f:
@@ -1120,6 +1128,31 @@ class BaseAgent(ABC):
             logger.warning("Failed to save screenshot flag: %s", exc)
             return f"Error flagging {screenshot_file}: {exc}"
         return f"Flagged {screenshot_file}: {reason}"
+
+    def _write_run_summary(self, success: bool, message: str) -> None:
+        """Write summary.json to save_folder at the end of every run."""
+        end_time = datetime.now()
+        if self._start_time is None:
+            logger.warning("_write_run_summary called before _record_start(); duration will be 0.")
+        start_time = self._start_time or end_time
+        duration = (end_time - start_time).total_seconds()
+        summary = {
+            "task": self.working_memory.task or "",
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+            "duration_seconds": round(duration, 3),
+            "success": success,
+            "message": message,
+            "total_steps": self.step_count,
+            "total_tokens": self.total_tokens,
+            "total_cost_usd": round(self.total_cost, 6),
+            "flags": self._flags,
+            "facts": dict(self.working_memory.facts),
+        }
+        try:
+            (self.save_folder / "summary.json").write_text(json.dumps(summary, indent=2))
+        except Exception as exc:
+            logger.warning("Failed to write summary.json: %s", exc)
 
     # ------------------------------------------------------------------
     # Trajectory

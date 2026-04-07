@@ -141,6 +141,7 @@ class VLMAgent(BaseAgent):
     def run(self) -> Generator[Dict[str, Any], None, None]:
         """Plan→Reflect agentic loop with native tool calling."""
         try:
+            self._record_start()
             logger.info(
                 "VLMAgent START model=%s grounding=%s mode=%s",
                 self.model_name, self.grounding_strategy.name, self.mode.value,
@@ -443,6 +444,10 @@ class VLMAgent(BaseAgent):
                 "VLMAgent COMPLETE — steps=%d tokens=%d cost=$%.6f",
                 self.step_count, self.total_tokens, self.total_cost,
             )
+            self._write_run_summary(
+                success=success,
+                message="Task completed successfully." if success else "Agent stopped.",
+            )
             yield {
                 "type": "complete",
                 "message": "Task completed successfully." if success else "Agent stopped.",
@@ -455,6 +460,7 @@ class VLMAgent(BaseAgent):
 
         except Exception as exc:
             logger.exception("VLMAgent crashed: %s", exc)
+            self._write_run_summary(success=False, message=f"Crashed: {exc}")
             yield {"type": "error", "message": str(exc)}
 
 

@@ -97,6 +97,7 @@ class ReActAgent(BaseAgent):
     def run(self) -> Generator[Dict[str, Any], None, None]:
         """ReAct agentic loop — observe → think+act → observe → ..."""
         try:
+            self._record_start()
             logger.info(
                 "ReActAgent START model=%s grounding=%s mode=%s",
                 self.model_name, self.grounding_strategy.name, self.mode.value,
@@ -233,6 +234,7 @@ class ReActAgent(BaseAgent):
                     }
                     # Merge captured fields into working memory
                     self.working_memory.facts.update(result["fields"])
+                    self._write_run_summary(success=result["success"], message=result["summary"])
                     yield {
                         "type": "complete",
                         "message": result["summary"],
@@ -351,6 +353,10 @@ class ReActAgent(BaseAgent):
             # max_steps reached without finish()
             # ------------------------------------------------------------------
             logger.info("ReActAgent STOPPED — max_steps=%d reached", self.max_steps)
+            self._write_run_summary(
+                success=False,
+                message=f"Stopped: reached {self.max_steps} steps without completing.",
+            )
             yield {
                 "type": "complete",
                 "message": f"Stopped: reached {self.max_steps} steps without completing.",
@@ -363,6 +369,7 @@ class ReActAgent(BaseAgent):
 
         except Exception as exc:
             logger.exception("ReActAgent crashed: %s", exc)
+            self._write_run_summary(success=False, message=f"Crashed: {exc}")
             yield {"type": "error", "message": str(exc)}
 
     # ------------------------------------------------------------------
