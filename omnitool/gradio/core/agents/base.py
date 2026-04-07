@@ -1135,12 +1135,14 @@ class BaseAgent(ABC):
         if self._start_time is None:
             logger.warning("_write_run_summary called before _record_start(); duration will be 0.")
         start_time = self._start_time or end_time
-        duration = (end_time - start_time).total_seconds()
+        total_seconds = int((end_time - start_time).total_seconds())
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
         summary = {
             "task": self.working_memory.task or "",
             "start_time": start_time.isoformat(),
             "end_time": end_time.isoformat(),
-            "duration_seconds": round(duration, 3),
+            "duration": f"{hours:02d}:{minutes:02d}:{seconds:02d}",
             "success": success,
             "message": message,
             "total_steps": self.step_count,

@@ -443,7 +443,7 @@ class TestWriteRunSummary:
         agent = _make_react_agent(tmp_path, [])
         list(agent.run())
         summary = json.loads((tmp_path / "summary.json").read_text())
-        for key in ("task", "start_time", "end_time", "duration_seconds",
+        for key in ("task", "start_time", "end_time", "duration",
                     "success", "message", "total_steps", "total_tokens",
                     "total_cost_usd", "flags", "facts"):
             assert key in summary, f"missing key: {key}"
@@ -479,11 +479,12 @@ class TestWriteRunSummary:
         assert summary["success"] is False
         assert "boom" in summary["message"]
 
-    def test_summary_duration_seconds_is_non_negative(self, tmp_path):
+    def test_summary_duration_is_hh_mm_ss_format(self, tmp_path):
         agent = _make_react_agent(tmp_path, [])
         list(agent.run())
         summary = json.loads((tmp_path / "summary.json").read_text())
-        assert summary["duration_seconds"] >= 0
+        import re
+        assert re.fullmatch(r"\d{2}:\d{2}:\d{2}", summary["duration"])
 
     def test_summary_total_cost_usd_is_float(self, tmp_path):
         agent = _make_react_agent(tmp_path, [])
