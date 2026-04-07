@@ -24,9 +24,12 @@ from omnitool.gradio.config import (
 )
 from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images
 from omnitool.gradio.core.agents.grounding import GroundingStrategy, ScreenData
-from omnitool.gradio.core.tools.schemas import FOCUS_TOOL, MARK_SCREENSHOT_TOOL, READ_FIELD_TOOL
+from omnitool.gradio.core.tools.schemas import AUXILIARY_TOOLS
 
 logger = logging.getLogger(__name__)
+
+# Keep task seed + this many trailing messages to avoid context overflow.
+_TC_HISTORY_MAX = 32
 
 
 class VLMAgent(BaseAgent):
@@ -71,7 +74,9 @@ class VLMAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def _get_tools(self) -> List[dict]:
-        return self.grounding_strategy.get_tools() + [READ_FIELD_TOOL, FOCUS_TOOL, MARK_SCREENSHOT_TOOL]
+        # FINISH_TOOL is intentionally excluded: VLMAgent exits via the
+        # Plan→Reflect loop (_run_reflect_step / reflect_done), not via finish().
+        return self.grounding_strategy.get_tools() + AUXILIARY_TOOLS
 
     # ------------------------------------------------------------------
     # Screen capture
@@ -180,7 +185,6 @@ class VLMAgent(BaseAgent):
                 })
                 self._tc_history_seeded = True
 
-            is_som = self.grounding_strategy.name == "omniparser"
             success = False
 
             # ---- Main loop ----
@@ -219,10 +223,9 @@ class VLMAgent(BaseAgent):
 
                 # Evict old images (keep only the latest screenshot)
                 _evict_old_images(self._tc_history)
-                # Trim history to avoid context overflow: keep task seed + last 30 messages
-                _HISTORY_MAX = 32
-                if len(self._tc_history) > _HISTORY_MAX:
-                    self._tc_history = self._tc_history[:1] + self._tc_history[-(_HISTORY_MAX - 1):]
+                # Trim history to avoid context overflow: keep task seed + last 31 messages
+                if len(self._tc_history) > _TC_HISTORY_MAX:
+                    self._tc_history = self._tc_history[:1] + self._tc_history[-(_TC_HISTORY_MAX - 1):]
                     logger.info("Trimmed _tc_history to %d messages", len(self._tc_history))
 
                 # ---- PLAN (LLM call) ----

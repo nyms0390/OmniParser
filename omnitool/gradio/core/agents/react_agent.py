@@ -29,7 +29,7 @@ from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.config import AgentMode, COMPACTION_PROMPT, build_react_system_prompt
 from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images, _extract_text_content
 from omnitool.gradio.core.agents.grounding import GroundingStrategy, ScreenData
-from omnitool.gradio.core.tools.schemas import FINISH_TOOL, FOCUS_TOOL, MARK_SCREENSHOT_TOOL, READ_FIELD_TOOL
+from omnitool.gradio.core.tools.schemas import AUXILIARY_TOOLS, FINISH_TOOL
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ class ReActAgent(BaseAgent):
         self.compaction_interval = compaction_interval
 
     def _get_tools(self) -> List[dict]:
-        return self.grounding_strategy.get_tools() + [READ_FIELD_TOOL, FOCUS_TOOL, FINISH_TOOL, MARK_SCREENSHOT_TOOL]
+        return self.grounding_strategy.get_tools() + AUXILIARY_TOOLS + [FINISH_TOOL]
 
     def _get_system_prompt(self) -> str:
         return build_react_system_prompt(
@@ -448,7 +448,11 @@ def _tool_msg(tool_call_id: str, content: str) -> Dict[str, Any]:
 
 
 def _freeze(arguments: Dict[str, Any]):
-    """Make arguments hashable for loop detection."""
+    """Make arguments hashable for loop detection.
+
+    Falls back to JSON for args containing lists or nested dicts
+    (e.g. bbox=[x1, y1, x2, y2] in focus_region).
+    """
     try:
         return frozenset(arguments.items())
     except TypeError:
