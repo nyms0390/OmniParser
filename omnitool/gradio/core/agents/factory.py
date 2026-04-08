@@ -2,13 +2,16 @@
 Agent factory — constructs ReActAgent from model and provider config.
 """
 
+import logging
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from omnitool.gradio.clients import BaseLLMClient, get_llm_client
 from omnitool.gradio.clients.external.gta1 import GTA1Client
 from omnitool.gradio.clients.external.omniparser import OmniParserClient
-from omnitool.gradio.config import AgentMode, get_llm_config, get_provider_config
+from omnitool.gradio.config import AgentMode, TaskProcedure, get_llm_config, get_provider_config
 from omnitool.gradio.services import AppState, get_api_key, AuthProvider
 
 from omnitool.gradio.core.agents.preprocessing import PreprocessingMode
@@ -32,6 +35,7 @@ def create_agent(
     gta1_client: Optional[GTA1Client] = None,
     grounding: str = "gta1",
     preprocessing_mode: str = "raw",
+    task_procedure: Optional[TaskProcedure] = None,
 ) -> BaseAgent:
     """Factory function — returns a ReActAgent configured for the requested grounding.
 
@@ -54,6 +58,8 @@ def create_agent(
         preprocessing_mode: Image preprocessing applied to screenshots before
             grounding/LLM. One of "raw", "clahe", "adaptive_thresh",
             "edge_overlay", "clahe+edges". Defaults to "raw".
+        task_procedure: Parsed procedure from a YAML task template. Required
+            for clipboard_correction to work in TASK mode.
 
     Returns:
         Initialised ReActAgent.
@@ -89,10 +95,16 @@ def create_agent(
     )
 
     # Always try to construct GTA1Client — needed for read_field clipboard correction
-    # even when grounding="omniparser". Caller can pass gta1_client=None explicitly
-    # to disable clipboard correction.
+    # even when grounding="omniparser". Construction failure degrades gracefully:
+    # clipboard correction is disabled but the agent still runs.
     if gta1_client is None:
-        gta1_client = GTA1Client()
+        try:
+            gta1_client = GTA1Client()
+        except Exception as exc:
+            logger.warning(
+                "GTA1Client construction failed — clipboard correction disabled: %s", exc
+            )
+            gta1_client = None
 
     strategy = _resolve_grounding(grounding, omniparser_client, gta1_client)
 
@@ -110,6 +122,7 @@ def create_agent(
         gta1_client=gta1_client,
         preprocessing_mode=_resolve_preprocessing(preprocessing_mode),
         grounding_strategy=strategy,
+        task_procedure=task_procedure,
     )
 
 

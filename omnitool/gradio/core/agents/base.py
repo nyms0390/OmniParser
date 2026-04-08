@@ -28,6 +28,7 @@ from omnitool.gradio.config import (
     AgentMode,
     AggregateOperation,
     SCREENSHOT_MAX_WIDTH,
+    TaskProcedure,
     get_llm_config,
     get_pricing,
 )
@@ -73,10 +74,10 @@ class BaseAgent(ABC):
         platform: str = "windows",
         max_steps: int = 20,
         action_delay: float = 1.5,
-        output_callback=None,
         gta1_client: Optional[GTA1Client] = None,
         provider: Optional[str] = None,
         preprocessing_mode: PreprocessingMode = PreprocessingMode.RAW,
+        task_procedure: Optional[TaskProcedure] = None,
     ):
         self.model_name = model_name
         self.provider = provider or ""
@@ -89,7 +90,6 @@ class BaseAgent(ABC):
         self.platform = platform
         self.max_steps = max_steps
         self.action_delay = action_delay
-        self.output_callback = output_callback
         self.gta1_client = gta1_client
         self.screenshot_max_width = SCREENSHOT_MAX_WIDTH
         self.preprocessing_mode = preprocessing_mode
@@ -110,6 +110,14 @@ class BaseAgent(ABC):
 
         # Working memory
         self.working_memory = WorkingMemory()
+
+        # Task procedure — provided at construction when running in TASK mode.
+        # _output_def_map is a pre-built index for O(1) lookup in _get_output_def.
+        self.task_procedure: Optional[TaskProcedure] = task_procedure
+        self._output_def_map: Dict[str, Any] = (
+            {o.key: o for o in (task_procedure.outputs or [])}
+            if task_procedure else {}
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle & accounting
@@ -426,12 +434,18 @@ class BaseAgent(ABC):
             logger.warning("FACTS — overwriting %r: %r → %r", key, existing, value)
         self.working_memory.facts[key] = value
 
+    def _get_output_def(self, field_name: str):
+        """Return the TaskOutput for *field_name* from the current procedure, or None."""
+        return self._output_def_map.get(field_name)
+
     def _handle_read_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         """Capture one or more screen values into working_memory.facts.
 
-        Clipboard-based correction is skipped when the matching TaskOutput has
-        ``clipboard_correction: false``, or when gta1_client is unavailable,
-        or when the LLM omits a grounding target.
+        Clipboard-based correction is skipped when:
+        - the matching TaskOutput has ``clipboard_correction: false``, OR
+        - the field has no TaskOutput definition (defaults to correction enabled), OR
+        - gta1_client is unavailable, OR
+        - the LLM omits a grounding target.
 
         Returns:
             A tuple of (result_text, captured) where captured contains only the
@@ -461,8 +475,11 @@ class BaseAgent(ABC):
                     results.append(f"Field '{field_name}' already captured: {existing}")
                     continue
 
+            output_def = self._get_output_def(field_name)
+            use_correction = output_def.clipboard_correction if output_def is not None else True
+
             corrected = value
-            if self.gta1_client and target:
+            if use_correction and self.gta1_client and target:
                 try:
                     corrected = self._correct_field_via_clipboard(
                         field_name, value, self.working_memory.parsed_screen or {}

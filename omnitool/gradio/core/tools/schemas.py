@@ -43,7 +43,10 @@ _KEY_PRESS = {
         "name": "key_press",
         "description": (
             "Press a keyboard key or combination "
-            "(e.g. 'enter', 'ctrl+c', 'tab', 'escape', 'ctrl+shift+t')."
+            "(e.g. 'enter', 'ctrl+c', 'tab', 'escape', 'ctrl+shift+t'). "
+            "Use 'end'/'home' to jump to the bottom/top of a page or list instantly, "
+            "and 'pagedown'/'pageup' to move one page at a time — "
+            "faster than repeated scrolling."
         ),
         "parameters": {
             "type": "object",

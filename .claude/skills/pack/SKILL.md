@@ -25,7 +25,7 @@ Always exclude:
 
 ## Scope
 
-- **"Pack the latest commit"** → use only the files from `git diff-tree --no-commit-id -r --name-only HEAD`
+- **"Pack the latest commit"** → resolve the target commit first (by hash or description: `git log --oneline | head -20`), then use `git diff-tree --no-commit-id -r --name-only <hash>`
 - **"Pack changes"** / **"Pack branch"** → combine all three lists above into a deduplicated set; skip deleted files
 
 After collecting the file list, filter out:
@@ -34,20 +34,24 @@ After collecting the file list, filter out:
 
 ## Steps
 
-1. **Collect files** per the scope above, then apply the exclusions.
-
-2. **Create the archive** from the repo root. Use a descriptive slug and timestamp in the filename:
+1. **Collect files** per the scope above, then apply the exclusions. Write the final list to a temp file:
    ```bash
-   ZIPFILE=~/Desktop/omniparser-<slug>-<YYYYMMDD-HHMM>.zip
-   # Filter: remove .claude/ paths and gitignore'd files
-   FILES=$(echo "<file list>" | tr ' ' '\n' | grep -v '^\.claude/' | while read f; do
-     git check-ignore -q "$f" || echo "$f"
-   done | tr '\n' ' ')
-   zip "$ZIPFILE" $FILES   # no -r needed for explicit file lists
-   echo "Created: $ZIPFILE"
+   git diff-tree --no-commit-id -r --name-only <hash> \
+     | grep -v '^\.claude/' \
+     | while read f; do [ -f "$f" ] && (git check-ignore -q "$f" || echo "$f"); done \
+     > /tmp/pack_files.txt
+   cat /tmp/pack_files.txt
    ```
 
-3. **Send via email** using the helper at `~/.claude/scripts/send_email.py`:
+2. **Create the archive** from the repo root using `xargs` (do not store file list in a shell variable — word splitting is unreliable). Use a descriptive slug and timestamp:
+   ```bash
+   ZIPFILE=~/Desktop/omniparser-<slug>-<YYYYMMDD-HHMM>.zip
+   cat /tmp/pack_files.txt | xargs zip "$ZIPFILE"
+   ls -lh "$ZIPFILE"
+   ```
+
+3. **Send via email** using the helper at `~/.claude/scripts/send_email.py`.
+   If `GMAIL_APP_PASSWORD` is not set in the environment, stop and tell the user.
    ```bash
    python - <<'EOF'
    import sys, os
@@ -66,9 +70,10 @@ After collecting the file list, filter out:
    )
    EOF
    ```
-   If `GMAIL_APP_PASSWORD` is not set in the environment, stop and tell the user.
+   If Gmail rejects with SMTPDataError 552, **stop and alert the user** — do not attempt workarounds.
 
-4. **Report**:
+4. **Delete the zip** after a successful send: `rm <full zip path>`
+
+5. **Report**:
    - Files included and total count
-   - Zip path
    - Confirmation that the email was sent (or the error if it failed)

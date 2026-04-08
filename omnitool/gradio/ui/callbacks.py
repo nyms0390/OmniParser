@@ -125,18 +125,23 @@ class GradioCallbacks:
 
         history = list(chatbot_history) if chatbot_history else []
 
-        # Resolve the selected procedure from the template stored in yaml_template_state.
+        # Resolve mode enum once — used throughout this method.
+        try:
+            agent_mode = AgentMode(mode)
+        except ValueError:
+            agent_mode = AgentMode.INTERACTIVE
+        in_task_mode = agent_mode == AgentMode.TASK
+
+        # Resolve the selected procedure and override message only in TASK mode.
         yaml_procedure = None
-        if isinstance(yaml_template, TaskTemplate):
+        if in_task_mode and isinstance(yaml_template, TaskTemplate):
             try:
                 yaml_procedure = yaml_template.get_procedure(selected_procedure_id)
             except (ValueError, TypeError):
                 yaml_procedure = yaml_template.procedures[0]
-
-        # When a YAML template is loaded in TASK mode, override message.
-        if yaml_procedure is not None and mode == AgentMode.TASK.value:
-            yaml_template.resolve_inputs(yaml_procedure)
-            message = yaml_procedure.to_task_string()
+            if yaml_procedure is not None:
+                yaml_template.resolve_inputs(yaml_procedure)
+                message = yaml_procedure.to_task_string()
         # Add user message
         state.chat.add_message("user", message)
         history.append({"role": "user", "content": message})
@@ -157,12 +162,6 @@ class GradioCallbacks:
 
         # Create orchestrator
         try:
-            # Resolve mode enum
-            try:
-                agent_mode = AgentMode(mode)
-            except ValueError:
-                agent_mode = AgentMode.INTERACTIVE
-
             # Prepare orchestrator kwargs
             orchestrator_kwargs = {
                 "agent_type": agent_type,
@@ -180,12 +179,10 @@ class GradioCallbacks:
                 "gta1_client": self.gta1_client,
                 "grounding": grounding,
                 "preprocessing_mode": preprocessing_mode,
+                "task_procedure": yaml_procedure,
             }
 
             self.orchestrator = create_agent(**orchestrator_kwargs)
-
-            if yaml_procedure is not None and mode == AgentMode.TASK.value:
-                self.orchestrator.task_procedure = yaml_procedure
 
             # Stream sampling loop updates to the chatbot
             status = "Running..."
