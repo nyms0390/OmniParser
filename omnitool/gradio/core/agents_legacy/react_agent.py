@@ -22,11 +22,11 @@ import logging
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, Generator, List
+from typing import Any, Dict, Generator, List, Optional
 
 from omnitool.gradio.services.state import AppState
 from omnitool.gradio.clients.llm.base import BaseLLMClient
-from omnitool.gradio.config import COMPACTION_PROMPT, build_react_system_prompt
+from omnitool.gradio.config import AgentMode, COMPACTION_PROMPT, build_react_system_prompt
 from omnitool.gradio.core.agents.base import BaseAgent
 from omnitool.gradio.core.agents.message_utils import _evict_old_images, _extract_text_content
 from omnitool.gradio.core.agents.image_utils import _compact_screen_elements
@@ -118,6 +118,7 @@ class ReActAgent(BaseAgent):
             loop_tracker: deque = deque(maxlen=_LOOP_WINDOW)
 
             # Populate task from the first chat message if not already set.
+            # (Other agents get this via _generate_checklist; ReActAgent skips that call.)
             if not self.working_memory.task:
                 chat_messages = self.state.chat.messages
                 self.working_memory.task = _extract_text_content(chat_messages[0]["content"]) if chat_messages else ""
@@ -156,9 +157,10 @@ class ReActAgent(BaseAgent):
                 }
                 # Only set som_image_base64 when OmniParser produced a labeled image.
                 # For GTA1 (no SOM), leave it empty so the UI uses format_raw_screen.
+                is_som_grounding = self.grounding_strategy.name == "omniparser"
                 yield {
                     "type": "parsed_screen",
-                    "som_image_base64": screen_data.display_image_b64 if self.grounding_strategy.has_som_annotation else "",
+                    "som_image_base64": screen_data.display_image_b64 if is_som_grounding else "",
                     "raw_image_base64": screen_data.raw_image_b64,
                     "screen_info": str(screen_data.elements) if screen_data.elements else "",
                 }
@@ -193,14 +195,6 @@ class ReActAgent(BaseAgent):
                     tool_calls[0].get("name") if tool_calls else "(none)",
                 )
 
-                # Built once, reused by every dispatch branch that calls _save_trajectory_step.
-                plan_data = {
-                    "response_text": response_text,
-                    "tool_calls": tool_calls,
-                    "metadata": metadata,
-                    "cost": self.total_cost,
-                }
-
                 # Yield the LLM's reasoning text so the UI can display it.
                 if response_text:
                     yield {"type": "thinking", "response_text": response_text}
@@ -228,7 +222,7 @@ class ReActAgent(BaseAgent):
                 # causes a 400 error.)
                 action_sig = (tool_name, _freeze(arguments))
                 loop_tracker.append(action_sig)
-                inject_stuck_hint = loop_tracker.count(action_sig) >= _LOOP_THRESHOLD
+                inject_stuck_hint = list(loop_tracker).count(action_sig) >= _LOOP_THRESHOLD
                 if inject_stuck_hint:
                     logger.warning("Step %d: loop detected for %s", self.step_count, tool_name)
 
@@ -263,7 +257,6 @@ class ReActAgent(BaseAgent):
                     if inject_stuck_hint:
                         history.append({"role": "user", "content": _STUCK_HINT})
                     logger.info("READ_FIELD — %s", result_text)
-                    self._save_trajectory_step(plan_data)
                     continue
 
                 # 6c. focus_region → crop screenshot and return image
@@ -285,7 +278,6 @@ class ReActAgent(BaseAgent):
                         logger.warning("FOCUS_REGION — failed for bbox %s", arguments.get("bbox"))
                     if inject_stuck_hint:
                         history.append({"role": "user", "content": _STUCK_HINT})
-                    self._save_trajectory_step(plan_data)
                     continue
 
                 # 6d. mark_screenshot → flag current step in trajectory
@@ -294,7 +286,6 @@ class ReActAgent(BaseAgent):
                     history.append(_tool_msg(tool_call_id, result_text))
                     if inject_stuck_hint:
                         history.append({"role": "user", "content": _STUCK_HINT})
-                    self._save_trajectory_step(plan_data)
                     continue
 
                 # 6e. Computer action → grounding → execute
@@ -343,7 +334,12 @@ class ReActAgent(BaseAgent):
                     }
 
                 # Save trajectory step
-                self._save_trajectory_step(plan_data)
+                self._save_trajectory_step({
+                    "response_text": response_text,
+                    "tool_calls": tool_calls,
+                    "metadata": metadata,
+                    "cost": self.total_cost,
+                })
 
                 # Allow the UI to settle before the next screenshot.
                 if self.action_delay > 0:

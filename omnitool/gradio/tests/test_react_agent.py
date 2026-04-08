@@ -166,6 +166,17 @@ class TestFreeze:
         result = _freeze({"nested": {"x": 1}})
         assert isinstance(result, str)
 
+    def test_list_value_falls_back_to_json_string(self):
+        """bbox argument — a list value — should use the JSON fallback path."""
+        result = _freeze({"bbox": [0, 0, 100, 200]})
+        assert isinstance(result, str)
+
+    def test_same_bbox_produces_equal_results(self):
+        assert _freeze({"bbox": [0, 0, 100, 200]}) == _freeze({"bbox": [0, 0, 100, 200]})
+
+    def test_different_bbox_produces_different_results(self):
+        assert _freeze({"bbox": [0, 0, 100, 200]}) != _freeze({"bbox": [0, 0, 50, 100]})
+
 
 class TestToolMsg:
     def test_produces_tool_role_message(self):
@@ -330,7 +341,7 @@ class TestReActAgentLoopDetection:
 
 class TestEvictOldImages:
     def test_images_replaced_in_all_but_last_user_message(self):
-        from omnitool.gradio.core.agents.base import _evict_old_images
+        from omnitool.gradio.core.agents.message_utils import _evict_old_images
 
         history = [
             {"role": "user", "content": [
@@ -356,7 +367,7 @@ class TestEvictOldImages:
         assert any(b["type"] == "image_url" for b in last_user)
 
     def test_non_user_messages_untouched(self):
-        from omnitool.gradio.core.agents.base import _evict_old_images
+        from omnitool.gradio.core.agents.message_utils import _evict_old_images
 
         history = [
             {"role": "assistant", "content": [
@@ -368,7 +379,7 @@ class TestEvictOldImages:
         assert history[0]["content"][0]["type"] == original
 
     def test_text_blocks_preserved_after_eviction(self):
-        from omnitool.gradio.core.agents.base import _evict_old_images
+        from omnitool.gradio.core.agents.message_utils import _evict_old_images
 
         history = [
             {"role": "user", "content": [
@@ -384,7 +395,7 @@ class TestEvictOldImages:
         assert "some text" in first_texts
 
     def test_single_user_message_not_evicted(self):
-        from omnitool.gradio.core.agents.base import _evict_old_images
+        from omnitool.gradio.core.agents.message_utils import _evict_old_images
 
         history = [
             {"role": "user", "content": [
@@ -396,7 +407,7 @@ class TestEvictOldImages:
         assert history[0]["content"][0]["type"] == "image_url"
 
     def test_empty_history_does_not_raise(self):
-        from omnitool.gradio.core.agents.base import _evict_old_images
+        from omnitool.gradio.core.agents.message_utils import _evict_old_images
         _evict_old_images([])   # must not raise
 
 

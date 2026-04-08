@@ -18,6 +18,7 @@ from omnitool.gradio.config import AgentMode, build_anthropic_system_prompt
 from omnitool.gradio.services.state import AppState
 
 from .base import BaseAgent
+from .message_utils import _strip_images, _format_tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class AnthropicAgent(BaseAgent):
         messages: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """Element list as plain text (no SOM image) → LLM messages."""
-        prepared = [self._strip_images(msg) for msg in messages]
+        prepared = [_strip_images(msg) for msg in messages]
         parsed_screen = self.working_memory.parsed_screen or {}
         screen_info_text = str(parsed_screen.get("parsed_content_list", []))
         prepared.append({
@@ -262,7 +263,7 @@ class AnthropicAgent(BaseAgent):
                         else:
                             tool_error = result.get("error", "Unknown error")
 
-                        tool_result_msg = self._format_tool_result(result["tool"], tool_output, tool_error)
+                        tool_result_msg = _format_tool_result(result["tool"], tool_output, tool_error)
                         self.state.chat.add_message(role="system", content=tool_result_msg)
                         self._plan_add("system", tool_result_msg)
                         yield {

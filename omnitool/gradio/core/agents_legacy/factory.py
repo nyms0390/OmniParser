@@ -1,9 +1,9 @@
 """
-Agent factory — constructs ReActAgent from model and provider config.
+Agent factory — creates the appropriate BaseAgent subclass from model and provider config.
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 from omnitool.gradio.clients import BaseLLMClient, get_llm_client
 from omnitool.gradio.clients.external.gta1 import GTA1Client
@@ -12,12 +12,16 @@ from omnitool.gradio.config import AgentMode, get_llm_config, get_provider_confi
 from omnitool.gradio.services import AppState, get_api_key, AuthProvider
 
 from omnitool.gradio.core.agents.preprocessing import PreprocessingMode
-from omnitool.gradio.core.agents.base import BaseAgent
-from omnitool.gradio.core.agents.grounding import GTA1Grounding, GroundingStrategy, OmniParserGrounding
-from omnitool.gradio.core.agents.react_agent import ReActAgent
+
+from .anthropic_agent import AnthropicAgent
+from .base import BaseAgent
+from .grounding import GTA1Grounding, GroundingStrategy, OmniParserGrounding
+from .react_agent import ReActAgent
+from .vlm_agent import VLMAgent
 
 
 def create_agent(
+    agent_type: str,
     model_name: str,
     state: AppState,
     tools_collection,
@@ -26,41 +30,44 @@ def create_agent(
     mode: AgentMode = AgentMode.INTERACTIVE,
     platform: str = "windows",
     max_steps: int = 20,
+    context_n: int = 15,
     action_delay: float = 1.5,
     provider: Optional[str] = None,
     azure_endpoint: Optional[str] = None,
     gta1_client: Optional[GTA1Client] = None,
-    grounding: str = "gta1",
+    grounding: str = "omniparser",
     preprocessing_mode: str = "raw",
 ) -> BaseAgent:
-    """Factory function — returns a ReActAgent configured for the requested grounding.
+    """Factory function — returns the right BaseAgent subclass.
 
     Args:
+        agent_type: Agent class name ("VLMAgent", "AnthropicAgent", "ReActAgent").
         model_name: LLM model ID from LLM_MODELS (e.g. "gpt-4o").
         state: Application runtime state.
         tools_collection: Available tools.
-        save_folder: Output folder for the agent run.
-        omniparser_client: Required when grounding="omniparser".
+        save_folder: Output folder for the agent.
+        omniparser_client: Required for VLMAgent / AnthropicAgent / ReActAgent
+            with omniparser grounding.
         mode: Agent operating mode.
         platform: Target OS (affects system prompt).
         max_steps: Maximum loop iterations.
-        action_delay: Seconds to wait after each action before the next screenshot.
+        context_n: Chat history window size (unused by ReActAgent).
         provider: LLM provider (e.g. "openai", "azure"). Defaults to first
             supported provider of the model.
         azure_endpoint: Azure OpenAI endpoint URL (required when provider="azure").
-        gta1_client: Pre-constructed GTA1Client. Auto-constructed when None;
-            used for both GTA1 grounding and read_field clipboard correction.
-        grounding: Grounding strategy — "gta1" (default) or "omniparser".
-        preprocessing_mode: Image preprocessing applied to screenshots before
-            grounding/LLM. One of "raw", "clahe", "adaptive_thresh",
-            "edge_overlay", "clahe+edges". Defaults to "raw".
+        gta1_client: Pre-constructed GTA1Client (required for VLMAgent / ReActAgent
+            with gta1 grounding; also enables clipboard correction in all agents).
+        grounding: Grounding strategy for VLMAgent and ReActAgent — "omniparser"
+            or "gta1".
+        preprocessing_mode: Image preprocessing variant applied to screenshots
+            before grounding/LLM. One of "raw", "clahe", "adaptive_thresh",
+            "edge_overlay", "clahe+edges". Defaults to "raw" (no processing).
 
     Returns:
-        Initialised ReActAgent.
+        Initialised BaseAgent subclass.
 
     Raises:
-        ValueError: If the model is not found, required clients are missing,
-            or the API key is unavailable.
+        ValueError: If model/agent not found or required clients are missing.
     """
     llm_cfg = get_llm_config(model_name)
 
@@ -88,15 +95,11 @@ def create_agent(
         azure_endpoint=azure_endpoint if provider == "azure" else None,
     )
 
-    # Always try to construct GTA1Client — needed for read_field clipboard correction
-    # even when grounding="omniparser". Caller can pass gta1_client=None explicitly
-    # to disable clipboard correction.
-    if gta1_client is None:
+    # Only construct GTA1Client when the agent/grounding actually needs it.
+    # AnthropicAgent doesn't use GTA1 grounding and doesn't need the client.
+    if gta1_client is None and agent_type != "AnthropicAgent":
         gta1_client = GTA1Client()
-
-    strategy = _resolve_grounding(grounding, omniparser_client, gta1_client)
-
-    return ReActAgent(
+    common = dict(
         model_name=model_name,
         provider=provider,
         llm_client=llm_client,
@@ -106,11 +109,31 @@ def create_agent(
         mode=mode,
         platform=platform,
         max_steps=max_steps,
+        context_n=context_n,
         action_delay=action_delay,
         gta1_client=gta1_client,
         preprocessing_mode=_resolve_preprocessing(preprocessing_mode),
-        grounding_strategy=strategy,
     )
+
+    if agent_type == "VLMAgent":
+        strategy, grounding_kwargs = _resolve_grounding(
+            grounding, omniparser_client, gta1_client, agent_type
+        )
+        return VLMAgent(grounding_strategy=strategy, **grounding_kwargs, **common)
+
+    elif agent_type == "AnthropicAgent":
+        if omniparser_client is None:
+            raise ValueError("AnthropicAgent requires omniparser_client")
+        return AnthropicAgent(omniparser_client=omniparser_client, **common)
+
+    elif agent_type == "ReActAgent":
+        strategy, grounding_kwargs = _resolve_grounding(
+            grounding, omniparser_client, gta1_client, agent_type
+        )
+        return ReActAgent(grounding_strategy=strategy, **grounding_kwargs, **common)
+
+    else:
+        raise ValueError(f"Unknown agent_type: {agent_type!r}")
 
 
 def _resolve_preprocessing(preprocessing_mode: str) -> PreprocessingMode:
@@ -124,24 +147,21 @@ def _resolve_preprocessing(preprocessing_mode: str) -> PreprocessingMode:
         )
 
 
-_GROUNDING_MODES = frozenset({"gta1", "omniparser"})
-
-
 def _resolve_grounding(
     grounding: str,
     omniparser_client: Optional[OmniParserClient],
     gta1_client: GTA1Client,
-) -> GroundingStrategy:
-    """Return the GroundingStrategy for the requested grounding mode."""
-    if grounding not in _GROUNDING_MODES:
-        raise ValueError(
-            f"Unknown grounding mode {grounding!r}. Valid options: {sorted(_GROUNDING_MODES)}"
-        )
+    agent_type: str,
+) -> Tuple[GroundingStrategy, Dict]:
+    """Return (GroundingStrategy, extra_kwargs) for the requested grounding mode."""
     if grounding == "gta1":
-        return GTA1Grounding(gta1_client)
-    if omniparser_client is None:
-        raise ValueError("omniparser grounding requires omniparser_client")
-    return OmniParserGrounding(omniparser_client)
+        return GTA1Grounding(gta1_client), {}
+    else:
+        if omniparser_client is None:
+            raise ValueError(
+                f"{agent_type} with omniparser grounding requires omniparser_client"
+            )
+        return OmniParserGrounding(omniparser_client), {"omniparser_client": omniparser_client}
 
 
 def _create_llm_client(
@@ -150,7 +170,14 @@ def _create_llm_client(
     api_key: str,
     azure_endpoint: Optional[str] = None,
 ) -> BaseLLMClient:
-    """Instantiate the correct LLM client from provider + model config."""
+    """Instantiate the correct LLM client from provider + model config.
+
+    Provider → SDK mapping (deterministic, not stored in config):
+        openai, dashscope          → OpenAI-compatible SDK
+        azure                      → Azure OpenAI SDK (endpoint from settings)
+        anthropic, bedrock, vertex → Anthropic SDK
+        groq                       → Groq SDK
+    """
     internal_name = llm_cfg["internal_name"]
     api_mode = llm_cfg.get("api_mode", "chat")
     generation_kwargs = {

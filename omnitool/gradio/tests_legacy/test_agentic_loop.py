@@ -769,29 +769,29 @@ class TestVerifyStep:
         assert orch._verify_step([])["is_repeated"]
 
     def test_screen_unchanged_when_same_image(self):
-        from omnitool.gradio.core.agents import BaseAgent
+        from omnitool.gradio.core.agents.image_utils import _compare_screens
         screen_a = {"som_image_base64": "abc123", "parsed_content_list": []}
         screen_b = {"som_image_base64": "abc123", "parsed_content_list": []}
-        assert BaseAgent._compare_screens(screen_a, screen_b) is True
+        assert _compare_screens(screen_a, screen_b) is True
 
     def test_screen_changed_when_different_image(self):
-        from omnitool.gradio.core.agents import BaseAgent
+        from omnitool.gradio.core.agents.image_utils import _compare_screens
         screen_a = {"som_image_base64": "abc123", "parsed_content_list": []}
         screen_b = {"som_image_base64": "xyz789", "parsed_content_list": []}
-        assert BaseAgent._compare_screens(screen_a, screen_b) is False
+        assert _compare_screens(screen_a, screen_b) is False
 
     def test_screen_fallback_to_content_list(self):
-        from omnitool.gradio.core.agents import BaseAgent
+        from omnitool.gradio.core.agents.image_utils import _compare_screens
         screen_a = {"som_image_base64": "", "parsed_content_list": [{"content": "A"}]}
         screen_b = {"som_image_base64": "", "parsed_content_list": [{"content": "A"}]}
-        assert BaseAgent._compare_screens(screen_a, screen_b) is True
+        assert _compare_screens(screen_a, screen_b) is True
         screen_c = {"som_image_base64": "", "parsed_content_list": [{"content": "B"}]}
-        assert BaseAgent._compare_screens(screen_a, screen_c) is False
+        assert _compare_screens(screen_a, screen_c) is False
 
     def test_screen_compare_returns_false_on_missing(self):
-        from omnitool.gradio.core.agents import BaseAgent
-        assert BaseAgent._compare_screens(None, None) is False
-        assert BaseAgent._compare_screens({"som_image_base64": "x"}, None) is False
+        from omnitool.gradio.core.agents.image_utils import _compare_screens
+        assert _compare_screens(None, None) is False
+        assert _compare_screens({"som_image_base64": "x"}, None) is False
 
     def test_verify_step_screen_unchanged_flag(self, app_state):
         orch = _make_orchestrator(app_state)

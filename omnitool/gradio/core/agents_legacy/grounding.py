@@ -162,15 +162,6 @@ class GroundingStrategy(ABC):
         """
         return []
 
-    @property
-    def has_som_annotation(self) -> bool:
-        """True when this strategy produces a set-of-marks annotated display image.
-
-        Override in strategies that annotate the display image with numeric IDs
-        (e.g. :class:`OmniParserGrounding`). Default is ``False``.
-        """
-        return False
-
 
 # ---------------------------------------------------------------------------
 # Module-level helper
@@ -216,10 +207,6 @@ class OmniParserGrounding(GroundingStrategy):
     @property
     def name(self) -> str:
         return "omniparser"
-
-    @property
-    def has_som_annotation(self) -> bool:
-        return True
 
     @property
     def element_reference_hint(self) -> str:

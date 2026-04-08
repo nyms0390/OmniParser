@@ -1,6 +1,6 @@
 """
 Tests for factory.create_agent() — agent instantiation, provider resolution,
-unknown agent type error, missing omniparser_client error.
+missing omniparser_client error.
 
 Real LLM clients and API keys are never used. get_api_key and get_llm_client
 are patched so the factory can be exercised without environment variables.
@@ -16,8 +16,6 @@ from omnitool.gradio.core.agents.factory import create_agent, _resolve_grounding
 from omnitool.gradio.core.agents.grounding import OmniParserGrounding, GTA1Grounding
 from omnitool.gradio.core.agents.preprocessing import PreprocessingMode
 from omnitool.gradio.core.agents.react_agent import ReActAgent
-from omnitool.gradio.core.agents.vlm_agent import VLMAgent
-from omnitool.gradio.core.agents.anthropic_agent import AnthropicAgent
 
 
 # ---------------------------------------------------------------------------
@@ -78,28 +76,36 @@ def _patch_factory(mock_llm_client):
 class TestResolveGrounding:
     def test_omniparser_grounding_requires_omniparser_client(self):
         with pytest.raises(ValueError, match="omniparser_client"):
-            _resolve_grounding("omniparser", None, Mock(), "ReActAgent")
+            _resolve_grounding("omniparser", None, Mock())
 
     def test_omniparser_grounding_returns_omniparser_strategy(self, mock_omniparser_client):
-        strategy, kwargs = _resolve_grounding("omniparser", mock_omniparser_client, Mock(), "ReActAgent")
+        strategy = _resolve_grounding("omniparser", mock_omniparser_client, Mock())
         assert isinstance(strategy, OmniParserGrounding)
 
     def test_gta1_grounding_returns_gta1_strategy(self):
-        strategy, kwargs = _resolve_grounding("gta1", None, Mock(), "ReActAgent")
+        strategy = _resolve_grounding("gta1", None, Mock())
         assert isinstance(strategy, GTA1Grounding)
 
     def test_gta1_grounding_does_not_require_omniparser_client(self):
         # Must not raise even when omniparser_client is None
-        strategy, kwargs = _resolve_grounding("gta1", None, Mock(), "ReActAgent")
+        strategy = _resolve_grounding("gta1", None, Mock())
         assert strategy.name == "gta1"
 
-    def test_omniparser_grounding_kwargs_includes_omniparser_client(self, mock_omniparser_client):
-        _, kwargs = _resolve_grounding("omniparser", mock_omniparser_client, Mock(), "ReActAgent")
-        assert kwargs.get("omniparser_client") is mock_omniparser_client
+    def test_unknown_grounding_mode_raises_value_error(self):
+        with pytest.raises(ValueError, match="Unknown grounding mode"):
+            _resolve_grounding("typo_mode", None, Mock())
 
-    def test_gta1_grounding_kwargs_empty(self):
-        _, kwargs = _resolve_grounding("gta1", None, Mock(), "ReActAgent")
-        assert kwargs == {}
+    def test_unknown_grounding_mode_error_lists_valid_options(self):
+        with pytest.raises(ValueError, match="omniparser"):
+            _resolve_grounding("bad_mode", None, Mock())
+
+    def test_omniparser_grounding_has_som_annotation(self, mock_omniparser_client):
+        strategy = _resolve_grounding("omniparser", mock_omniparser_client, Mock())
+        assert strategy.has_som_annotation is True
+
+    def test_gta1_grounding_has_no_som_annotation(self):
+        strategy = _resolve_grounding("gta1", None, Mock())
+        assert strategy.has_som_annotation is False
 
 
 # ===========================================================================
@@ -127,7 +133,6 @@ class TestResolvePreprocessing:
     ):
         with _patch_factory(mock_llm_client):
             agent = create_agent(
-                agent_type="ReActAgent",
                 model_name="gpt-4o",
                 state=app_state,
                 tools_collection=tools_collection,
@@ -144,7 +149,6 @@ class TestResolvePreprocessing:
         with _patch_factory(mock_llm_client):
             with pytest.raises(ValueError, match="invalid_mode"):
                 create_agent(
-                    agent_type="ReActAgent",
                     model_name="gpt-4o",
                     state=app_state,
                     tools_collection=tools_collection,
@@ -156,65 +160,16 @@ class TestResolvePreprocessing:
 
 
 # ===========================================================================
-# create_agent — unknown agent_type
-# ===========================================================================
-
-class TestCreateAgentUnknownType:
-    def test_unknown_agent_type_raises_value_error_with_name(
-        self, app_state, tools_collection, mock_llm_client, tmp_path
-    ):
-        with _patch_factory(mock_llm_client):
-            with pytest.raises(ValueError, match=r"Unknown agent_type.*BogusAgent"):
-                create_agent(
-                    agent_type="BogusAgent",
-                    model_name="gpt-4o",
-                    state=app_state,
-                    tools_collection=tools_collection,
-                    save_folder=tmp_path,
-                )
-
-
-# ===========================================================================
 # create_agent — missing omniparser_client
 # ===========================================================================
 
 class TestCreateAgentMissingOmniparserClient:
-    def test_anthropic_agent_without_omniparser_client_raises(
-        self, app_state, tools_collection, mock_llm_client, tmp_path
-    ):
-        with _patch_factory(mock_llm_client):
-            with pytest.raises(ValueError, match="omniparser_client"):
-                create_agent(
-                    agent_type="AnthropicAgent",
-                    model_name="claude-3-5-sonnet",
-                    state=app_state,
-                    tools_collection=tools_collection,
-                    save_folder=tmp_path,
-                    omniparser_client=None,
-                )
-
     def test_react_agent_omniparser_grounding_without_omniparser_client_raises(
         self, app_state, tools_collection, mock_llm_client, tmp_path
     ):
         with _patch_factory(mock_llm_client):
             with pytest.raises(ValueError, match="omniparser_client"):
                 create_agent(
-                    agent_type="ReActAgent",
-                    model_name="gpt-4o",
-                    state=app_state,
-                    tools_collection=tools_collection,
-                    save_folder=tmp_path,
-                    omniparser_client=None,
-                    grounding="omniparser",
-                )
-
-    def test_vlm_agent_omniparser_grounding_without_omniparser_client_raises(
-        self, app_state, tools_collection, mock_llm_client, tmp_path
-    ):
-        with _patch_factory(mock_llm_client):
-            with pytest.raises(ValueError, match="omniparser_client"):
-                create_agent(
-                    agent_type="VLMAgent",
                     model_name="gpt-4o",
                     state=app_state,
                     tools_collection=tools_collection,
@@ -236,7 +191,6 @@ class TestCreateAgentMissingApiKey:
              patch("omnitool.gradio.core.agents.factory.get_llm_client", return_value=mock_llm_client):
             with pytest.raises(ValueError, match="API key not found"):
                 create_agent(
-                    agent_type="ReActAgent",
                     model_name="gpt-4o",
                     state=app_state,
                     tools_collection=tools_collection,
@@ -251,9 +205,7 @@ class TestCreateAgentMissingApiKey:
         """Azure provider doesn't require an API key (uses managed identity or endpoint)."""
         with patch("omnitool.gradio.core.agents.factory.get_api_key", return_value=""), \
              patch("omnitool.gradio.core.agents.factory.get_llm_client", return_value=mock_llm_client):
-            # Should not raise — Azure bypasses the key check
             agent = create_agent(
-                agent_type="ReActAgent",
                 model_name="gpt-4o",
                 state=app_state,
                 tools_collection=tools_collection,
@@ -274,7 +226,6 @@ class TestCreateAgentInstantiation:
     ):
         with _patch_factory(mock_llm_client):
             agent = create_agent(
-                agent_type="ReActAgent",
                 model_name="gpt-4o",
                 state=app_state,
                 tools_collection=tools_collection,
@@ -289,7 +240,6 @@ class TestCreateAgentInstantiation:
     ):
         with _patch_factory(mock_llm_client):
             agent = create_agent(
-                agent_type="ReActAgent",
                 model_name="gpt-4o",
                 state=app_state,
                 tools_collection=tools_collection,
@@ -299,41 +249,11 @@ class TestCreateAgentInstantiation:
             )
         assert isinstance(agent, ReActAgent)
 
-    def test_vlm_agent_omniparser_grounding_returns_vlm_agent(
-        self, app_state, tools_collection, mock_llm_client, tmp_path, mock_omniparser_client
-    ):
-        with _patch_factory(mock_llm_client):
-            agent = create_agent(
-                agent_type="VLMAgent",
-                model_name="gpt-4o",
-                state=app_state,
-                tools_collection=tools_collection,
-                save_folder=tmp_path,
-                omniparser_client=mock_omniparser_client,
-                grounding="omniparser",
-            )
-        assert isinstance(agent, VLMAgent)
-
-    def test_anthropic_agent_returns_anthropic_agent(
-        self, app_state, tools_collection, mock_llm_client, tmp_path, mock_omniparser_client
-    ):
-        with _patch_factory(mock_llm_client):
-            agent = create_agent(
-                agent_type="AnthropicAgent",
-                model_name="claude-3-5-sonnet",
-                state=app_state,
-                tools_collection=tools_collection,
-                save_folder=tmp_path,
-                omniparser_client=mock_omniparser_client,
-            )
-        assert isinstance(agent, AnthropicAgent)
-
     def test_agent_model_name_set_correctly(
         self, app_state, tools_collection, mock_llm_client, tmp_path, mock_omniparser_client
     ):
         with _patch_factory(mock_llm_client):
             agent = create_agent(
-                agent_type="ReActAgent",
                 model_name="gpt-4o",
                 state=app_state,
                 tools_collection=tools_collection,
@@ -347,7 +267,6 @@ class TestCreateAgentInstantiation:
     ):
         with _patch_factory(mock_llm_client):
             agent = create_agent(
-                agent_type="ReActAgent",
                 model_name="gpt-4o",
                 state=app_state,
                 tools_collection=tools_collection,
@@ -362,7 +281,6 @@ class TestCreateAgentInstantiation:
     ):
         with _patch_factory(mock_llm_client):
             agent = create_agent(
-                agent_type="ReActAgent",
                 model_name="gpt-4o",
                 state=app_state,
                 tools_collection=tools_collection,
@@ -382,7 +300,6 @@ class TestCreateAgentInstantiation:
 
         with _patch_factory(mock_llm_client):
             agent = create_agent(
-                agent_type="ReActAgent",
                 model_name="gpt-4o",
                 state=app_state,
                 tools_collection=tools_collection,
@@ -397,7 +314,6 @@ class TestCreateAgentInstantiation:
     ):
         with _patch_factory(mock_llm_client):
             agent = create_agent(
-                agent_type="ReActAgent",
                 model_name="gpt-4o",
                 state=app_state,
                 tools_collection=tools_collection,
@@ -412,7 +328,6 @@ class TestCreateAgentInstantiation:
     ):
         with _patch_factory(mock_llm_client):
             agent = create_agent(
-                agent_type="ReActAgent",
                 model_name="gpt-4o",
                 state=app_state,
                 tools_collection=tools_collection,
@@ -429,46 +344,46 @@ class TestCreateAgentInstantiation:
 
 class TestCompactScreenElements:
     def test_empty_list_returns_no_elements_string(self):
-        from omnitool.gradio.core.agents.base import BaseAgent
-        result = BaseAgent._compact_screen_elements([], 1920, 1080)
+        from omnitool.gradio.core.agents.image_utils import _compact_screen_elements
+        result = _compact_screen_elements([], 1920, 1080)
         assert result == "(no elements)"
 
     def test_single_element_with_bbox(self):
-        from omnitool.gradio.core.agents.base import BaseAgent
+        from omnitool.gradio.core.agents.image_utils import _compact_screen_elements
         elements = [{"type": "button", "content": "OK", "bbox": [0.0, 0.0, 0.5, 0.5], "interactivity": True}]
-        result = BaseAgent._compact_screen_elements(elements, 1920, 1080)
+        result = _compact_screen_elements(elements, 1920, 1080)
         assert "0:" in result
         assert "button" in result
         assert "OK" in result
 
     def test_centroid_calculated_from_bbox(self):
-        from omnitool.gradio.core.agents.base import BaseAgent
+        from omnitool.gradio.core.agents.image_utils import _compact_screen_elements
         # bbox [0.0, 0.0, 1.0, 1.0] → centroid (0.5, 0.5) → (960, 540) on 1920×1080
         elements = [{"type": "box", "content": "X", "bbox": [0.0, 0.0, 1.0, 1.0]}]
-        result = BaseAgent._compact_screen_elements(elements, 1920, 1080)
+        result = _compact_screen_elements(elements, 1920, 1080)
         assert "(960, 540)" in result
 
     def test_element_without_bbox_has_no_position(self):
-        from omnitool.gradio.core.agents.base import BaseAgent
+        from omnitool.gradio.core.agents.image_utils import _compact_screen_elements
         elements = [{"type": "text", "content": "hello"}]
-        result = BaseAgent._compact_screen_elements(elements, 1920, 1080)
+        result = _compact_screen_elements(elements, 1920, 1080)
         assert "@" not in result
 
     def test_multiple_elements_indexed_from_zero(self):
-        from omnitool.gradio.core.agents.base import BaseAgent
+        from omnitool.gradio.core.agents.image_utils import _compact_screen_elements
         elements = [
             {"type": "button", "content": "A", "bbox": [0.0, 0.0, 0.1, 0.1]},
             {"type": "button", "content": "B", "bbox": [0.5, 0.5, 0.6, 0.6]},
         ]
-        result = BaseAgent._compact_screen_elements(elements, 1920, 1080)
+        result = _compact_screen_elements(elements, 1920, 1080)
         lines = result.strip().split("\n")
         assert lines[0].startswith("0:")
         assert lines[1].startswith("1:")
 
     def test_interactivity_flag_in_output(self):
-        from omnitool.gradio.core.agents.base import BaseAgent
+        from omnitool.gradio.core.agents.image_utils import _compact_screen_elements
         elements = [{"type": "button", "content": "Save", "interactivity": True, "bbox": [0, 0, 0.2, 0.1]}]
-        result = BaseAgent._compact_screen_elements(elements, 1920, 1080)
+        result = _compact_screen_elements(elements, 1920, 1080)
         assert "interactive=True" in result
 
 

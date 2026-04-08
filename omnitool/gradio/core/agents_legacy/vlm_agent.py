@@ -22,7 +22,9 @@ from omnitool.gradio.config import (
     AgentMode,
     build_vlm_tool_system_prompt,
 )
-from omnitool.gradio.core.agents.base import BaseAgent, _evict_old_images
+from omnitool.gradio.core.agents.base import BaseAgent
+from omnitool.gradio.core.agents.message_utils import _evict_old_images, _format_tool_result
+from omnitool.gradio.core.agents.image_utils import _compact_screen_elements
 from omnitool.gradio.core.agents.grounding import GroundingStrategy, ScreenData
 from omnitool.gradio.core.tools.schemas import AUXILIARY_TOOLS
 
@@ -121,7 +123,7 @@ class VLMAgent(BaseAgent):
             })
 
         if screen_data.elements:
-            compact = self._compact_screen_elements(
+            compact = _compact_screen_elements(
                 screen_data.elements,
                 screen_width=screen_data.screen_width,
                 screen_height=screen_data.screen_height,
@@ -368,7 +370,7 @@ class VLMAgent(BaseAgent):
                                 output = getattr(raw_result, "output", None) or "Done."
                                 result_text = output
                                 action_label = dispatch.get("action", tc_name)
-                                tool_result_msg = self._format_tool_result(action_label, output, "")
+                                tool_result_msg = _format_tool_result(action_label, output, "")
                                 self.state.chat.add_message("system", tool_result_msg)
                                 self._plan_add("system", tool_result_msg)
                                 all_tool_results.append({"tool": action_label, "status": "success"})

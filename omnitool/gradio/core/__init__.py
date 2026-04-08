@@ -1,12 +1,10 @@
-"""Core module for OmniParser - agents, OmniAgent, and tools."""
+"""Core module for OmniParser — agents and tools."""
 
 from omnitool.gradio.core.agents import (
-    AnthropicAgent,
     BaseAgent,
-    VLMAgent,
+    ReActAgent,
     create_agent,
 )
-from omnitool.gradio.core.agents.checklist import Checklist, ChecklistItem
 from omnitool.gradio.core.tools import (
     BaseTool,
     ToolCollection,
@@ -18,12 +16,8 @@ from omnitool.gradio.core.tools import (
 __all__ = [
     # Agents
     "BaseAgent",
-    "VLMAgent",
-    "AnthropicAgent",
+    "ReActAgent",
     "create_agent",
-    # Checklist
-    "Checklist",
-    "ChecklistItem",
     # Tools
     "BaseTool",
     "ToolResult",

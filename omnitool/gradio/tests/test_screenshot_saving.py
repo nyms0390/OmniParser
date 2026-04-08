@@ -47,6 +47,8 @@ def _tool_response(tool_name="left_click", args=None, text="Acting."):
         text,
         {
             "tokens": 10,
+            "input_tokens": 5,
+            "output_tokens": 5,
             "tool_calls": [{"id": tc_id, "name": tool_name, "arguments": args}],
             "assistant_message": {
                 "role": "assistant",
@@ -117,66 +119,6 @@ def _make_react_agent(tmp_path, side_effects):
     return agent
 
 
-def _make_vlm_agent(tmp_path, side_effects):
-    from omnitool.gradio.core.agents import VLMAgent
-    from omnitool.gradio.core.agents.checklist import Checklist
-
-    PLAN_JSON = json.dumps([{"id": 1, "step": "Do it", "verification_hint": "done"}])
-
-    app_state = AppState(run_folder=tmp_path)
-    app_state.chat.add_message("user", "Do something")
-
-    b64 = _make_1px_png_b64()
-    screen_data = _make_screen_data(b64)
-
-    grounding = Mock()
-    grounding.name = "omniparser"
-    grounding.element_reference_hint = "Use box_id."
-    grounding.get_tools.return_value = [{
-        "type": "function",
-        "function": {
-            "name": "left_click",
-            "parameters": {"type": "object", "properties": {"box_id": {"type": "integer"}}, "required": ["box_id"]},
-        },
-    }]
-    grounding.resolve.return_value = {"action": "left_click", "coordinate": [10, 10]}
-    grounding.last_grounding_events = []
-
-    llm_client = Mock()
-    llm_client.generate.side_effect = side_effects + [("done", {"tokens": 5, "tool_calls": [], "assistant_message": {"role": "assistant", "content": "done"}})] * 10
-
-    agent = VLMAgent(
-        model_name="gpt-4o",
-        llm_client=llm_client,
-        state=app_state,
-        tools_collection=Mock(),
-        save_folder=tmp_path,
-        grounding_strategy=grounding,
-        max_steps=3,
-        action_delay=0,
-    )
-
-    def do_capture():
-        agent.working_memory.screen_data = screen_data
-        agent.working_memory.parsed_screen = {
-            "resized_image_base64": b64,
-            "som_image_base64": b64,
-            "screen_width": 100,
-            "screen_height": 100,
-            "resized_screen_width": 100,
-            "resized_screen_height": 100,
-            "parsed_content_list": [],
-        }
-        return screen_data
-
-    agent._do_capture = Mock(side_effect=do_capture)
-    agent._generate_checklist = Mock(return_value=Checklist.from_llm_json(PLAN_JSON))
-    agent.execute_tool_calls = Mock(return_value=[{
-        "tool": "computer", "status": "success",
-        "result": Mock(output="ok", error=""),
-    }])
-    agent._reflect = Mock()
-    return agent
 
 
 # ===========================================================================
@@ -385,28 +327,6 @@ class TestReActMarkScreenshotDispatch:
         flags = [r for r in records if r.get("type") == "flag"]
         assert len(flags) == 1
         assert flags[0]["reason"] == "step confirmed"
-
-
-# ===========================================================================
-# mark_screenshot tool dispatch — VLMAgent
-# ===========================================================================
-
-class TestVLMMarkScreenshotDispatch:
-    def test_mark_screenshot_in_vlm_tool_list(self, tmp_path):
-        agent = _make_vlm_agent(tmp_path, [])
-        tool_names = [t["function"]["name"] for t in agent._get_tools()]
-        assert "mark_screenshot" in tool_names
-
-    def test_vlm_agent_dispatches_mark_screenshot_tool(self, tmp_path):
-        agent = _make_vlm_agent(tmp_path, [
-            _tool_response("mark_screenshot", {"reason": "confirmation seen"}),
-        ])
-        list(agent.run())
-        traj = tmp_path / "trajectory.json"
-        records = [json.loads(line) for line in traj.read_text().splitlines() if line.strip()]
-        flags = [r for r in records if r.get("type") == "flag"]
-        assert len(flags) == 1
-        assert flags[0]["reason"] == "confirmation seen"
 
 
 # ===========================================================================
