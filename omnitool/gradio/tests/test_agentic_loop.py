@@ -656,6 +656,90 @@ class TestVLMAgentReadField:
         names = [t["function"]["name"] for t in tools]
         assert "read_field" in names
 
+    def test_aggregate_sum_stored_as_fact(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        agent._handle_read_field({
+            "fields": [
+                {"field_name": "item_1", "value": "12.50"},
+                {"field_name": "item_2", "value": "7.00"},
+                {"field_name": "item_3", "value": "4.25"},
+            ],
+            "aggregate": {"operation": "sum", "store_as": "total"},
+        })
+        assert agent.working_memory.facts["total"] == "23.75"
+
+    def test_aggregate_includes_pre_existing_facts_for_deduped_fields(self, tmp_path):
+        # Fields already in facts with the same value are deduped (not re-written),
+        # but aggregate still sums them — semantics are "sum the fields named in this
+        # call", regardless of whether they were freshly captured.
+        agent = self._make_agent(tmp_path)
+        agent.working_memory.facts["item_a"] = "10.00"
+        agent.working_memory.facts["item_b"] = "5.00"
+        agent._handle_read_field({
+            "fields": [
+                {"field_name": "item_a", "value": "10.00"},
+                {"field_name": "item_b", "value": "5.00"},
+            ],
+            "aggregate": {"operation": "sum", "store_as": "subtotal"},
+        })
+        assert agent.working_memory.facts["subtotal"] == "15"
+
+    def test_aggregate_ignores_non_numeric_fields(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        agent._handle_read_field({
+            "fields": [
+                {"field_name": "order_id", "value": "ORD-999"},
+                {"field_name": "amount_1", "value": "20.00"},
+                {"field_name": "amount_2", "value": "5.50"},
+            ],
+            "aggregate": {"operation": "sum", "store_as": "total"},
+        })
+        assert agent.working_memory.facts["total"] == "25.5"
+
+    def test_aggregate_omitted_when_no_param(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        agent._handle_read_field({
+            "fields": [
+                {"field_name": "val_1", "value": "10.00"},
+                {"field_name": "val_2", "value": "5.00"},
+            ],
+        })
+        assert "total" not in agent.working_memory.facts
+        assert set(agent.working_memory.facts.keys()) == {"val_1", "val_2"}
+
+    def test_aggregate_skipped_when_all_fields_non_numeric(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        result, _ = agent._handle_read_field({
+            "fields": [
+                {"field_name": "label_1", "value": "N/A"},
+                {"field_name": "label_2", "value": "pending"},
+            ],
+            "aggregate": {"operation": "sum", "store_as": "total"},
+        })
+        assert "total" not in agent.working_memory.facts
+        assert "skipped" in result.lower()
+
+    def test_aggregate_unsupported_operation_returns_error(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        result, _ = agent._handle_read_field({
+            "fields": [{"field_name": "x", "value": "5.00"}],
+            "aggregate": {"operation": "avg", "store_as": "mean"},
+        })
+        assert "mean" not in agent.working_memory.facts
+        assert "unsupported" in result.lower()
+
+    def test_aggregate_overwrites_existing_store_as_key(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        agent.working_memory.facts["total"] = "999.00"
+        agent._handle_read_field({
+            "fields": [
+                {"field_name": "a", "value": "1.00"},
+                {"field_name": "b", "value": "2.00"},
+            ],
+            "aggregate": {"operation": "sum", "store_as": "total"},
+        })
+        assert agent.working_memory.facts["total"] == "3"
+
 
 # ===========================================================================
 # _verify_step and _compare_screens

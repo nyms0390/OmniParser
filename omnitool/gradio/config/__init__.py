@@ -14,7 +14,7 @@ from omnitool.gradio.config.constants import (
     TYPING_DELAY_MS,
     WINDOWS_HOST_TIMEOUT_SECONDS,
 )
-from omnitool.gradio.config.enums import AgentMode, APIProvider
+from omnitool.gradio.config.enums import AgentMode, AggregateOperation, APIProvider
 from omnitool.gradio.config.models import (
     PROVIDER_CONFIG,
     LLM_MODELS,
@@ -65,6 +65,7 @@ __all__ = [
     "CONFIG_DIR_NAME",
     # Enums
     "AgentMode",
+    "AggregateOperation",
     "APIProvider",
     # Models
     "PROVIDER_CONFIG",

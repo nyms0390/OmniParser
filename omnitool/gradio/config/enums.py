@@ -25,6 +25,17 @@ class AgentMode(StrEnum):
     TASK = "task"
 
 
+class AggregateOperation(StrEnum):
+    """Supported aggregation operations for the read_field tool."""
+    SUM = "sum"
+
+    def apply(self, values: list) -> float:
+        """Apply this operation to a list of floats."""
+        if self == AggregateOperation.SUM:
+            return sum(values)
+        raise NotImplementedError(self)
+
+
 class Sender(StrEnum):
     """Message sender types in chat."""
     USER = "user"

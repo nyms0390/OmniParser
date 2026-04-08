@@ -253,6 +253,26 @@ READ_FIELD_TOOL: dict = {
                         "required": ["field_name", "value"],
                     },
                 },
+                "aggregate": {
+                    "type": "object",
+                    "description": (
+                        "Optional aggregation to compute over the numeric values of the fields "
+                        "listed in this call (using their stored values after any clipboard correction). "
+                        "Non-numeric fields are skipped. No result is stored if none parse as numbers."
+                    ),
+                    "properties": {
+                        "operation": {
+                            "type": "string",
+                            "enum": ["sum"],
+                            "description": "Aggregation operation to apply.",
+                        },
+                        "store_as": {
+                            "type": "string",
+                            "description": "Key name to store the result under in working memory.",
+                        },
+                    },
+                    "required": ["operation", "store_as"],
+                },
             },
             "required": ["fields"],
         },

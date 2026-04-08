@@ -38,6 +38,7 @@ from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.core.agents.preprocessing import PreprocessingMode, preprocess_b64
 from omnitool.gradio.config import (
     AgentMode,
+    AggregateOperation,
     CHECKLIST_GEN_PROMPT,
     CHECKLIST_GEN_SYSTEM_PROMPT,
     REFLECT_PROMPT,
@@ -1018,6 +1019,13 @@ class BaseAgent(ABC):
             return None
         return next((o for o in self.task_procedure.outputs if o.key == field_name), None)
 
+    def _set_fact(self, key: str, value: str) -> None:
+        """Write a key-value pair into working_memory.facts, logging any overwrite."""
+        existing = self.working_memory.facts.get(key)
+        if existing is not None and existing != value:
+            logger.warning("FACTS — overwriting %r: %r → %r", key, existing, value)
+        self.working_memory.facts[key] = value
+
     def _handle_read_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         """Capture one or more screen values into working_memory.facts.
 
@@ -1049,7 +1057,6 @@ class BaseAgent(ABC):
                 if existing == value:
                     results.append(f"Field '{field_name}' already captured: {existing}")
                     continue
-                logger.info("READ_FIELD — updating %r: %r → %r", field_name, existing, value)
 
             output_def = self._get_output_def(field_name)
             use_correction = output_def.clipboard_correction if output_def is not None else True
@@ -1063,9 +1070,47 @@ class BaseAgent(ABC):
                 except Exception as exc:
                     logger.warning("Field correction failed for '%s': %s", field_name, exc)
 
-            self.working_memory.facts[field_name] = corrected
+            self._set_fact(field_name, corrected)
             captured[field_name] = corrected
             results.append(f"Captured: {field_name} = {corrected}")
+
+        # Strip known formatting characters (currency symbols, thousands separators,
+        # whitespace, percent) and let float() reject anything that still doesn't parse.
+        # This is intentionally conservative: "ORD-999" survives the strip and raises
+        # ValueError, rather than silently becoming -999.
+        _numeric_strip_re = re.compile(r"[$€£¥₹,\s%]")
+
+        aggregate = tc_args.get("aggregate")
+        if aggregate:
+            operation = aggregate.get("operation")
+            store_as = (aggregate.get("store_as") or "").strip()
+            if operation and store_as:
+                try:
+                    op_enum = AggregateOperation(operation)
+                except ValueError:
+                    results.append(f"Error: unsupported aggregate operation '{operation}'.")
+                else:
+                    # Iterate items (not just `captured`) so pre-existing facts for
+                    # deduped fields are included — semantics are "sum the fields named
+                    # in this call", regardless of whether they were freshly written.
+                    numeric_values = []
+                    for item in items:
+                        name = item.get("field_name")
+                        if not name:
+                            continue
+                        raw = self.working_memory.facts.get(name, "")
+                        try:
+                            numeric_values.append(float(_numeric_strip_re.sub("", raw.strip())))
+                        except (ValueError, AttributeError):
+                            pass
+                    if numeric_values:
+                        # :.10g — up to 10 significant digits, trailing zeros stripped
+                        # e.g. 15.0 → "15", 23.75 → "23.75" (scientific notation above 1e10)
+                        formatted = f"{op_enum.apply(numeric_values):.10g}"
+                        self._set_fact(store_as, formatted)
+                        results.append(f"Aggregated {len(numeric_values)} values → {store_as} = {formatted}")
+                    else:
+                        results.append("Aggregate skipped: no numeric values found among captured fields.")
 
         return "\n".join(results), captured
 

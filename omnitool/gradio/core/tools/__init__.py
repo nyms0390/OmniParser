@@ -10,9 +10,6 @@ from omnitool.gradio.core.tools.schemas import (
     GTA1_COMPUTER_TOOLS,
     FINISH_TOOL,
     POSITIONAL_ACTIONS,
-    READ_FIELD_TOOL,
-    FOCUS_TOOL,
-    MARK_SCREENSHOT_TOOL,
     AUXILIARY_TOOLS,
 )
 
@@ -27,8 +24,5 @@ __all__ = [
     "GTA1_COMPUTER_TOOLS",
     "FINISH_TOOL",
     "POSITIONAL_ACTIONS",
-    "READ_FIELD_TOOL",
-    "FOCUS_TOOL",
-    "MARK_SCREENSHOT_TOOL",
     "AUXILIARY_TOOLS",
 ]
