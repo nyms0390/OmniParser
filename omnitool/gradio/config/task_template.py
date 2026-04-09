@@ -193,13 +193,46 @@ class TaskProcedure:
             for raw_line, sub_line in zip(steps_raw.splitlines(), substituted.splitlines()):
                 lines.append(sub_line)
                 for out in self._referenced_outputs(raw_line):
-                    lines.append(f"   capture: {out.key}")
+                    if out.aggregate:
+                        lines.append(
+                            f"   capture: {out.aggregate.source}"
+                            f"  [{out.key} is auto-computed as"
+                            f" {out.aggregate.operation.value} at finish — do not capture directly]"
+                        )
+                    else:
+                        lines.append(f"   capture: {out.key}")
+
+        capturable = [o for o in self.outputs if o.aggregate is None]
+        auto_computed = [o for o in self.outputs if o.aggregate is not None]
+        capturable_keys = {o.key for o in capturable}
+        if capturable or auto_computed:
+            lines.append("\nOutputs:")
+            for out in capturable:
+                mode = " (one entry per row)" if out.dynamic else ""
+                lines.append(f"  - capture {out.key}{mode}: {out.description}")
+            for out in auto_computed:
+                if out.aggregate.source not in capturable_keys:
+                    lines.append(
+                        f"  - capture {out.aggregate.source} (one entry per row):"
+                        f" {out.description}"
+                        f"  [{out.key} will be auto-computed as"
+                        f" {out.aggregate.operation.value} of {out.aggregate.source}]"
+                    )
+                else:
+                    lines.append(
+                        f"  - {out.key} will be auto-computed as"
+                        f" {out.aggregate.operation.value} of {out.aggregate.source}"
+                    )
 
         return "\n".join(lines)
 
     def to_extract_fields(self) -> Dict[str, str]:
-        """Return ``{output.key: output.description}`` for all outputs."""
-        return {out.key: out.description for out in self.outputs}
+        """Return ``{output.key: output.description}`` for directly-capturable outputs only.
+
+        Aggregate outputs are excluded — they are auto-computed at finish and
+        must not be captured directly by the LLM.
+        """
+        return {out.key: out.description for out in self.outputs if out.aggregate is None}
 
     # ------------------------------------------------------------------
     # Class-level constructor
