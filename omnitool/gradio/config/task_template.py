@@ -35,6 +35,8 @@ from typing import Dict, List, Optional
 
 import yaml
 
+from omnitool.gradio.config.enums import AggregateOperation
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,6 +64,30 @@ class TaskInput:
 
 
 @dataclass
+class TaskOutputAggregate:
+    """Aggregate computation declared on a TaskOutput.
+
+    When present, the agent computes this aggregate at finish time by reading
+    the accumulated values of *source* from working_memory.facts and writing
+    the result under the parent output's key.
+    """
+
+    operation: AggregateOperation
+    source: str     # key of the dynamic field whose values are aggregated
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TaskOutputAggregate":
+        try:
+            op = AggregateOperation(data["operation"])
+        except ValueError:
+            valid = [o.value for o in AggregateOperation]
+            raise ValueError(
+                f"Invalid aggregate operation {data['operation']!r}. Valid values: {valid}"
+            ) from None
+        return cls(operation=op, source=data["source"])
+
+
+@dataclass
 class TaskOutput:
     """A single output field produced by a procedure."""
 
@@ -69,6 +95,8 @@ class TaskOutput:
     description: str = ""
     format: str = ""
     clipboard_correction: bool = True
+    dynamic: bool = False
+    aggregate: Optional[TaskOutputAggregate] = None
 
     @classmethod
     def from_dict(cls, data) -> "TaskOutput":
@@ -79,6 +107,12 @@ class TaskOutput:
             description=data.get("description", ""),
             format=data.get("format", ""),
             clipboard_correction=bool(data.get("clipboard_correction", True)),
+            dynamic=bool(data.get("dynamic", False)),
+            aggregate=(
+                TaskOutputAggregate.from_dict(raw_agg)
+                if (raw_agg := data.get("aggregate"))
+                else None
+            ),
         )
 
 

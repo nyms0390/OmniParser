@@ -7,6 +7,7 @@ All filesystem I/O is exercised against tmp_path (no real screen capture).
 
 import base64
 import json
+import pytest
 from io import BytesIO
 from unittest.mock import Mock
 
@@ -14,6 +15,8 @@ from PIL import Image
 
 from omnitool.gradio.services import AppState
 from omnitool.gradio.core.agents.grounding import ScreenData
+from omnitool.gradio.config.enums import AggregateOperation
+from omnitool.gradio.config.task_template import TaskOutput, TaskOutputAggregate, TaskProcedure
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +67,7 @@ def _tool_response(tool_name="left_click", args=None, text="Acting."):
 
 
 def _finish_response():
-    return _tool_response("finish", {"success": True, "summary": "done", "fields": {}})
+    return _tool_response("finish", {"success": True, "summary": "done"})
 
 
 def _make_react_agent(tmp_path, side_effects):
@@ -229,27 +232,34 @@ class TestFactsSave:
     def test_facts_stored_in_working_memory_after_read_field(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
         agent._handle_read_field({"fields": [{"field_name": "order_id", "value": "12345"}]})
-        assert agent.working_memory.facts["order_id"] == "12345"
+        assert agent.working_memory.facts["order_id"] == ["12345"]
         assert not (tmp_path / "facts.json").exists()
 
     def test_facts_captured_value_in_working_memory(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
         agent._handle_read_field({"fields": [{"field_name": "total", "value": "$99.00"}]})
-        assert agent.working_memory.facts["total"] == "$99.00"
+        assert agent.working_memory.facts["total"] == ["$99.00"]
         assert not (tmp_path / "facts.json").exists()
 
     def test_facts_accumulate_across_calls_in_working_memory(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
         agent._handle_read_field({"fields": [{"field_name": "a", "value": "1"}]})
         agent._handle_read_field({"fields": [{"field_name": "b", "value": "2"}]})
-        assert agent.working_memory.facts == {"a": "1", "b": "2"}
+        assert agent.working_memory.facts == {"a": ["1"], "b": ["2"]}
         assert not (tmp_path / "facts.json").exists()
 
     def test_duplicate_field_is_not_overwritten(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        agent.working_memory.facts["x"] = "v"
+        agent.working_memory.facts["x"] = ["v"]
         agent._handle_read_field({"fields": [{"field_name": "x", "value": "v"}]})
-        assert agent.working_memory.facts == {"x": "v"}
+        assert agent.working_memory.facts == {"x": ["v"]}
+
+    def test_overwriting_scalar_fact_with_different_value_stores_new_value(self, tmp_path):
+        agent = self._make_minimal_agent(tmp_path)
+        agent._handle_read_field({"fields": [{"field_name": "x", "value": "old"}]})
+        assert agent.working_memory.facts["x"] == ["old"]
+        agent._handle_read_field({"fields": [{"field_name": "x", "value": "new"}]})
+        assert agent.working_memory.facts["x"] == ["new"]
 
 
 # ===========================================================================
@@ -388,7 +398,7 @@ class TestWriteRunSummary:
         ])
         list(agent.run())
         summary = json.loads((tmp_path / "summary.json").read_text())
-        assert summary["facts"].get("order_id") == "99"
+        assert summary["facts"].get("order_id") == ["99"]
 
     def test_summary_written_on_crash(self, tmp_path):
         agent = _make_react_agent(tmp_path, [])
@@ -411,3 +421,100 @@ class TestWriteRunSummary:
         list(agent.run())
         summary = json.loads((tmp_path / "summary.json").read_text())
         assert isinstance(summary["total_cost_usd"], float)
+
+
+# ---------------------------------------------------------------------------
+# Template aggregate tests
+# ---------------------------------------------------------------------------
+
+class TestAggregateTransience:
+    """Template-declared aggregates fire at finish via _apply_template_aggregates."""
+
+    def _make_agent_with_outputs(self, tmp_path, outputs):
+        agent = _make_react_agent(tmp_path, [])
+        agent.gta1_client = None
+        proc = TaskProcedure(id=1, description="test", outputs=outputs)
+        agent.task_procedure = proc
+        agent._output_def_map = {o.key: o for o in outputs}
+        return agent
+
+    def test_dynamic_field_accumulates_across_calls(self, tmp_path):
+        outputs = [TaskOutput(key="line_amount", dynamic=True)]
+        agent = self._make_agent_with_outputs(tmp_path, outputs)
+        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
+        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
+        assert agent.working_memory.facts["line_amount"] == ["10.00", "5.00"]
+
+    def test_aggregate_result_written_to_facts_at_finish(self, tmp_path):
+        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
+        outputs = [
+            TaskOutput(key="line_amount", dynamic=True),
+            TaskOutput(key="grand_total", aggregate=agg),
+        ]
+        agent = self._make_agent_with_outputs(tmp_path, outputs)
+        agent.working_memory.facts["line_amount"] = ["10.00", "5.00"]
+        agent._apply_template_aggregates()
+        result = agent.working_memory.facts["grand_total"]
+        assert len(result) == 1
+        assert float(result[0]) == pytest.approx(15.0)
+
+    def test_all_non_numeric_source_skips_aggregate(self, tmp_path):
+        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="labels")
+        outputs = [
+            TaskOutput(key="labels", dynamic=True),
+            TaskOutput(key="total", aggregate=agg),
+        ]
+        agent = self._make_agent_with_outputs(tmp_path, outputs)
+        agent.working_memory.facts["labels"] = ["N/A", "—"]
+        agent._apply_template_aggregates()
+        assert "total" not in agent.working_memory.facts
+
+    def test_unknown_operation_raises_at_load_time(self, tmp_path):
+        with pytest.raises(ValueError, match="Invalid aggregate operation"):
+            TaskOutputAggregate.from_dict({"operation": "median", "source": "values"})
+
+    def test_no_task_procedure_is_noop(self, tmp_path):
+        agent = _make_react_agent(tmp_path, [])
+        agent.task_procedure = None
+        agent.working_memory.facts["x"] = ["1.00"]
+        agent._apply_template_aggregates()  # must not raise
+        assert "x" in agent.working_memory.facts  # unchanged
+
+    def test_multiple_aggregate_outputs_all_computed(self, tmp_path):
+        agg1 = TaskOutputAggregate(operation=AggregateOperation.SUM, source="prices")
+        agg2 = TaskOutputAggregate(operation=AggregateOperation.SUM, source="fees")
+        outputs = [
+            TaskOutput(key="prices", dynamic=True),
+            TaskOutput(key="fees", dynamic=True),
+            TaskOutput(key="price_total", aggregate=agg1),
+            TaskOutput(key="fee_total", aggregate=agg2),
+        ]
+        agent = self._make_agent_with_outputs(tmp_path, outputs)
+        agent.working_memory.facts["prices"] = ["10.00", "20.00"]
+        agent.working_memory.facts["fees"] = ["1.00", "2.00"]
+        agent._apply_template_aggregates()
+        assert agent.working_memory.facts["price_total"] == ["30"]
+        assert agent.working_memory.facts["fee_total"] == ["3"]
+
+    def test_empty_source_field_skips_aggregate(self, tmp_path):
+        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
+        outputs = [
+            TaskOutput(key="line_amount", dynamic=True),
+            TaskOutput(key="grand_total", aggregate=agg),
+        ]
+        agent = self._make_agent_with_outputs(tmp_path, outputs)
+        # line_amount never captured
+        agent._apply_template_aggregates()
+        assert "grand_total" not in agent.working_memory.facts
+
+    def test_aggregate_overwrites_existing_value(self, tmp_path):
+        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
+        outputs = [
+            TaskOutput(key="line_amount", dynamic=True),
+            TaskOutput(key="grand_total", aggregate=agg),
+        ]
+        agent = self._make_agent_with_outputs(tmp_path, outputs)
+        agent.working_memory.facts["grand_total"] = ["OLD"]
+        agent.working_memory.facts["line_amount"] = ["7.00"]
+        agent._apply_template_aggregates()
+        assert agent.working_memory.facts["grand_total"] == ["7"]

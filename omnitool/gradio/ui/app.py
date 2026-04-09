@@ -117,13 +117,6 @@ class GradioApp(GradioCallbacks):
                     )
 
                 with gr.Row():
-                    context_n_slider = gr.Slider(
-                        minimum=0,
-                        maximum=50,
-                        step=1,
-                        value=10,
-                        label="Context: last N messages (0 = all)",
-                    )
                     max_steps_slider = gr.Slider(
                         minimum=1,
                         maximum=50,
@@ -233,7 +226,6 @@ class GradioApp(GradioCallbacks):
                     chatbot,
                     mode_dropdown,
                     platform_dropdown,
-                    context_n_slider,
                     max_steps_slider,
                     yaml_template_state,
                     procedure_dropdown,

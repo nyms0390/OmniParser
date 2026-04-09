@@ -99,7 +99,6 @@ class GradioCallbacks:
         chatbot_history,
         mode: str,
         platform: str,
-        context_n: int,
         max_steps: int,
         yaml_template,
         selected_procedure_id,
@@ -164,7 +163,6 @@ class GradioCallbacks:
         try:
             # Prepare orchestrator kwargs
             orchestrator_kwargs = {
-                "agent_type": agent_type,
                 "model_name": model_name,
                 "state": state,
                 "tools_collection": self.tools,
@@ -174,7 +172,6 @@ class GradioCallbacks:
                 "provider": provider,
                 "mode": agent_mode,
                 "platform": platform,
-                "context_n": context_n,
                 "azure_endpoint": self.settings.azure_endpoint,
                 "gta1_client": self.gta1_client,
                 "grounding": grounding,

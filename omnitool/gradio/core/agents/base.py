@@ -26,12 +26,12 @@ from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.core.agents.preprocessing import PreprocessingMode, preprocess_b64
 from omnitool.gradio.config import (
     AgentMode,
-    AggregateOperation,
     SCREENSHOT_MAX_WIDTH,
     TaskProcedure,
     get_llm_config,
     get_pricing,
 )
+from omnitool.gradio.config.task_template import TaskOutput
 from omnitool.gradio.core.agents.image_utils import _crop_b64
 from omnitool.gradio.core.agents.message_utils import _strip_numeric
 from omnitool.gradio.services.state import AppState
@@ -51,7 +51,7 @@ class WorkingMemory:
     """
 
     task: Optional[str] = None
-    facts: Dict[str, str] = field(default_factory=dict)
+    facts: Dict[str, List[str]] = field(default_factory=dict)
     trajectory: List[Dict[str, Any]] = field(default_factory=list)
     parsed_screen: Optional[Dict[str, Any]] = None
 
@@ -112,9 +112,9 @@ class BaseAgent(ABC):
         self.working_memory = WorkingMemory()
 
         # Task procedure — provided at construction when running in TASK mode.
-        # _output_def_map is a pre-built index for O(1) lookup in _get_output_def.
+        # _output_def_map is a pre-built index for O(1) output lookup.
         self.task_procedure: Optional[TaskProcedure] = task_procedure
-        self._output_def_map: Dict[str, Any] = (
+        self._output_def_map: Dict[str, TaskOutput] = (
             {o.key: o for o in (task_procedure.outputs or [])}
             if task_procedure else {}
         )
@@ -385,61 +385,60 @@ class BaseAgent(ABC):
     def _correct_field_via_clipboard(
         self,
         field_name: str,
-        ocr_value: Any,
+        ocr_value: List[str],
         parsed_screen: Dict[str, Any],
-    ) -> Any:
-        """Correct an LLM-extracted field value using GTA1 + triple-click + clipboard.
+    ) -> List[str]:
+        """Correct LLM-extracted field values using GTA1 + triple-click + clipboard.
 
-        Uses the LLM-extracted value as the GTA1 grounding instruction to locate
+        Uses each LLM-extracted value as the GTA1 grounding instruction to locate
         the exact element on screen, then reads the true value from the clipboard.
-        Falls back to the original ``ocr_value`` per item if GTA1 fails.
+        Falls back to the original item string if GTA1 fails for that item.
         """
-        if isinstance(ocr_value, list):
-            corrected = []
-            for idx, item in enumerate(ocr_value):
-                item_str = str(item)
-                instruction = f'the element showing "{item_str}"'
-                result = self._read_field_via_clipboard(
-                    f"{field_name}[{idx}]", instruction, parsed_screen
-                )
-                corrected.append(
-                    result if result not in ("extraction failed", "null") else item_str
-                )
-            changed = sum(1 for a, b in zip(corrected, ocr_value) if str(a) != str(b))
-            logger.info(
-                "_correct_field_via_clipboard: %r corrected %d/%d items",
-                field_name, changed, len(ocr_value),
+        corrected = []
+        for idx, item in enumerate(ocr_value):
+            item_str = str(item)
+            instruction = f'the element showing "{item_str}"'
+            result = self._read_field_via_clipboard(
+                f"{field_name}[{idx}]", instruction, parsed_screen
             )
-            return corrected
-
-        ocr_str = str(ocr_value)
-        instruction = f'the element showing "{ocr_str}"'
-        result = self._read_field_via_clipboard(field_name, instruction, parsed_screen)
-        if result in ("extraction failed", "null"):
-            logger.debug(
-                "_correct_field_via_clipboard: %r correction failed, keeping OCR value",
-                field_name,
+            corrected.append(
+                result if result not in ("extraction failed", "null") else item_str
             )
-            return ocr_str
-        return result
+        changed = sum(1 for a, b in zip(corrected, ocr_value) if str(a) != str(b))
+        logger.info(
+            "_correct_field_via_clipboard: %r corrected %d/%d items",
+            field_name, changed, len(ocr_value),
+        )
+        return corrected
 
     # ------------------------------------------------------------------
     # read_field tool handler
     # ------------------------------------------------------------------
 
-    def _set_fact(self, key: str, value: str) -> None:
-        """Write a key-value pair into working_memory.facts, logging any overwrite."""
-        existing = self.working_memory.facts.get(key)
-        if existing is not None and existing != value:
-            logger.warning("FACTS — overwriting %r: %r → %r", key, existing, value)
-        self.working_memory.facts[key] = value
+    def _set_fact(self, key: str, value: str, *, overwrite: bool = False) -> None:
+        """Write a value into working_memory.facts.
 
-    def _get_output_def(self, field_name: str):
-        """Return the TaskOutput for *field_name* from the current procedure, or None."""
-        return self._output_def_map.get(field_name)
+        Mode is determined by the matching TaskOutput.dynamic flag and the
+        ``overwrite`` parameter:
+        - dynamic=True, overwrite=False: appends to the list (accumulates across calls)
+        - all other cases: overwrites with a single-element list
+        """
+        output_def = self._output_def_map.get(key)
+        is_dynamic = output_def.dynamic if output_def is not None else False
+
+        if not overwrite and is_dynamic:
+            self.working_memory.facts.setdefault(key, []).append(value)
+        else:
+            existing = self.working_memory.facts.get(key)
+            if existing is not None and existing != [value]:
+                logger.warning("FACTS — overwriting %r: %r → %r", key, existing, [value])
+            self.working_memory.facts[key] = [value]
 
     def _handle_read_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         """Capture one or more screen values into working_memory.facts.
+
+        Each field is written via ``_set_fact``, which uses the TaskOutput.dynamic
+        flag to choose between scalar (overwrite) and dynamic (append) mode.
 
         Clipboard-based correction is skipped when:
         - the matching TaskOutput has ``clipboard_correction: false``, OR
@@ -447,8 +446,12 @@ class BaseAgent(ABC):
         - gta1_client is unavailable, OR
         - the LLM omits a grounding target.
 
+        Dedup: for scalar fields, if the same value is already stored the call
+        is a no-op (avoids redundant GTA1 round-trips). Dynamic fields always
+        append (dedup is skipped so duplicate values can accumulate legitimately).
+
         Returns:
-            A tuple of (result_text, captured) where captured contains only the
+            A tuple of (result_text, captured) where captured contains the
             fields written during this call (keyed by field_name).
         """
         items = tc_args.get("fields", [])
@@ -457,6 +460,7 @@ class BaseAgent(ABC):
 
         results = []
         captured: Dict[str, Any] = {}
+
         for item in items:
             field_name = item.get("field_name", "")
             value = item.get("value", "")
@@ -466,80 +470,81 @@ class BaseAgent(ABC):
                 results.append("Error: field_name is required.")
                 continue
 
-            if field_name in self.working_memory.facts:
-                existing = self.working_memory.facts[field_name]
-                if existing == value:
-                    # Same value already stored — skip clipboard correction to avoid
-                    # unnecessary GTA1 round-trips. Different value falls through to
-                    # re-capture, and _set_fact will log the overwrite.
-                    results.append(f"Field '{field_name}' already captured: {existing}")
-                    continue
-
-            output_def = self._get_output_def(field_name)
+            output_def = self._output_def_map.get(field_name)
+            is_dynamic = output_def.dynamic if output_def is not None else False
             use_correction = output_def.clipboard_correction if output_def is not None else True
 
-            corrected = value
+            corrected_list = [value]
             if use_correction and self.gta1_client and target:
                 try:
-                    corrected = self._correct_field_via_clipboard(
-                        field_name, value, self.working_memory.parsed_screen or {}
+                    corrected_list = self._correct_field_via_clipboard(
+                        field_name, [value], self.working_memory.parsed_screen or {}
                     )
                 except Exception as exc:
                     logger.warning("Field correction failed for '%s': %s", field_name, exc)
+
+            corrected = corrected_list[0] if corrected_list else value
+
+            # Dedup after correction: skip if scalar and corrected value already stored.
+            # Dynamic fields always append — dedup is skipped so duplicates can accumulate.
+            if not is_dynamic and field_name in self.working_memory.facts:
+                if corrected in self.working_memory.facts[field_name]:
+                    results.append(
+                        f"Field '{field_name}' already captured: "
+                        f"{self.working_memory.facts[field_name]}"
+                    )
+                    continue
 
             self._set_fact(field_name, corrected)
             captured[field_name] = corrected
             results.append(f"Captured: {field_name} = {corrected}")
 
-        self._apply_aggregate(tc_args.get("aggregate"), items, results)
         return "\n".join(results), captured
 
-    def _apply_aggregate(
-        self,
-        aggregate: Optional[Dict[str, Any]],
-        items: List[Dict[str, Any]],
-        results: List[str],
-    ) -> None:
-        """Compute an aggregate over already-captured facts and store the result.
+    def _apply_template_aggregates(self) -> None:
+        """Compute template-declared aggregates and write results into facts.
 
-        Reads field values from ``working_memory.facts`` for each item in *items*,
-        applies *aggregate["operation"]*, and writes the result under
-        *aggregate["store_as"]*. Appends a human-readable status line to *results*.
+        Called once at finish. For each output in ``task_procedure`` that has
+        an ``aggregate`` config, reads the accumulated list from
+        ``working_memory.facts[aggregate.source]``, applies the operation over
+        numeric values, and stores the result under ``output.key``.
         """
-        if not aggregate:
+        if self.task_procedure is None:
             return
-        operation = aggregate.get("operation")
-        store_as = (aggregate.get("store_as") or "").strip()
-        if not (operation and store_as):
-            return
-        try:
-            op_enum = AggregateOperation(operation)
-        except ValueError:
-            results.append(f"Error: unsupported aggregate operation '{operation}'.")
-            return
-        numeric_values = []
-        for item in items:
-            name = item.get("field_name")
-            if not name:
+        for out in self.task_procedure.outputs:
+            if out.aggregate is None:
                 continue
-            raw = self.working_memory.facts.get(name, "")
-            try:
-                numeric_values.append(_strip_numeric(raw))
-            except ValueError:
-                logger.debug("_apply_aggregate: skipping non-numeric field %r = %r", name, raw)
-            except AttributeError:
+            source_values = self.working_memory.facts.get(out.aggregate.source, [])
+            numeric_values = []
+            for raw in source_values:
+                try:
+                    numeric_values.append(_strip_numeric(raw))
+                except ValueError:
+                    logger.debug("_apply_template_aggregates: skipping non-numeric %r", raw)
+                except AttributeError:
+                    logger.error(
+                        "_apply_template_aggregates: facts invariant violated — "
+                        "expected str, got %r (%s); skipping.", raw, type(raw).__name__,
+                    )
+            if not numeric_values:
                 logger.warning(
-                    "_apply_aggregate: facts[%r] is not a string (%r); skipping.",
-                    name,
-                    raw,
+                    "Aggregate for %r: no numeric values in source %r", out.key, out.aggregate.source
                 )
-        if numeric_values:
-            # :.10g — up to 10 significant digits, trailing zeros stripped
-            formatted = f"{op_enum.apply(numeric_values):.10g}"
-            self._set_fact(store_as, formatted)
-            results.append(f"Aggregated {len(numeric_values)} values → {store_as} = {formatted}")
-        else:
-            results.append("Aggregate skipped: no numeric values found among captured fields.")
+                continue
+            try:
+                result_value = out.aggregate.operation.apply(numeric_values)
+            except NotImplementedError:
+                logger.error(
+                    "Unsupported aggregate operation %r for output %r",
+                    out.aggregate.operation, out.key,
+                )
+                continue
+            formatted = f"{result_value:.10g}"
+            self._set_fact(out.key, formatted, overwrite=True)
+            logger.info(
+                "Aggregate %r = %s (from %d values in %r)",
+                out.key, formatted, len(numeric_values), out.aggregate.source,
+            )
 
     # ------------------------------------------------------------------
     # Auxiliary tool handlers

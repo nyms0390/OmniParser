@@ -244,6 +244,15 @@ def format_ledger(ledger_text: str) -> str:
     )
 
 
+def _display_fact_value(v) -> str:
+    """Render a facts dict value (List[str] or str) as a human-readable string."""
+    if isinstance(v, list):
+        if not v:
+            return "(not captured)"
+        return str(v[0]) if len(v) == 1 else ", ".join(str(x) for x in v)
+    return str(v)
+
+
 def format_extraction_result(fields: dict) -> str:
     """Format extracted result fields as a collapsible HTML table.
 
@@ -257,7 +266,7 @@ def format_extraction_result(fields: dict) -> str:
         f'<tr>'
         f'<td style="padding: 4px 10px 4px 0; font-weight: bold; white-space: nowrap;">'
         f'{html.escape(str(k))}</td>'
-        f'<td style="padding: 4px 0;">{html.escape(str(v))}</td>'
+        f'<td style="padding: 4px 0;">{html.escape(_display_fact_value(v))}</td>'
         f'</tr>'
         for k, v in fields.items()
     )

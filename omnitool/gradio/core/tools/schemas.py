@@ -6,7 +6,7 @@ Grounding-strategy groups (mutually exclusive per agent instance):
 - GTA1_COMPUTER_TOOLS:       positional actions reference elements by natural-language target
 
 Termination:
-- FINISH_TOOL:               signals task completion and carries extracted fields (ReActAgent only)
+- FINISH_TOOL:               signals task completion (ReActAgent only)
 
 Always-on auxiliary tools (both agents, any grounding strategy):
 - READ_FIELD_TOOL:           captures text values from screen into working memory
@@ -199,11 +199,6 @@ FINISH_TOOL: dict = {
                     "type": "string",
                     "description": "Brief description of what was accomplished.",
                 },
-                "fields": {
-                    "type": "object",
-                    "description": "Key-value pairs of any values captured from the screen.",
-                    "additionalProperties": {"type": "string"},
-                },
             },
             "required": ["success", "summary"],
         },
@@ -232,7 +227,10 @@ READ_FIELD_TOOL: dict = {
             "properties": {
                 "fields": {
                     "type": "array",
-                    "description": "List of fields to capture from the current screen.",
+                    "description": (
+                        "List of fields to capture from the current screen. "
+                        "Capture every field visible in the current screenshot in a single call."
+                    ),
                     "minItems": 1,
                     "items": {
                         "type": "object",
@@ -255,26 +253,6 @@ READ_FIELD_TOOL: dict = {
                         },
                         "required": ["field_name", "value"],
                     },
-                },
-                "aggregate": {
-                    "type": "object",
-                    "description": (
-                        "Optional aggregation to compute over the numeric values of the fields "
-                        "listed in this call (using their stored values after any clipboard correction). "
-                        "Non-numeric fields are skipped. No result is stored if none parse as numbers."
-                    ),
-                    "properties": {
-                        "operation": {
-                            "type": "string",
-                            "enum": ["sum"],
-                            "description": "Aggregation operation to apply.",
-                        },
-                        "store_as": {
-                            "type": "string",
-                            "description": "Key name to store the result under in working memory.",
-                        },
-                    },
-                    "required": ["operation", "store_as"],
                 },
             },
             "required": ["fields"],

@@ -61,9 +61,9 @@ def _tool_response(tool_name="left_click", args=None, text="Thinking."):
     )
 
 
-def _finish_response(success=True, summary="Done.", fields=None):
+def _finish_response(success=True, summary="Done."):
     """Return (response_text, metadata) for a finish() call."""
-    args = {"success": success, "summary": summary, "fields": fields or {}}
+    args = {"success": success, "summary": summary}
     return _tool_response(tool_name="finish", args=args, text="Wrapping up.")
 
 
@@ -229,15 +229,6 @@ class TestReActAgentFinish:
         events = list(agent.run())
         complete = next(e for e in events if e["type"] == "complete")
         assert "Clicked the button" in complete["message"]
-
-    def test_finish_fields_merged_into_facts(self, tmp_path):
-        agent = _make_agent(tmp_path)
-        agent.llm_client.generate.side_effect = [
-            _finish_response(fields={"price": "9.99", "name": "Widget"})
-        ]
-        list(agent.run())
-        assert agent.working_memory.facts.get("price") == "9.99"
-        assert agent.working_memory.facts.get("name") == "Widget"
 
     def test_finish_terminates_loop_without_reaching_max_steps(self, tmp_path):
         agent = _make_agent(tmp_path, max_steps=20)

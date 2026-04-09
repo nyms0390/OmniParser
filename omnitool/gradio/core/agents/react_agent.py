@@ -238,10 +238,8 @@ class ReActAgent(BaseAgent):
                     result = {
                         "success": arguments.get("success", True),
                         "summary": arguments.get("summary", ""),
-                        "fields": arguments.get("fields", {}),
                     }
-                    # Merge captured fields into working memory
-                    self.working_memory.facts.update(result["fields"])
+                    self._apply_template_aggregates()
                     self._write_run_summary(success=result["success"], message=result["summary"])
                     yield {
                         "type": "complete",
