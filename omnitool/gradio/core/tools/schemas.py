@@ -229,7 +229,9 @@ READ_FIELD_TOOL: dict = {
                     "type": "array",
                     "description": (
                         "List of fields to capture from the current screen. "
-                        "Capture every field visible in the current screenshot in a single call."
+                        "Capture every field visible in the current screenshot in a single call. "
+                        "For list-type fields with one value per row, add one item per row — "
+                        "do not merge multiple row values into a single item."
                     ),
                     "minItems": 1,
                     "items": {
@@ -237,11 +239,20 @@ READ_FIELD_TOOL: dict = {
                         "properties": {
                             "field_name": {
                                 "type": "string",
-                                "description": "Key name to store the captured value under (e.g. 'order_total').",
+                                "description": (
+                                    "Exact key name from the required outputs (e.g. 'order_total'). "
+                                    "For list-type outputs that collect multiple values across calls, "
+                                    "always use the same exact key for every entry — "
+                                    "do NOT append numbers or suffixes (e.g. use 'line_amount', not 'line_amount_1')."
+                                ),
                             },
                             "value": {
                                 "type": "string",
-                                "description": "The exact value as you read it from the screen.",
+                                "description": (
+                                    "The exact single value as it appears on screen. "
+                                    "One item per value — never combine multiple values "
+                                    "with operators or separators (e.g. do NOT write '123+456')."
+                                ),
                             },
                             "target": {
                                 "type": "string",

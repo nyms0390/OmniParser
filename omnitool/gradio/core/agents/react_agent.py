@@ -258,14 +258,10 @@ class ReActAgent(BaseAgent):
                     if stored:
                         yield {"type": "screen_reading", "fields": stored}
                     history.append(_tool_msg(tool_call_id, result_text))
-                    if inject_stuck_hint:
-                        history.append({"role": "user", "content": _STUCK_HINT})
                     logger.info("READ_FIELD — %s", result_text)
-                    self._save_trajectory_step(plan_data)
-                    continue
 
                 # 6c. focus_region → crop screenshot and return image
-                if tool_name == "focus_region":
+                elif tool_name == "focus_region":
                     crop_b64 = self._handle_focus_region(arguments)
                     if crop_b64:
                         history.append({
@@ -281,64 +277,54 @@ class ReActAgent(BaseAgent):
                     else:
                         history.append(_tool_msg(tool_call_id, "focus_region failed: invalid bbox or no screenshot available."))
                         logger.warning("FOCUS_REGION — failed for bbox %s", arguments.get("bbox"))
-                    if inject_stuck_hint:
-                        history.append({"role": "user", "content": _STUCK_HINT})
-                    self._save_trajectory_step(plan_data)
-                    continue
 
                 # 6d. mark_screenshot → flag current step in trajectory
-                if tool_name == "mark_screenshot":
+                elif tool_name == "mark_screenshot":
                     result_text = self._handle_mark_screenshot(arguments.get("reason", ""))
                     history.append(_tool_msg(tool_call_id, result_text))
-                    if inject_stuck_hint:
-                        history.append({"role": "user", "content": _STUCK_HINT})
-                    self._save_trajectory_step(plan_data)
-                    continue
 
                 # 6e. Computer action → grounding → execute
-                try:
-                    dispatch = self.grounding_strategy.resolve(tool_name, arguments, screen_data)
-                except ValueError as exc:
-                    # Show failed grounding result (e.g. GTA1 crosshair miss) in the UI.
-                    evts = self.grounding_strategy.last_grounding_events
-                    if evts:
-                        yield {"type": "grounding", "events": evts}
-                    tool_result = f"Grounding error: {exc}"
-                    logger.warning("Step %d grounding failed: %s", self.step_count, exc)
-                    history.append(_tool_msg(tool_call_id, tool_result))
-                    if inject_stuck_hint:
-                        history.append({"role": "user", "content": _STUCK_HINT})
-                    yield {"type": "action_result", "tool": tool_name, "error": tool_result}
-                    continue
-
-                # Show grounding result (crosshair-annotated image) when available.
-                evts = self.grounding_strategy.last_grounding_events
-                if evts:
-                    yield {"type": "grounding", "events": evts}
-
-                tool_results = self.execute_tool_calls([dispatch])
-                res = tool_results[0] if tool_results else {}
-                if res.get("status") == "error":
-                    err_text = res.get("error", "unknown error")
-                    history.append(_tool_msg(tool_call_id, f"Error: {err_text}"))
-                    if inject_stuck_hint:
-                        history.append({"role": "user", "content": _STUCK_HINT})
-                    yield {
-                        "type": "action_result",
-                        "tool": dispatch.get("action", tool_name),
-                        "error": err_text,
-                    }
                 else:
-                    raw_result = res.get("result")
-                    output_text = getattr(raw_result, "output", None) or "Done."
-                    history.append(_tool_msg(tool_call_id, output_text))
-                    if inject_stuck_hint:
-                        history.append({"role": "user", "content": _STUCK_HINT})
-                    yield {
-                        "type": "action_result",
-                        "tool": dispatch.get("action", tool_name),
-                        "output": output_text,
-                    }
+                    try:
+                        dispatch = self.grounding_strategy.resolve(tool_name, arguments, screen_data)
+                    except ValueError as exc:
+                        # Show failed grounding result (e.g. GTA1 crosshair miss) in the UI.
+                        evts = self.grounding_strategy.last_grounding_events
+                        if evts:
+                            yield {"type": "grounding", "events": evts}
+                        tool_result = f"Grounding error: {exc}"
+                        logger.warning("Step %d grounding failed: %s", self.step_count, exc)
+                        history.append(_tool_msg(tool_call_id, tool_result))
+                        yield {"type": "action_result", "tool": tool_name, "error": tool_result}
+                    else:
+                        # Show grounding result (crosshair-annotated image) when available.
+                        evts = self.grounding_strategy.last_grounding_events
+                        if evts:
+                            yield {"type": "grounding", "events": evts}
+
+                        tool_results = self.execute_tool_calls([dispatch])
+                        res = tool_results[0] if tool_results else {}
+                        if res.get("status") == "error":
+                            err_text = res.get("error", "unknown error")
+                            history.append(_tool_msg(tool_call_id, f"Error: {err_text}"))
+                            yield {
+                                "type": "action_result",
+                                "tool": dispatch.get("action", tool_name),
+                                "error": err_text,
+                            }
+                        else:
+                            raw_result = res.get("result")
+                            output_text = getattr(raw_result, "output", None) or "Done."
+                            history.append(_tool_msg(tool_call_id, output_text))
+                            yield {
+                                "type": "action_result",
+                                "tool": dispatch.get("action", tool_name),
+                                "output": output_text,
+                            }
+
+                # Inject stuck hint (after tool message, required by Azure/OpenAI protocol)
+                if inject_stuck_hint:
+                    history.append({"role": "user", "content": _STUCK_HINT})
 
                 # Save trajectory step
                 self._save_trajectory_step(plan_data)
