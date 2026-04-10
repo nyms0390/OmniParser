@@ -6,21 +6,18 @@ Loop (per step):
   2. Build user message: display image + element list + task reminder
   3. Evict old images from history (keep only the latest screenshot)
   4. LLM call with parallel_tool_calls=False → exactly one tool call
-  5. Loop detection: same action ≥3 times in last 5 → inject stuck hint
-  6. Dispatch:
+  5. Dispatch:
        finish()         → exit loop, yield complete event
        computer action  → grounding.resolve() → execute_tool_calls()
-  7. Append tool result to history
-  8. Every COMPACTION_INTERVAL steps → harness-triggered compaction
+  6. Append tool result to history
+  7. Every COMPACTION_INTERVAL steps → harness-triggered compaction
 
 Compaction replaces the full history with a single LLM-authored summary,
 preserving: accomplished steps, failed attempts, current state, remaining work.
 """
 
-import json
 import logging
 import time
-from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Generator, List
 
@@ -37,16 +34,7 @@ logger = logging.getLogger(__name__)
 
 # How many steps between automatic compactions.
 COMPACTION_INTERVAL = 8
-# How many recent actions to inspect for loop detection.
-_LOOP_WINDOW = 5
-# How many times the same action must appear in the last _LOOP_WINDOW steps to trigger the stuck hint.
-_LOOP_THRESHOLD = 3
 
-_STUCK_HINT = (
-    "You have repeated the same action several times without progress. "
-    "Try a different approach, target a different element, or call finish() "
-    "if the task cannot be completed."
-)
 _NO_TOOL_HINT = "Please use one of the provided tools to take an action."
 
 
@@ -115,7 +103,6 @@ class ReActAgent(BaseAgent):
             system_prompt = self._get_system_prompt()
             all_tools = self._get_tools()
             history: List[Dict[str, Any]] = []
-            loop_tracker: deque = deque(maxlen=_LOOP_WINDOW)
 
             # Populate task from the first chat message if not already set.
             if not self.working_memory.task:
@@ -222,17 +209,8 @@ class ReActAgent(BaseAgent):
                     "message": f"Step {self.step_count}: Executing {tool_name}...",
                 }
 
-                # 5. Loop detection — flag now, inject hint after tool result
-                # (Azure/OpenAI require tool messages to immediately follow assistant
-                # messages that contain tool_calls; inserting a user message in between
-                # causes a 400 error.)
-                action_sig = (tool_name, _freeze(arguments))
-                loop_tracker.append(action_sig)
-                inject_stuck_hint = loop_tracker.count(action_sig) >= _LOOP_THRESHOLD
-                if inject_stuck_hint:
-                    logger.warning("Step %d: loop detected for %s", self.step_count, tool_name)
-
-                # 6a. finish() → exit
+                # 5. Dispatch:
+                # 5a. finish() → exit
                 if tool_name == "finish":
                     history.append(_tool_msg(tool_call_id, "Task finished."))
                     result = {
@@ -252,7 +230,7 @@ class ReActAgent(BaseAgent):
                     }
                     return
 
-                # 6b. read_field → store value in working_memory.facts
+                # 5b. read_field → store value in working_memory.facts
                 if tool_name == "read_field":
                     result_text, stored = self._handle_read_field(arguments)
                     if stored:
@@ -260,7 +238,7 @@ class ReActAgent(BaseAgent):
                     history.append(_tool_msg(tool_call_id, result_text))
                     logger.info("READ_FIELD — %s", result_text)
 
-                # 6c. focus_region → crop screenshot and return image
+                # 5c. focus_region → crop screenshot and return image
                 elif tool_name == "focus_region":
                     crop_b64 = self._handle_focus_region(arguments)
                     if crop_b64:
@@ -278,12 +256,12 @@ class ReActAgent(BaseAgent):
                         history.append(_tool_msg(tool_call_id, "focus_region failed: invalid bbox or no screenshot available."))
                         logger.warning("FOCUS_REGION — failed for bbox %s", arguments.get("bbox"))
 
-                # 6d. mark_screenshot → flag current step in trajectory
+                # 5d. mark_screenshot → flag current step in trajectory
                 elif tool_name == "mark_screenshot":
                     result_text = self._handle_mark_screenshot(arguments.get("reason", ""))
                     history.append(_tool_msg(tool_call_id, result_text))
 
-                # 6e. Computer action → grounding → execute
+                # 5e. Computer action → grounding → execute
                 else:
                     try:
                         dispatch = self.grounding_strategy.resolve(tool_name, arguments, screen_data)
@@ -321,10 +299,6 @@ class ReActAgent(BaseAgent):
                                 "tool": dispatch.get("action", tool_name),
                                 "output": output_text,
                             }
-
-                # Inject stuck hint (after tool message, required by Azure/OpenAI protocol)
-                if inject_stuck_hint:
-                    history.append({"role": "user", "content": _STUCK_HINT})
 
                 # Save trajectory step
                 self._save_trajectory_step(plan_data)
@@ -436,17 +410,6 @@ class ReActAgent(BaseAgent):
 def _tool_msg(tool_call_id: str, content: str) -> Dict[str, Any]:
     return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
 
-
-def _freeze(arguments: Dict[str, Any]):
-    """Make arguments hashable for loop detection.
-
-    Falls back to JSON for args containing lists or nested dicts
-    (e.g. bbox=[x1, y1, x2, y2] in focus_region).
-    """
-    try:
-        return frozenset(arguments.items())
-    except TypeError:
-        return json.dumps(arguments, sort_keys=True)
 
 
 __all__ = ["ReActAgent"]

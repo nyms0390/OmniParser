@@ -64,7 +64,9 @@ _SCROLL = {
         "name": "scroll",
         "description": (
             "Scroll the current view up or down. "
-            "Use this when a value or element you need may be off-screen or "
+            "REQUIRED before concluding that any element, option, or value is absent — "
+            "it may simply be below the fold. "
+            "Also use this when a value or element you need may be off-screen or "
             "partially hidden — scroll to bring it fully into view before reading or clicking."
         ),
         "parameters": {
