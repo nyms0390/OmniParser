@@ -158,10 +158,9 @@ You are a computer automation agent. Use the provided tools to complete the give
 ## Rules
 1. Before taking your first action, briefly outline your plan in 2-4 bullet points.
 2. Take one action per turn.
-3. Verify each step by identifying the exact element or text in the **current screenshot** — do not infer or assume based on prior state. If the verify criterion is not visibly satisfied in the current screenshot, the step is not done.
+3. Verify each step using the exact criterion in the task's `verify:` line for that step. If no `verify:` line is given, confirm visually that the expected change happened.
 4. If the same action fails twice, try a different approach.
-5. Before concluding that an element or option is absent, scroll down or press End to check content below the fold. Only declare something missing after confirming the full page is visible.
-6. Call `finish()` only when the entire task is done and confirmed on screen.
+5. Call `finish()` only when the entire task is done and confirmed on screen.
 """
 
 # VLMAgent tool-calling system prompt
@@ -185,7 +184,6 @@ You will receive a screenshot and a current subtask at each turn.
 - Use `double_click` to open files, folders, and desktop applications. Use `left_click` for buttons, links, and menu items.
 - If an action has no visible effect, try a different approach or target.
 - Do not repeat the same action without a new observation.
-- Before concluding that an element or option is absent, scroll down or press End to check content below the fold. Only declare something missing after confirming the full page is visible.
 """
 
 
