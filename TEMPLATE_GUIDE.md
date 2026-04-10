@@ -133,6 +133,26 @@ outputs:
 | `description` | No | Tells the agent what to look for on screen. |
 | `format` | No | Expected format of the captured value. |
 | `clipboard_correction` | No | `true` (default) or `false`. When `true`, the agent captures the value by tri-clicking the field to select its content, then reading the clipboard. **Before enabling this, verify that the target system's input fields support tri-click selection** (triple-click selects the full field content). Set to `false` for fields where tri-click does not select text, or where the value only needs to be visually confirmed rather than extracted. |
+| `dynamic` | No | `false` (default) or `true`. When `true`, the agent captures this key once per matching step and accumulates all captured values into a list (useful for reading the same field across multiple rows). |
+| `aggregate` | No | Declares an auto-computed output. **Not captured by the agent directly** — computed at finish from a dynamic field. Requires two sub-fields: `operation` (currently only `sum`) and `source` (the `key` of the dynamic output to aggregate). |
+
+**Dynamic + aggregate pattern** — use this when a value appears once per row and you want a total:
+
+```yaml
+outputs:
+  - key: row_fee
+    description: "Fee shown on each row of the table."
+    format: decimal
+    dynamic: true          # captured once per row, accumulates a list
+  - key: total_fee
+    description: "Sum of all row fees."
+    format: decimal
+    aggregate:
+      operation: sum
+      source: row_fee      # aggregated from the dynamic field above
+```
+
+The agent captures `row_fee` on every relevant step; `total_fee` is computed automatically when the procedure finishes. Do **not** reference `{total_fee}` in steps — only reference `{row_fee}` where it should be read.
 
 > **Key rules:** All key names must be unique across the entire template — no input and output may share the same name. Each key also holds exactly one value; do not pack multiple pieces of information into a single key (e.g., use `first_name` and `last_name`, not one `full_name` key for both).
 

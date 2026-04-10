@@ -33,7 +33,6 @@ from omnitool.gradio.config import (
 )
 from omnitool.gradio.config.task_template import TaskOutput
 from omnitool.gradio.core.agents.image_utils import _crop_b64
-from omnitool.gradio.core.agents.message_utils import _strip_numeric
 from omnitool.gradio.services.state import AppState
 
 logger = logging.getLogger(__name__)
@@ -112,10 +111,17 @@ class BaseAgent(ABC):
         self.working_memory = WorkingMemory()
 
         # Task procedure — provided at construction when running in TASK mode.
-        # _output_def_map is a pre-built index for O(1) output lookup.
+        # _output_def_map: capturable fields (no aggregate), keyed by output.key.
+        #   Used by _handle_read_field and _set_fact to resolve dynamic/correction flags.
+        # _aggregate_def_map: computed outputs (aggregate is not None), keyed by
+        #   aggregate.source so callers can find the aggregate config for a source field.
         self.task_procedure: Optional[TaskProcedure] = task_procedure
         self._output_def_map: Dict[str, TaskOutput] = (
-            {o.key: o for o in (task_procedure.outputs or [])}
+            {o.key: o for o in (task_procedure.outputs or []) if o.aggregate is None}
+            if task_procedure else {}
+        )
+        self._aggregate_def_map: Dict[str, TaskOutput] = (
+            {o.aggregate.source: o for o in (task_procedure.outputs or []) if o.aggregate is not None}
             if task_procedure else {}
         )
 
@@ -424,7 +430,10 @@ class BaseAgent(ABC):
         - all other cases: overwrites with a single-element list
         """
         output_def = self._output_def_map.get(key)
-        is_dynamic = output_def.dynamic if output_def is not None else False
+        if output_def is None and key in self._aggregate_def_map:
+            is_dynamic = True  # aggregate sources always accumulate
+        else:
+            is_dynamic = output_def.dynamic if output_def is not None else False
 
         if not overwrite and is_dynamic:
             self.working_memory.facts.setdefault(key, []).append(value)
@@ -471,8 +480,13 @@ class BaseAgent(ABC):
                 continue
 
             output_def = self._output_def_map.get(field_name)
-            is_dynamic = output_def.dynamic if output_def is not None else False
-            use_correction = output_def.clipboard_correction if output_def is not None else True
+            agg_def = self._aggregate_def_map.get(field_name) if output_def is None else None
+            if agg_def is not None:
+                is_dynamic = True  # aggregate sources always accumulate
+                use_correction = agg_def.clipboard_correction
+            else:
+                is_dynamic = output_def.dynamic if output_def is not None else False
+                use_correction = output_def.clipboard_correction if output_def is not None else True
 
             corrected_list = [value]
             if use_correction and self.gta1_client and target:
@@ -515,35 +529,31 @@ class BaseAgent(ABC):
             if out.aggregate is None:
                 continue
             source_values = self.working_memory.facts.get(out.aggregate.source, [])
-            numeric_values = []
-            for raw in source_values:
-                try:
-                    numeric_values.append(_strip_numeric(raw))
-                except ValueError:
-                    logger.debug("_apply_template_aggregates: skipping non-numeric %r", raw)
-                except AttributeError:
-                    logger.error(
-                        "_apply_template_aggregates: facts invariant violated — "
-                        "expected str, got %r (%s); skipping.", raw, type(raw).__name__,
-                    )
-            if not numeric_values:
+            invalid = [raw for raw in source_values if not isinstance(raw, str)]
+            if invalid:
+                logger.error(
+                    "_apply_template_aggregates: facts invariant violated for %r — "
+                    "expected all str, got non-str values %r; skipping aggregate.",
+                    out.key, invalid,
+                )
+                continue
+            if not source_values:
                 logger.warning(
-                    "Aggregate for %r: no numeric values in source %r", out.key, out.aggregate.source
+                    "Aggregate for %r: no values in source %r", out.key, out.aggregate.source
                 )
                 continue
             try:
-                result_value = out.aggregate.operation.apply(numeric_values)
-            except NotImplementedError:
+                result = out.aggregate.operation.apply(source_values)
+            except (NotImplementedError, ValueError) as exc:
                 logger.error(
-                    "Unsupported aggregate operation %r for output %r",
-                    out.aggregate.operation, out.key,
+                    "Aggregate operation %r failed for output %r: %s",
+                    out.aggregate.operation, out.key, exc,
                 )
                 continue
-            formatted = f"{result_value:.10g}"
-            self._set_fact(out.key, formatted, overwrite=True)
+            self._set_fact(out.key, result, overwrite=True)
             logger.info(
-                "Aggregate %r = %s (from %d values in %r)",
-                out.key, formatted, len(numeric_values), out.aggregate.source,
+                "Aggregate %r = %r (from %d values in %r)",
+                out.key, result, len(source_values), out.aggregate.source,
             )
 
     # ------------------------------------------------------------------
@@ -599,8 +609,8 @@ class BaseAgent(ABC):
         self._flags.append(flag_record)
         trajectory_file = self.save_folder / "trajectory.json"
         try:
-            with open(trajectory_file, "a") as f:
-                json.dump(flag_record, f)
+            with open(trajectory_file, "a", encoding="utf-8") as f:
+                json.dump(flag_record, f, ensure_ascii=False)
                 f.write("\n")
         except Exception as exc:
             logger.warning("Failed to save screenshot flag: %s", exc)

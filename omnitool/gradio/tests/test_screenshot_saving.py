@@ -518,3 +518,69 @@ class TestAggregateTransience:
         agent.working_memory.facts["line_amount"] = ["7.00"]
         agent._apply_template_aggregates()
         assert agent.working_memory.facts["grand_total"] == ["7"]
+
+    # ------------------------------------------------------------------
+    # Aggregate-source field lookup in _handle_read_field
+    # When ONLY the aggregate output is declared (no standalone source field),
+    # read_field calls with aggregate.source as field_name must still resolve
+    # is_dynamic=True and clipboard_correction from the aggregate definition.
+    # ------------------------------------------------------------------
+
+    def _make_agent_via_constructor(self, tmp_path, proc):
+        """Create agent using the real constructor with task_procedure set."""
+        from omnitool.gradio.core.agents.react_agent import ReActAgent
+        from omnitool.gradio.core.agents.grounding import ScreenData
+        import base64
+        from io import BytesIO
+        from PIL import Image
+
+        app_state = AppState(run_folder=tmp_path)
+        app_state.chat.add_message("user", "Do something")
+        grounding = Mock()
+        grounding.name = "omniparser"
+        grounding.element_reference_hint = "Use box_id."
+        grounding.get_tools.return_value = []
+        agent = ReActAgent(
+            model_name="gpt-4o",
+            llm_client=Mock(),
+            state=app_state,
+            tools_collection=Mock(),
+            save_folder=tmp_path,
+            grounding_strategy=grounding,
+            max_steps=5,
+            action_delay=0,
+            task_procedure=proc,
+        )
+        agent.gta1_client = None
+        return agent
+
+    def test_read_field_via_aggregate_source_accumulates_when_only_aggregate_declared(self, tmp_path):
+        """read_field with aggregate.source field_name must accumulate (dynamic=True)
+        even when no standalone TaskOutput for that field is declared."""
+        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
+        proc = TaskProcedure(
+            id=1, description="test",
+            outputs=[TaskOutput(key="grand_total", aggregate=agg)],
+        )
+        agent = self._make_agent_via_constructor(tmp_path, proc)
+        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
+        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
+        assert agent.working_memory.facts["line_amount"] == ["10.00", "5.00"], (
+            "line_amount should accumulate across calls (dynamic=True inferred from aggregate source)"
+        )
+
+    def test_read_field_via_aggregate_source_respects_clipboard_correction_flag(self, tmp_path):
+        """clipboard_correction=False on the aggregate output must suppress correction
+        for its source field when no standalone source TaskOutput is declared."""
+        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
+        proc = TaskProcedure(
+            id=1, description="test",
+            outputs=[TaskOutput(key="grand_total", aggregate=agg, clipboard_correction=False)],
+        )
+        agent = self._make_agent_via_constructor(tmp_path, proc)
+        agent.gta1_client = Mock()
+        agent._correct_field_via_clipboard = Mock(return_value=["corrected"])
+        agent._handle_read_field({"fields": [
+            {"field_name": "line_amount", "value": "10.00", "target": "amount field"}
+        ]})
+        agent._correct_field_via_clipboard.assert_not_called()

@@ -1,27 +1,9 @@
 """Pure message/text utility functions for ReActAgent."""
 
-import re
 import logging
 from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
-
-# Currency symbols, thousands separators, whitespace, and percent are stripped
-# before float conversion. Intentionally conservative: "ORD-999" survives and
-# raises ValueError rather than silently becoming -999.
-_NUMERIC_STRIP_RE = re.compile(r"[$€£¥₹,\s%]")
-
-
-def _strip_numeric(value: str) -> float:
-    """Strip formatting characters from *value* and parse as float.
-
-    Raises:
-        ValueError: If *value* is empty or non-numeric after stripping.
-    """
-    cleaned = _NUMERIC_STRIP_RE.sub("", value.strip())
-    if not cleaned:
-        raise ValueError(f"No numeric content in {value!r}")
-    return float(cleaned)
 
 
 def _extract_text_content(content) -> str:

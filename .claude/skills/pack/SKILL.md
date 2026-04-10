@@ -19,7 +19,7 @@ Always exclude:
 
 ## Current State
 - Branch: !`git branch --show-current`
-- Changed files (committed on branch): !`git diff --name-only master...HEAD`
+- Changed files (committed on branch): !`git diff --name-only $(git merge-base HEAD $(git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/dev/null || git for-each-ref --format='%(refname:short)' refs/remotes/origin/HEAD 2>/dev/null || echo origin/master))..HEAD`
 - Uncommitted changes: !`git diff --name-only HEAD`
 - Untracked files: !`git ls-files --others --exclude-standard`
 
@@ -34,14 +34,31 @@ After collecting the file list, filter out:
 
 ## Steps
 
-1. **Collect files** per the scope above, then apply the exclusions. Write the final list to a temp file:
+1. **Collect files** per the scope above, then apply the exclusions. Write the final list to a temp file.
+
+   For **"pack the latest commit"** (single commit by hash):
    ```bash
    git diff-tree --no-commit-id -r --name-only <hash> \
      | grep -v '^\.claude/' \
      | while read f; do [ -f "$f" ] && (git check-ignore -q "$f" || echo "$f"); done \
      > /tmp/pack_files.txt
-   cat /tmp/pack_files.txt
    ```
+
+   For **"pack changes" / "pack branch"** (all branch changes):
+   ```bash
+   BASE=$(git rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/dev/null \
+     || git for-each-ref --format='%(refname:short)' refs/remotes/origin/HEAD 2>/dev/null \
+     || echo origin/master)
+   { git diff --name-only $(git merge-base HEAD "$BASE")..HEAD
+     git diff --name-only HEAD
+     git ls-files --others --exclude-standard
+   } | sort -u \
+     | grep -v '^\.claude/' \
+     | while read f; do [ -f "$f" ] && (git check-ignore -q "$f" || echo "$f"); done \
+     > /tmp/pack_files.txt
+   ```
+
+   Then review: `cat /tmp/pack_files.txt`
 
 2. **Create the archive** from the repo root using `xargs` (do not store file list in a shell variable — word splitting is unreliable). Use a descriptive slug and timestamp:
    ```bash

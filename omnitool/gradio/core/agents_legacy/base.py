@@ -51,8 +51,8 @@ from omnitool.gradio.core.agents.image_utils import (
     _resize_b64,
     _compare_screens,
 )
+from omnitool.gradio.config.enums import _strip_numeric
 from omnitool.gradio.core.agents.message_utils import (
-    _strip_numeric,
     _extract_data,
     _extract_primary_action,
     _extract_text_content,
