@@ -32,7 +32,7 @@ class PaddleOCRClient(BaseServiceClient):
             timeout: Request timeout in seconds (default: 60)
         """
         super().__init__(base_url, timeout)
-        self.ocr_endpoint = "ocr"
+        self.ocr_endpoint = "infer/v5/raw"
         logger.info(f"Initialized PaddleOCR GPU API client at {base_url}")
     
     @property

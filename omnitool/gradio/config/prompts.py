@@ -12,8 +12,7 @@ Prompt order mirrors the agentic loop:
   3. Agent system prompts— Anthropic / ReAct / VLMAgent (used every step)
   4. Per-step reflect    — REFLECT_SYSTEM_PROMPT, REFLECT_PROMPT
   5. Mid-loop            — COMPACTION_PROMPT (ReAct history summarisation)
-  6. Post-loop           — result extraction (direct + clipboard)
-  7. Builder functions   — assemblers that render templates above
+  6. Builder functions   — assemblers that render templates above
 """
 
 from dataclasses import dataclass
@@ -66,8 +65,8 @@ PLATFORM_PROMPTS: Dict[str, PlatformPrompt] = {
 }
 
 
-# Input field interaction guidance (injected into agent system prompts)
-INPUT_FIELD_INSTRUCTIONS = """\
+# Input field interaction guidance (injected via builder functions)
+_INPUT_FIELD_INSTRUCTIONS = """\
 ## Input Field Interaction
 - **Empty field**: click to focus, then type.
 - **Placeholder text** (grayed-out hint): click and type directly — the placeholder disappears automatically; do NOT clear it first.
@@ -76,7 +75,31 @@ After typing, verify the field shows the intended value before proceeding.\
 """
 
 
-# Thinking-model instruction variants (inserted as note #2 in VLM prompts)
+# Scrolling guidance (injected via builder functions)
+_SCROLL_INSTRUCTIONS = """\
+## Scrolling
+Treat "element not visible" as "may be hidden below" by default — only conclude an element \
+is truly absent after ruling out scrollable content.
+
+**When to scroll**: A vertical scrollbar is visible on the right edge of a page or component; \
+content appears clipped at the bottom of a panel, list, or dropdown; an expected element is \
+not in view but the container clearly has more content.
+
+**What to scroll**: Identify which container holds the target.
+- Page-level content → scroll the page (scroll tool or Page Down).
+- Component-level content (dropdown, list, sidebar, modal) → move the mouse onto the \
+component first, then scroll; this scrolls the component independently of the page.
+
+**How to scroll**: One scroll per turn. Re-observe the screen after each scroll and repeat \
+until the element appears or you have confirmed the bottom of the container.
+
+Only after exhausting all scroll positions should you treat an element as absent or call \
+grounding for a fallback.\
+"""
+
+
+# Thinking-model instruction variants.
+# TODO: wire into build_vlm_tool_system_prompt() via a thinking_mode parameter.
 
 THINKING_INSTRUCTION_STANDARD = (
     "\n2. Write your \"Reasoning\" as a concise prose summary covering "
@@ -155,6 +178,8 @@ You are a computer automation agent. Use the provided tools to complete the give
 
 {input_field_instructions}
 
+{scroll_instructions}
+
 ## Rules
 1. Before taking your first action, briefly outline your plan in 2-4 bullet points.
 2. Take one action per turn.
@@ -178,6 +203,8 @@ You will receive a screenshot and a current subtask at each turn.
 2. Take exactly ONE action using the provided tools.
 
 {input_field_instructions}
+
+{scroll_instructions}
 
 ## Rules
 - One tool call per turn.
@@ -305,7 +332,8 @@ def build_react_system_prompt(
         platform_description=pp.description,
         interaction_constraints=pp.constraints,
         element_reference_hint=element_reference_hint,
-        input_field_instructions=INPUT_FIELD_INSTRUCTIONS,
+        input_field_instructions=_INPUT_FIELD_INSTRUCTIONS,
+        scroll_instructions=_SCROLL_INSTRUCTIONS,
     )
 
 
@@ -327,5 +355,6 @@ def build_vlm_tool_system_prompt(
         platform_description=pp.description,
         interaction_constraints=pp.constraints,
         element_reference_hint=element_reference_hint,
-        input_field_instructions=INPUT_FIELD_INSTRUCTIONS,
+        input_field_instructions=_INPUT_FIELD_INSTRUCTIONS,
+        scroll_instructions=_SCROLL_INSTRUCTIONS,
     )
