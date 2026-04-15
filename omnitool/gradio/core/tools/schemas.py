@@ -244,13 +244,16 @@ READ_FIELD_TOOL: dict = {
                                     "Exact key name from the required outputs (e.g. 'order_total'). "
                                     "For list-type outputs that collect multiple values across calls, "
                                     "always use the same exact key for every entry — "
-                                    "do NOT append numbers or suffixes (e.g. use 'line_amount', not 'line_amount_1')."
+                                    "do NOT append numbers or suffixes (e.g. use 'line_amount', not 'line_amount_1'). "
+                                    "Even when the raw value will need post-processing before saving, "
+                                    "still use the exact output key here — "
+                                    "do NOT invent variants like 'field_origin' or 'field_raw'."
                                 ),
                             },
                             "value": {
                                 "type": "string",
                                 "description": (
-                                    "The exact single value as it appears on screen. "
+                                    "The exact single value as it appears on screen (raw, unprocessed). "
                                     "One item per value — never combine multiple values "
                                     "with operators or separators (e.g. do NOT write '123+456')."
                                 ),
