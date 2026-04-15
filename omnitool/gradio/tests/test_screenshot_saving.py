@@ -7,6 +7,7 @@ All filesystem I/O is exercised against tmp_path (no real screen capture).
 
 import base64
 import json
+import re
 import pytest
 from io import BytesIO
 from unittest.mock import Mock
@@ -81,6 +82,7 @@ def _make_react_agent(tmp_path, side_effects):
 
     grounding = Mock()
     grounding.name = "omniparser"
+    grounding.has_som_annotation = True
     grounding.element_reference_hint = "Use box_id."
     grounding.get_tools.return_value = [{
         "type": "function",
@@ -220,46 +222,108 @@ class TestFocusCropSave:
 
 
 # ===========================================================================
-# _handle_read_field — facts.json auto-save
+# _handle_read_field — reads values, does NOT save to facts
 # ===========================================================================
 
-class TestFactsSave:
+class TestReadField:
     def _make_minimal_agent(self, tmp_path):
         agent = _make_react_agent(tmp_path, [])
         agent.gta1_client = None  # disable clipboard correction
         return agent
 
-    def test_facts_stored_in_working_memory_after_read_field(self, tmp_path):
+    def test_read_field_does_not_save_to_facts(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
         agent._handle_read_field({"fields": [{"field_name": "order_id", "value": "12345"}]})
+        assert "order_id" not in agent.working_memory.facts
+
+    def test_read_field_returns_read_values_dict(self, tmp_path):
+        agent = self._make_minimal_agent(tmp_path)
+        result_text, read_values = agent._handle_read_field(
+            {"fields": [{"field_name": "total", "value": "$99.00"}]}
+        )
+        assert read_values == {"total": "$99.00"}
+
+    def test_read_field_result_text_starts_with_read(self, tmp_path):
+        agent = self._make_minimal_agent(tmp_path)
+        result_text, _ = agent._handle_read_field(
+            {"fields": [{"field_name": "total", "value": "$99.00"}]}
+        )
+        assert result_text.startswith("Read:")
+
+    def test_read_field_multiple_fields_returned(self, tmp_path):
+        agent = self._make_minimal_agent(tmp_path)
+        _, read_values = agent._handle_read_field({"fields": [
+            {"field_name": "a", "value": "1"},
+            {"field_name": "b", "value": "2"},
+        ]})
+        assert read_values == {"a": "1", "b": "2"}
+        assert agent.working_memory.facts == {}
+
+    def test_read_field_empty_fields_returns_error(self, tmp_path):
+        agent = self._make_minimal_agent(tmp_path)
+        result_text, read_values = agent._handle_read_field({"fields": []})
+        assert "Error" in result_text
+        assert read_values == {}
+
+
+# ===========================================================================
+# _handle_save_field — persists values to working_memory.facts
+# ===========================================================================
+
+class TestSaveField:
+    def _make_minimal_agent(self, tmp_path):
+        agent = _make_react_agent(tmp_path, [])
+        agent.gta1_client = None  # disable clipboard correction
+        return agent
+
+    def test_facts_stored_in_working_memory_after_save_field(self, tmp_path):
+        agent = self._make_minimal_agent(tmp_path)
+        agent._handle_save_field({"fields": [{"field_name": "order_id", "value": "12345"}]})
         assert agent.working_memory.facts["order_id"] == ["12345"]
         assert not (tmp_path / "facts.json").exists()
 
     def test_facts_captured_value_in_working_memory(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        agent._handle_read_field({"fields": [{"field_name": "total", "value": "$99.00"}]})
+        agent._handle_save_field({"fields": [{"field_name": "total", "value": "$99.00"}]})
         assert agent.working_memory.facts["total"] == ["$99.00"]
         assert not (tmp_path / "facts.json").exists()
 
     def test_facts_accumulate_across_calls_in_working_memory(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        agent._handle_read_field({"fields": [{"field_name": "a", "value": "1"}]})
-        agent._handle_read_field({"fields": [{"field_name": "b", "value": "2"}]})
+        agent._handle_save_field({"fields": [{"field_name": "a", "value": "1"}]})
+        agent._handle_save_field({"fields": [{"field_name": "b", "value": "2"}]})
         assert agent.working_memory.facts == {"a": ["1"], "b": ["2"]}
         assert not (tmp_path / "facts.json").exists()
 
     def test_duplicate_field_is_not_overwritten(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
         agent.working_memory.facts["x"] = ["v"]
-        agent._handle_read_field({"fields": [{"field_name": "x", "value": "v"}]})
+        agent._handle_save_field({"fields": [{"field_name": "x", "value": "v"}]})
         assert agent.working_memory.facts == {"x": ["v"]}
 
     def test_overwriting_scalar_fact_with_different_value_stores_new_value(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        agent._handle_read_field({"fields": [{"field_name": "x", "value": "old"}]})
+        agent._handle_save_field({"fields": [{"field_name": "x", "value": "old"}]})
         assert agent.working_memory.facts["x"] == ["old"]
-        agent._handle_read_field({"fields": [{"field_name": "x", "value": "new"}]})
+        agent._handle_save_field({"fields": [{"field_name": "x", "value": "new"}]})
         assert agent.working_memory.facts["x"] == ["new"]
+
+    def test_save_field_result_text_starts_with_saved(self, tmp_path):
+        agent = self._make_minimal_agent(tmp_path)
+        result_text, _ = agent._handle_save_field(
+            {"fields": [{"field_name": "total", "value": "$99.00"}]}
+        )
+        assert result_text.startswith("Saved:")
+
+    def test_note_is_logged_but_not_stored(self, tmp_path):
+        agent = self._make_minimal_agent(tmp_path)
+        agent._handle_save_field({"fields": [
+            {"field_name": "amount", "value": "1234.56", "note": "stripped $ and commas"}
+        ]})
+        assert agent.working_memory.facts["amount"] == ["1234.56"]
+        # note must not appear anywhere in facts
+        assert "note" not in agent.working_memory.facts
+        assert "stripped" not in str(agent.working_memory.facts)
 
 
 # ===========================================================================
@@ -324,6 +388,7 @@ class TestReActMarkScreenshotDispatch:
         assert "mark_screenshot" in tool_names
         # Verify all expected tools are present (guards against accidental removal)
         assert "read_field" in tool_names
+        assert "save_field" in tool_names
         assert "focus_region" in tool_names
         assert "finish" in tool_names
 
@@ -392,9 +457,10 @@ class TestWriteRunSummary:
         summary = json.loads((tmp_path / "summary.json").read_text())
         assert any(f["reason"] == "confirmed" for f in summary["flags"])
 
-    def test_summary_facts_populated_from_read_field(self, tmp_path):
+    def test_summary_facts_populated_from_save_field(self, tmp_path):
         agent = _make_react_agent(tmp_path, [
             _tool_response("read_field", {"fields": [{"field_name": "order_id", "value": "99"}]}),
+            _tool_response("save_field", {"fields": [{"field_name": "order_id", "value": "99"}]}),
         ])
         list(agent.run())
         summary = json.loads((tmp_path / "summary.json").read_text())
@@ -413,7 +479,6 @@ class TestWriteRunSummary:
         agent = _make_react_agent(tmp_path, [])
         list(agent.run())
         summary = json.loads((tmp_path / "summary.json").read_text())
-        import re
         assert re.fullmatch(r"\d{2}:\d{2}:\d{2}", summary["duration"])
 
     def test_summary_total_cost_usd_is_float(self, tmp_path):
@@ -435,14 +500,13 @@ class TestAggregateTransience:
         agent.gta1_client = None
         proc = TaskProcedure(id=1, description="test", outputs=outputs)
         agent.task_procedure = proc
-        agent._output_def_map = {o.key: o for o in outputs}
         return agent
 
     def test_dynamic_field_accumulates_across_calls(self, tmp_path):
         outputs = [TaskOutput(key="line_amount", dynamic=True)]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
-        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
-        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
+        agent._handle_save_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
+        agent._handle_save_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
         assert agent.working_memory.facts["line_amount"] == ["10.00", "5.00"]
 
     def test_aggregate_result_written_to_facts_at_finish(self, tmp_path):
@@ -520,9 +584,9 @@ class TestAggregateTransience:
         assert agent.working_memory.facts["grand_total"] == ["7"]
 
     # ------------------------------------------------------------------
-    # Aggregate-source field lookup in _handle_read_field
+    # Aggregate-source field lookup in _handle_save_field
     # When ONLY the aggregate output is declared (no standalone source field),
-    # read_field calls with aggregate.source as field_name must still resolve
+    # save_field calls with aggregate.source as field_name must still resolve
     # is_dynamic=True and clipboard_correction from the aggregate definition.
     # ------------------------------------------------------------------
 
@@ -554,8 +618,8 @@ class TestAggregateTransience:
         agent.gta1_client = None
         return agent
 
-    def test_read_field_via_aggregate_source_accumulates_when_only_aggregate_declared(self, tmp_path):
-        """read_field with aggregate.source field_name must accumulate (dynamic=True)
+    def test_save_field_via_aggregate_source_accumulates_when_only_aggregate_declared(self, tmp_path):
+        """save_field with aggregate.source field_name must accumulate (dynamic=True)
         even when no standalone TaskOutput for that field is declared."""
         agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
         proc = TaskProcedure(
@@ -563,8 +627,8 @@ class TestAggregateTransience:
             outputs=[TaskOutput(key="grand_total", aggregate=agg)],
         )
         agent = self._make_agent_via_constructor(tmp_path, proc)
-        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
-        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
+        agent._handle_save_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
+        agent._handle_save_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
         assert agent.working_memory.facts["line_amount"] == ["10.00", "5.00"], (
             "line_amount should accumulate across calls (dynamic=True inferred from aggregate source)"
         )

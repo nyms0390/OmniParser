@@ -253,6 +253,48 @@ def _display_fact_value(v) -> str:
     return str(v)
 
 
+def format_field_saved(text: str, fields: dict) -> str:
+    """Format a save_field result as a collapsible HTML block.
+
+    Shows the per-field result text (including any skipped-duplicate notices)
+    and a table of the values actually written to facts this call.
+
+    Args:
+        text:   Full result_text from ``_handle_save_field`` (one line per field).
+        fields: The ``stored`` dict — field_name → value for fields written this call.
+
+    Returns:
+        HTML string with a ``<details>`` block (open by default).
+    """
+    parts: list[str] = [
+        '<details open style="margin: 6px 0;">'
+        "<summary>[Saved] Fields saved</summary>"
+    ]
+    if text:
+        escaped_text = html.escape(text.strip())
+        parts.append(
+            '<pre style="font-size: 0.85em; padding: 6px 8px; margin: 4px 0; '
+            'background: #f1f8e9; border-radius: 4px; white-space: pre-wrap;">'
+            f"{escaped_text}</pre>"
+        )
+    if fields:
+        rows = "".join(
+            f"<tr>"
+            f'<td style="padding: 4px 10px 4px 0; font-weight: bold; white-space: nowrap;">'
+            f"{html.escape(str(k))}</td>"
+            f'<td style="padding: 4px 0;">{html.escape(str(v))}</td>'
+            f"</tr>"
+            for k, v in fields.items()
+        )
+        parts.append(
+            '<table style="font-size: 0.9em; border-collapse: collapse; margin: 4px 0;">'
+            f"{rows}"
+            "</table>"
+        )
+    parts.append("</details>")
+    return "\n".join(parts)
+
+
 def format_extraction_result(fields: dict) -> str:
     """Format extracted result fields as a collapsible HTML table.
 
@@ -291,4 +333,5 @@ __all__ = [
     "format_plan",
     "format_ledger",
     "format_extraction_result",
+    "format_field_saved",
 ]

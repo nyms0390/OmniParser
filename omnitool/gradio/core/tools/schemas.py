@@ -1,5 +1,5 @@
 """
-OpenAI tool schemas shared by VLMAgent and ReActAgent.
+OpenAI tool schemas for ReActAgent.
 
 Grounding-strategy groups (mutually exclusive per agent instance):
 - OMNIPARSER_COMPUTER_TOOLS: positional actions reference elements by box_id (int index)
@@ -217,10 +217,11 @@ READ_FIELD_TOOL: dict = {
     "function": {
         "name": "read_field",
         "description": (
-            "Capture one or more text values visible on the current screen into memory. "
-            "Pass every value you want to record as an item in the `fields` array — "
-            "all fields visible in the current screenshot can be captured in a single call. "
-            "Values will be verified via clipboard if grounding targets are provided."
+            "Read and verify one or more text values visible on the current screen. "
+            "Pass every value you see as an item in the `fields` array — "
+            "all fields visible in the current screenshot can be read in a single call. "
+            "Values will be verified via clipboard if grounding targets are provided. "
+            "Does NOT save to memory — call save_field to record the result."
         ),
         "parameters": {
             "type": "object",
@@ -228,8 +229,8 @@ READ_FIELD_TOOL: dict = {
                 "fields": {
                     "type": "array",
                     "description": (
-                        "List of fields to capture from the current screen. "
-                        "Capture every field visible in the current screenshot in a single call. "
+                        "List of fields to read from the current screen. "
+                        "Read every field visible in the current screenshot in a single call. "
                         "For list-type fields with one value per row, add one item per row — "
                         "do not merge multiple row values into a single item."
                     ),
@@ -259,6 +260,63 @@ READ_FIELD_TOOL: dict = {
                                 "description": (
                                     "Natural-language description of the on-screen element showing "
                                     "this value. Used for clipboard-based verification — omit if not needed."
+                                ),
+                            },
+                        },
+                        "required": ["field_name", "value"],
+                    },
+                },
+            },
+            "required": ["fields"],
+        },
+    },
+}
+
+# ---------------------------------------------------------------------------
+# save_field tool — commits verified values to working memory
+# ---------------------------------------------------------------------------
+
+SAVE_FIELD_TOOL: dict = {
+    "type": "function",
+    "function": {
+        "name": "save_field",
+        "description": (
+            "Commit one or more field values to working memory. "
+            "Call this after read_field (and any optional reasoning or reformatting) "
+            "to permanently record the final value(s). "
+            "Use the note parameter to document any transformation applied to the raw value."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "description": "List of fields to save to working memory.",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "field_name": {
+                                "type": "string",
+                                "description": (
+                                    "Exact key name from the required outputs (e.g. 'order_total'). "
+                                    "Must match the field_name used in the preceding read_field call."
+                                ),
+                            },
+                            "value": {
+                                "type": "string",
+                                "description": (
+                                    "The final value to record. May differ from the read_field result "
+                                    "if you applied post-processing (e.g. stripped currency symbols, "
+                                    "reformatted a date)."
+                                ),
+                            },
+                            "note": {
+                                "type": "string",
+                                "description": (
+                                    "Optional: describe any transformation applied to the raw value "
+                                    "(e.g. 'stripped $ and commas', 'converted MM/DD/YYYY to ISO 8601'). "
+                                    "Logged for traceability — does not affect what is saved."
                                 ),
                             },
                         },
@@ -332,7 +390,7 @@ MARK_SCREENSHOT_TOOL: dict = {
 }
 
 # Always-on tools — present regardless of grounding strategy or finish signal
-AUXILIARY_TOOLS: List[dict] = [READ_FIELD_TOOL, FOCUS_TOOL, MARK_SCREENSHOT_TOOL]
+AUXILIARY_TOOLS: List[dict] = [READ_FIELD_TOOL, SAVE_FIELD_TOOL, FOCUS_TOOL, MARK_SCREENSHOT_TOOL]
 
 __all__ = [
     "OMNIPARSER_COMPUTER_TOOLS",
@@ -340,6 +398,7 @@ __all__ = [
     "FINISH_TOOL",
     "POSITIONAL_ACTIONS",
     "READ_FIELD_TOOL",
+    "SAVE_FIELD_TOOL",
     "FOCUS_TOOL",
     "MARK_SCREENSHOT_TOOL",
     "AUXILIARY_TOOLS",

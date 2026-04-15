@@ -230,13 +230,21 @@ class ReActAgent(BaseAgent):
                     }
                     return
 
-                # 5b. read_field → store value in working_memory.facts
+                # 5b. read_field → verify value, return to LLM (does NOT save)
                 if tool_name == "read_field":
-                    result_text, stored = self._handle_read_field(arguments)
-                    if stored:
-                        yield {"type": "screen_reading", "fields": stored}
+                    result_text, read_values = self._handle_read_field(arguments)
+                    if read_values:
+                        yield {"type": "screen_reading", "fields": read_values}
                     history.append(_tool_msg(tool_call_id, result_text))
                     logger.info("READ_FIELD — %s", result_text)
+
+                # 5b2. save_field → persist to working_memory.facts
+                elif tool_name == "save_field":
+                    result_text, stored = self._handle_save_field(arguments)
+                    history.append(_tool_msg(tool_call_id, result_text))
+                    logger.info("SAVE_FIELD — %s", result_text)
+                    if stored:
+                        yield {"type": "field_saved", "text": result_text, "fields": stored}
 
                 # 5c. focus_region → crop screenshot and return image
                 elif tool_name == "focus_region":
@@ -388,6 +396,10 @@ class ReActAgent(BaseAgent):
                 system_prompt=system_prompt,
             )
             self.update_token_usage(compact_meta.get("tokens", 0))
+            if "input_tokens" not in compact_meta and "output_tokens" not in compact_meta:
+                logger.warning(
+                    "Compaction metadata missing token breakdown — compaction cost not tracked."
+                )
             self.update_cost(self._calculate_cost(compact_meta))
             if not summary:
                 return history  # compaction failed silently — keep history

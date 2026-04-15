@@ -17,6 +17,7 @@ from omnitool.gradio.services import AppState, FileHandler, validate_api_key
 from omnitool.gradio.ui.components import (
     format_action_result,
     format_extraction_result,
+    format_field_saved,
     format_focus_region,
     format_grounding,
     format_ledger,
@@ -284,6 +285,14 @@ class GradioCallbacks:
                             "role": "assistant",
                             "content": format_extraction_result(fields),
                         })
+                    yield history, "", status, state
+
+                elif update_type == "field_saved":
+                    saved_html = format_field_saved(
+                        text=update.get("text", ""),
+                        fields=update.get("fields", {}),
+                    )
+                    history.append({"role": "assistant", "content": saved_html})
                     yield history, "", status, state
 
                 elif update_type == "complete":
