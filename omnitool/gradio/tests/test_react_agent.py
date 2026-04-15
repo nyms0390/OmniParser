@@ -1,182 +1,38 @@
 """
-Tests for ReActAgent — loop detection, compaction, image eviction, finish tool.
+Tests for ReActAgent — compaction, image eviction, finish tool, error paths.
 
 All external dependencies (LLM, grounding strategy, screen capture, tool execution)
 are mocked.  No network calls are made.
 """
 
-import json
 from unittest.mock import Mock
 
-from omnitool.gradio.services import AppState
-from omnitool.gradio.core.agents.grounding import ScreenData
 from omnitool.gradio.core.agents.react_agent import (
-    ReActAgent,
-    _freeze,
     _tool_msg,
     COMPACTION_INTERVAL,
-    _LOOP_THRESHOLD,
-    _LOOP_WINDOW,
+)
+from omnitool.gradio.tests._helpers import (
+    all_user_message_texts as _all_user_message_texts,
+    finish_response as _finish_response,
+    make_react_agent,
+    no_tool_response as _no_tool_response,
+    tool_response as _tool_response,
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_screen_data() -> ScreenData:
-    return ScreenData(
-        raw_image_b64="rawb64",
-        display_image_b64="somb64",
-        elements=[{"bbox": [0.1, 0.1, 0.3, 0.2], "content": "Start", "box_id": 0}],
-        screen_width=1920,
-        screen_height=1080,
-        resized_width=1920,
-        resized_height=1080,
-    )
-
-
-def _tool_response(tool_name="left_click", args=None, text="Thinking."):
-    """Return (response_text, metadata) with one tool call."""
-    if args is None:
-        args = {"box_id": 0}
-    tc_id = "call_1"
-    return (
-        text,
-        {
-            "tokens": 50,
-            "input_tokens": 25,
-            "output_tokens": 25,
-            "tool_calls": [{"id": tc_id, "name": tool_name, "arguments": args}],
-            "assistant_message": {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{
-                    "id": tc_id,
-                    "type": "function",
-                    "function": {"name": tool_name, "arguments": json.dumps(args)},
-                }],
-            },
-        },
-    )
-
-
-def _finish_response(success=True, summary="Done."):
-    """Return (response_text, metadata) for a finish() call."""
-    args = {"success": success, "summary": summary}
-    return _tool_response(tool_name="finish", args=args, text="Wrapping up.")
-
-
-def _no_tool_response(text="I have no action."):
-    return (
-        text,
-        {
-            "tokens": 10,
-            "input_tokens": 5,
-            "output_tokens": 5,
-            "tool_calls": [],
-            "assistant_message": {"role": "assistant", "content": text},
-        },
-    )
-
-
 def _make_agent(tmp_path, max_steps=10, compaction_interval=COMPACTION_INTERVAL):
-    """Build a ReActAgent with all external calls mocked."""
-    app_state = AppState(run_folder=tmp_path)
-    app_state.chat.add_message("user", "Click the Start button")
-
-    grounding = Mock()
-    grounding.name = "omniparser"
-    grounding.element_reference_hint = "Use box_id."
-    grounding.get_tools.return_value = [{
-        "type": "function",
-        "function": {
-            "name": "left_click",
-            "parameters": {
-                "type": "object",
-                "properties": {"box_id": {"type": "integer"}},
-                "required": ["box_id"],
-            },
-        },
-    }]
-    screen_data = _make_screen_data()
-    grounding.preprocess.return_value = screen_data
-    grounding.resolve.return_value = {"tool": "computer", "action": "left_click", "coordinate": [100, 200]}
-    grounding.last_grounding_events = []
-
-    llm_client = Mock()
-    # Default: always click then finish to keep loops short
-    llm_client.generate.side_effect = [
-        _tool_response(),
-        _finish_response(),
-    ] + [_finish_response()] * 20
-
-    agent = ReActAgent(
-        model_name="gpt-4o",
-        llm_client=llm_client,
-        state=app_state,
-        tools_collection=Mock(),
-        save_folder=tmp_path,
-        grounding_strategy=grounding,
+    """Thin wrapper for backward compatibility with existing tests."""
+    return make_react_agent(
+        tmp_path,
+        side_effects=[_tool_response(), _finish_response()],
         max_steps=max_steps,
         compaction_interval=compaction_interval,
-        action_delay=0,
     )
-
-    # Mock _capture_screen so no real screen capture happens
-    agent._capture_screen = Mock(return_value={
-        "raw_image_base64":          "rawb64",
-        "resized_image_base64":      "rawb64",
-        "preprocessed_image_base64": "rawb64",
-        "screen_width": 1920,
-        "screen_height": 1080,
-        "resized_screen_width": 1920,
-        "resized_screen_height": 1080,
-    })
-
-    # Mock execute_tool_calls to return success
-    agent.execute_tool_calls = Mock(return_value=[{
-        "tool": "computer",
-        "status": "success",
-        "result": Mock(output="Done.", error=""),
-    }])
-
-    # Suppress trajectory persistence (no filesystem writes)
-    agent._save_trajectory_step = Mock()
-
-    return agent
 
 
 # ===========================================================================
 # Module-level helpers
 # ===========================================================================
-
-class TestFreeze:
-    def test_simple_dict_is_hashable(self):
-        result = _freeze({"box_id": 3})
-        assert isinstance(result, frozenset)
-
-    def test_same_dicts_produce_equal_results(self):
-        assert _freeze({"a": 1, "b": 2}) == _freeze({"b": 2, "a": 1})
-
-    def test_different_dicts_produce_different_results(self):
-        assert _freeze({"box_id": 1}) != _freeze({"box_id": 2})
-
-    def test_nested_dict_falls_back_to_json_string(self):
-        result = _freeze({"nested": {"x": 1}})
-        assert isinstance(result, str)
-
-    def test_list_value_falls_back_to_json_string(self):
-        """bbox argument — a list value — should use the JSON fallback path."""
-        result = _freeze({"bbox": [0, 0, 100, 200]})
-        assert isinstance(result, str)
-
-    def test_same_bbox_produces_equal_results(self):
-        assert _freeze({"bbox": [0, 0, 100, 200]}) == _freeze({"bbox": [0, 0, 100, 200]})
-
-    def test_different_bbox_produces_different_results(self):
-        assert _freeze({"bbox": [0, 0, 100, 200]}) != _freeze({"bbox": [0, 0, 50, 100]})
-
 
 class TestToolMsg:
     def test_produces_tool_role_message(self):
@@ -235,95 +91,6 @@ class TestReActAgentFinish:
         agent.llm_client.generate.side_effect = [_finish_response()]
         list(agent.run())
         assert agent.step_count == 1
-
-
-# ===========================================================================
-# ReActAgent — loop detection
-# ===========================================================================
-
-def _all_user_message_texts(generate_mock) -> list:
-    """Extract all text strings from user-role messages passed to generate()."""
-    texts = []
-    for call in generate_mock.call_args_list:
-        messages = call.args[0] if call.args else call.kwargs.get("messages", [])
-        for msg in messages:
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                texts.append(content)
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        texts.append(block["text"])
-    return texts
-
-
-class TestReActAgentLoopDetection:
-    def test_no_stuck_hint_below_threshold(self, tmp_path):
-        """Fewer than _LOOP_THRESHOLD identical actions do not inject stuck hint."""
-        agent = _make_agent(tmp_path, max_steps=5)
-        # Two identical actions, then finish — below threshold of 3
-        agent.llm_client.generate.side_effect = [
-            _tool_response("left_click", {"box_id": 0}),
-            _tool_response("left_click", {"box_id": 0}),
-            _finish_response(),
-        ]
-        list(agent.run())
-        all_texts = _all_user_message_texts(agent.llm_client.generate)
-        assert not any("repeated the same action" in t for t in all_texts), (
-            "Stuck hint should NOT be injected below the loop threshold"
-        )
-
-    def test_stuck_hint_injected_at_threshold(self, tmp_path):
-        """Exactly _LOOP_THRESHOLD identical actions triggers loop detection."""
-        agent = _make_agent(tmp_path, max_steps=10)
-        repeat_responses = [
-            _tool_response("left_click", {"box_id": 0})
-        ] * _LOOP_THRESHOLD
-        agent.llm_client.generate.side_effect = repeat_responses + [_finish_response()]
-
-        events = list(agent.run())
-        assert any(e["type"] == "complete" for e in events)
-
-        all_texts = _all_user_message_texts(agent.llm_client.generate)
-        assert any("repeated the same action" in t for t in all_texts), (
-            "Stuck hint was not injected into LLM messages after hitting the loop threshold"
-        )
-
-    def test_loop_detection_uses_last_window_only(self, tmp_path):
-        """Actions outside the _LOOP_WINDOW are not counted toward loop detection."""
-        agent = _make_agent(tmp_path, max_steps=20)
-        unique_responses = [
-            _tool_response("left_click", {"box_id": i}) for i in range(1, _LOOP_WINDOW)
-        ]
-        repeat_responses = [
-            _tool_response("left_click", {"box_id": 99})
-        ] * _LOOP_THRESHOLD
-        agent.llm_client.generate.side_effect = unique_responses + repeat_responses + [_finish_response()]
-        events = list(agent.run())
-        # Unique actions reset the window; the later repeat block should still trigger the hint
-        assert any(e["type"] == "complete" for e in events)
-        all_texts = _all_user_message_texts(agent.llm_client.generate)
-        assert any("repeated the same action" in t for t in all_texts), (
-            "Stuck hint was not injected even though the repeat block exceeded the threshold"
-        )
-
-    def test_no_stuck_hint_when_count_stays_below_threshold_in_window(self, tmp_path):
-        """Alternating different actions keep every action's window-count below threshold."""
-        agent = _make_agent(tmp_path, max_steps=10)
-        # Alternating box_id=0 and box_id=1 — each appears at most 2 times in any window of 5.
-        responses = [
-            _tool_response("left_click", {"box_id": 0}),
-            _tool_response("left_click", {"box_id": 1}),
-            _tool_response("left_click", {"box_id": 0}),
-            _tool_response("left_click", {"box_id": 1}),
-            _finish_response(),
-        ]
-        agent.llm_client.generate.side_effect = responses
-        list(agent.run())
-        all_texts = _all_user_message_texts(agent.llm_client.generate)
-        assert not any("repeated the same action" in t for t in all_texts), (
-            "Stuck hint fired even though no action appeared 3+ times in the window"
-        )
 
 
 # ===========================================================================
@@ -401,6 +168,28 @@ class TestEvictOldImages:
         from omnitool.gradio.core.agents.message_utils import _evict_old_images
         _evict_old_images([])   # must not raise
 
+    def test_text_before_image_still_evicts_image(self):
+        """Eviction must strip image_url regardless of block order within content."""
+        from omnitool.gradio.core.agents.message_utils import _evict_old_images
+
+        history = [
+            {"role": "user", "content": [
+                {"type": "text", "text": "earlier step notes"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
+            ]},
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,BBB"}},
+            ]},
+        ]
+        _evict_old_images(history)
+        first_user_types = [b["type"] for b in history[0]["content"]]
+        assert "image_url" not in first_user_types, (
+            "image_url must be removed even when text precedes image in the block list"
+        )
+        # Original text must survive
+        first_texts = [b["text"] for b in history[0]["content"] if b.get("type") == "text"]
+        assert "earlier step notes" in first_texts
+
 
 # ===========================================================================
 # ReActAgent — history compaction
@@ -434,17 +223,27 @@ class TestReActAgentCompaction:
         )
 
     def test_compaction_replaces_history_with_summary(self, tmp_path):
-        """After compaction, the agent continues with a two-message history."""
+        """After compaction, post-compaction generate() calls see a shorter history
+        that includes the compaction summary text."""
         interval = 2
         agent = _make_agent(tmp_path, max_steps=interval + 2, compaction_interval=interval)
 
+        summary_text = "Steps done: step 1, step 2. Still need: finish."
+        pre_compaction_history_len = []
+        post_compaction_history_len = []
+        compaction_fired = [False]
+
         def generate_side_effect(messages, system_prompt, tools=None):
             if tools is None:
-                # Compaction call — return a summary
-                return ("Steps done: step 1, step 2. Still need: finish.", {
+                # Compaction call — record history size at compaction time
+                pre_compaction_history_len.append(len(messages))
+                compaction_fired[0] = True
+                return (summary_text, {
                     "tokens": 15, "input_tokens": 8, "output_tokens": 7,
                     "tool_calls": [], "assistant_message": {"role": "assistant", "content": ""},
                 })
+            if compaction_fired[0]:
+                post_compaction_history_len.append(len(messages))
             step_n = agent.step_count
             if step_n > interval:
                 return _finish_response()
@@ -452,8 +251,24 @@ class TestReActAgentCompaction:
 
         agent.llm_client.generate.side_effect = generate_side_effect
         events = list(agent.run())
+
         # Agent should reach complete without crashing after compaction
         assert any(e["type"] == "complete" for e in events)
+        assert compaction_fired[0], "Compaction was not triggered"
+
+        # History after compaction must be strictly shorter than the history that
+        # was being compacted (the summary replaces the expanded turn log).
+        assert post_compaction_history_len, "No generate() calls after compaction"
+        assert min(post_compaction_history_len) < max(pre_compaction_history_len), (
+            f"History was not shortened by compaction: "
+            f"pre={pre_compaction_history_len}, post={post_compaction_history_len}"
+        )
+
+        # Summary text must appear in the post-compaction message list
+        all_texts = _all_user_message_texts(agent.llm_client.generate)
+        assert any(summary_text in t for t in all_texts), (
+            "Compaction summary text was not injected into subsequent messages"
+        )
 
     def test_compaction_failure_keeps_history(self, tmp_path):
         """If the compaction LLM call raises, history is preserved and loop continues."""

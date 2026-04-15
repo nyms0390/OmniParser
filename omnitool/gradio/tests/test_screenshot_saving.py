@@ -9,119 +9,31 @@ import base64
 import json
 import re
 import pytest
-from io import BytesIO
 from unittest.mock import Mock
 
 from PIL import Image
 
-from omnitool.gradio.services import AppState
-from omnitool.gradio.core.agents.grounding import ScreenData
 from omnitool.gradio.config.enums import AggregateOperation
 from omnitool.gradio.config.task_template import TaskOutput, TaskOutputAggregate, TaskProcedure
-
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-
-def _make_1px_png_b64() -> str:
-    """Return a valid base64-encoded 1×1 white PNG."""
-    buf = BytesIO()
-    Image.new("RGB", (1, 1), color=(255, 255, 255)).save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode()
-
-
-def _make_screen_data(b64: str) -> ScreenData:
-    return ScreenData(
-        raw_image_b64=b64,
-        display_image_b64=b64,
-        elements=[],
-        screen_width=100,
-        screen_height=100,
-        resized_width=100,
-        resized_height=100,
-    )
-
-
-def _tool_response(tool_name="left_click", args=None, text="Acting."):
-    if args is None:
-        args = {"box_id": 0}
-    tc_id = "call_1"
-    return (
-        text,
-        {
-            "tokens": 10,
-            "input_tokens": 5,
-            "output_tokens": 5,
-            "tool_calls": [{"id": tc_id, "name": tool_name, "arguments": args}],
-            "assistant_message": {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{
-                    "id": tc_id,
-                    "type": "function",
-                    "function": {"name": tool_name, "arguments": json.dumps(args)},
-                }],
-            },
-        },
-    )
-
-
-def _finish_response():
-    return _tool_response("finish", {"success": True, "summary": "done"})
+from omnitool.gradio.tests._helpers import (
+    finish_response as _finish_response,
+    make_1px_png_b64 as _make_1px_png_b64,
+    make_react_agent,
+    tool_response as _tool_response,
+)
 
 
 def _make_react_agent(tmp_path, side_effects):
-    from omnitool.gradio.core.agents.react_agent import ReActAgent
-
-    app_state = AppState(run_folder=tmp_path)
-    app_state.chat.add_message("user", "Do something")
-
-    b64 = _make_1px_png_b64()
-    screen_data = _make_screen_data(b64)
-
-    grounding = Mock()
-    grounding.name = "omniparser"
-    grounding.has_som_annotation = True
-    grounding.element_reference_hint = "Use box_id."
-    grounding.get_tools.return_value = [{
-        "type": "function",
-        "function": {
-            "name": "left_click",
-            "parameters": {"type": "object", "properties": {"box_id": {"type": "integer"}}, "required": ["box_id"]},
-        },
-    }]
-    grounding.preprocess.return_value = screen_data
-    grounding.resolve.return_value = {"tool": "computer", "action": "left_click", "coordinate": [10, 10]}
-    grounding.last_grounding_events = []
-
-    llm_client = Mock()
-    llm_client.generate.side_effect = side_effects + [_finish_response()] * 10
-
-    agent = ReActAgent(
-        model_name="gpt-4o",
-        llm_client=llm_client,
-        state=app_state,
-        tools_collection=Mock(),
-        save_folder=tmp_path,
-        grounding_strategy=grounding,
+    """Thin wrapper that uses 100×100 screen dims for these tests."""
+    return make_react_agent(
+        tmp_path,
+        side_effects=list(side_effects),
         max_steps=5,
-        action_delay=0,
+        user_message="Do something",
+        screen_width=100,
+        screen_height=100,
+        suppress_trajectory=False,
     )
-    agent._capture_screen = Mock(return_value={
-        "raw_image_base64":          b64,
-        "resized_image_base64":      b64,
-        "preprocessed_image_base64": b64,
-        "screen_width": 100,
-        "screen_height": 100,
-        "resized_screen_width": 100,
-        "resized_screen_height": 100,
-    })
-    agent.execute_tool_calls = Mock(return_value=[{
-        "tool": "computer", "status": "success",
-        "result": Mock(output="ok", error=""),
-    }])
-    return agent
 
 
 
@@ -301,7 +213,8 @@ class TestSaveField:
         agent._handle_save_field({"fields": [{"field_name": "x", "value": "v"}]})
         assert agent.working_memory.facts == {"x": ["v"]}
 
-    def test_overwriting_scalar_fact_with_different_value_stores_new_value(self, tmp_path):
+    def test_scalar_fact_default_replaces_prior_value(self, tmp_path):
+        """With no task_procedure, fields are non-dynamic and save_field replaces."""
         agent = self._make_minimal_agent(tmp_path)
         agent._handle_save_field({"fields": [{"field_name": "x", "value": "old"}]})
         assert agent.working_memory.facts["x"] == ["old"]
@@ -402,6 +315,18 @@ class TestReActMarkScreenshotDispatch:
         flags = [r for r in records if r.get("type") == "flag"]
         assert len(flags) == 1
         assert flags[0]["reason"] == "step confirmed"
+
+    def test_react_agent_dispatches_save_field_tool(self, tmp_path):
+        """End-to-end: a save_field tool call routed through the real loop must
+        land in working_memory.facts — guards against dispatch-layer regressions
+        that handler-level unit tests would miss."""
+        agent = _make_react_agent(tmp_path, [
+            _tool_response("save_field", {"fields": [
+                {"field_name": "order_id", "value": "A-42"},
+            ]}),
+        ])
+        list(agent.run())
+        assert agent.working_memory.facts.get("order_id") == ["A-42"]
 
 
 # ===========================================================================
@@ -591,28 +516,12 @@ class TestAggregateTransience:
     # ------------------------------------------------------------------
 
     def _make_agent_via_constructor(self, tmp_path, proc):
-        """Create agent using the real constructor with task_procedure set."""
-        from omnitool.gradio.core.agents.react_agent import ReActAgent
-        from omnitool.gradio.core.agents.grounding import ScreenData
-        import base64
-        from io import BytesIO
-        from PIL import Image
-
-        app_state = AppState(run_folder=tmp_path)
-        app_state.chat.add_message("user", "Do something")
-        grounding = Mock()
-        grounding.name = "omniparser"
-        grounding.element_reference_hint = "Use box_id."
-        grounding.get_tools.return_value = []
-        agent = ReActAgent(
-            model_name="gpt-4o",
-            llm_client=Mock(),
-            state=app_state,
-            tools_collection=Mock(),
-            save_folder=tmp_path,
-            grounding_strategy=grounding,
+        """Create agent with a real task_procedure attached."""
+        agent = make_react_agent(
+            tmp_path,
+            side_effects=[],
             max_steps=5,
-            action_delay=0,
+            user_message="Do something",
             task_procedure=proc,
         )
         agent.gta1_client = None

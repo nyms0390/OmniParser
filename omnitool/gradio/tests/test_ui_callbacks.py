@@ -30,6 +30,7 @@ class _StubApp(GradioCallbacks):
     Gradio widgets or HTTP clients."""
 
     def __init__(self, settings=None, tools=None, tmp_path=None):
+        super().__init__()
         self.settings = settings or _make_settings(tmp_path)
         self.tools = tools or Mock()
         self.omniparser_client = Mock()

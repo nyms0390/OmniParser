@@ -178,6 +178,30 @@ class TestOmniParserGroundingResolve:
         assert dispatch["action"] == "scroll_up"
         assert dispatch["amount"] == 3
 
+    @pytest.mark.parametrize("tool_name", [
+        "right_click", "double_click", "triple_click", "hover",
+    ])
+    def test_all_positional_actions_resolve_to_coordinate(self, tool_name):
+        """Every positional action must resolve box_id to a concrete coordinate."""
+        strategy = self._make_strategy_with_elements()
+        screen_data = self._make_screen_data()
+        dispatch = strategy.resolve(tool_name, {"box_id": 1}, screen_data)
+        assert dispatch["action"] == tool_name
+        assert "coordinate" in dispatch
+        cx, cy = dispatch["coordinate"]
+        # bbox [0.5, 0.5, 0.7, 0.6] → centre (0.6, 0.55) → (1152, 594) on 1920×1080
+        assert cx == pytest.approx(1152, abs=2)
+        assert cy == pytest.approx(594, abs=2)
+
+    @pytest.mark.parametrize("tool_name", [
+        "right_click", "double_click", "triple_click", "hover",
+    ])
+    def test_all_positional_actions_require_box_id(self, tool_name):
+        strategy = self._make_strategy_with_elements()
+        screen_data = self._make_screen_data()
+        with pytest.raises(ValueError, match="box_id"):
+            strategy.resolve(tool_name, {}, screen_data)
+
 
 # ===========================================================================
 # GTA1Grounding — preprocess()

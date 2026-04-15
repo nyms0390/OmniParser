@@ -12,32 +12,18 @@ Covers:
 from __future__ import annotations
 
 import base64
-import io
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from PIL import Image
 
 from omnitool.gradio.core.agents.preprocessing import PreprocessingMode, preprocess_b64
 from omnitool.gradio.core.tools.base import ToolResult
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_b64_image(width: int = 64, height: int = 48, color=(128, 200, 64)) -> str:
-    """Create a small solid-color PNG and return it as a base64 string."""
-    img = Image.new("RGB", (width, height), color=color)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode()
-
-
-def _b64_to_image(b64: str) -> Image.Image:
-    """Decode a base64 string back to a PIL Image."""
-    return Image.open(io.BytesIO(base64.b64decode(b64)))
+from omnitool.gradio.tests._helpers import (
+    b64_to_image as _b64_to_image,
+    make_png_b64 as _make_b64_image,
+    make_react_agent,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -87,8 +73,8 @@ class TestPreprocessB64NonRawModes:
     def test_output_is_valid_png(self, mode):
         result = preprocess_b64(self.raw_b64, mode)
         img = _b64_to_image(result)
-        assert img.format == "PNG" or img is not None, (
-            f"Mode {mode} did not produce a PIL-readable PNG"
+        assert img.format == "PNG", (
+            f"Mode {mode} did not produce a PIL-readable PNG (got {img.format})"
         )
 
     @pytest.mark.parametrize("mode", NON_RAW_MODES)
@@ -132,46 +118,18 @@ class TestPreprocessingModeInvalidString:
 # ---------------------------------------------------------------------------
 
 def _make_minimal_agent(tmp_path: Path, preprocessing_mode: PreprocessingMode):
-    """Construct the smallest possible concrete BaseAgent subclass for testing.
+    """Build a bare ReActAgent for _capture_screen-only tests.
 
-    Uses ReActAgent because it has the fewest required constructor args beyond
-    BaseAgent itself and is already in the public import path.
+    These tests invoke the real _capture_screen (so preprocessing runs), so we
+    opt out of its default mocking via mock_capture=False.
     """
-    from omnitool.gradio.core.agents.react_agent import ReActAgent
-    from omnitool.gradio.services.state import AppState
-
-    app_state = AppState(run_folder=tmp_path)
-    app_state.chat.add_message("user", "Test task")
-
-    grounding = Mock()
-    grounding.name = "omniparser"
-    grounding.element_reference_hint = "Use box_id."
-    grounding.get_tools.return_value = []
-    grounding.preprocess.return_value = Mock(
-        raw_image_b64="rawb64",
-        display_image_b64="somb64",
-        elements=[],
-        screen_width=1920,
-        screen_height=1080,
-        resized_width=1920,
-        resized_height=1080,
-    )
-
-    llm_client = Mock()
-
-    agent = ReActAgent(
-        model_name="gpt-4o",
-        llm_client=llm_client,
-        state=app_state,
-        tools_collection=Mock(),
-        save_folder=tmp_path,
-        grounding_strategy=grounding,
+    return make_react_agent(
+        tmp_path,
+        side_effects=[],
         max_steps=5,
-        action_delay=0,
         preprocessing_mode=preprocessing_mode,
+        mock_capture=False,
     )
-    agent._save_trajectory_step = Mock()
-    return agent
 
 
 def _make_computer_tool_mock(b64_image: str) -> Mock:
