@@ -31,7 +31,6 @@ from omnitool.gradio.config import (
     get_llm_config,
     get_pricing,
 )
-from omnitool.gradio.config.task_template import TaskOutput
 from omnitool.gradio.core.agents.image_utils import _crop_b64
 from omnitool.gradio.services.state import AppState
 
@@ -111,19 +110,7 @@ class BaseAgent(ABC):
         self.working_memory = WorkingMemory()
 
         # Task procedure — provided at construction when running in TASK mode.
-        # _output_def_map: capturable fields (no aggregate), keyed by output.key.
-        #   Used by _handle_read_field and _set_fact to resolve dynamic/correction flags.
-        # _aggregate_def_map: computed outputs (aggregate is not None), keyed by
-        #   aggregate.source so callers can find the aggregate config for a source field.
         self.task_procedure: Optional[TaskProcedure] = task_procedure
-        self._output_def_map: Dict[str, TaskOutput] = (
-            {o.key: o for o in (task_procedure.outputs or []) if o.aggregate is None}
-            if task_procedure else {}
-        )
-        self._aggregate_def_map: Dict[str, TaskOutput] = (
-            {o.aggregate.source: o for o in (task_procedure.outputs or []) if o.aggregate is not None}
-            if task_procedure else {}
-        )
 
     # ------------------------------------------------------------------
     # Lifecycle & accounting
@@ -268,7 +255,8 @@ class BaseAgent(ABC):
             tool_name = tool_call.get("tool")
             action = tool_call.get("action", "")
             label = f"{tool_name}.{action}" if action else tool_name
-            if not self.tools_collection.has_tool(tool_name):
+            tool = self.tools_collection.get_tool(tool_name)
+            if tool is None:
                 logger.info("ACT [%s] FAILED — tool not found", label)
                 results.append({
                     "tool": tool_name,
@@ -277,7 +265,6 @@ class BaseAgent(ABC):
                 })
                 continue
             try:
-                tool = self.tools_collection.get_tool(tool_name)
                 tool_kwargs = {
                     k: v for k, v in tool_call.items()
                     if k not in ("tool", "action")
@@ -429,11 +416,8 @@ class BaseAgent(ABC):
         - dynamic=True, overwrite=False: appends to the list (accumulates across calls)
         - all other cases: overwrites with a single-element list
         """
-        output_def = self._output_def_map.get(key)
-        if output_def is None and key in self._aggregate_def_map:
-            is_dynamic = True  # aggregate sources always accumulate
-        else:
-            is_dynamic = output_def.dynamic if output_def is not None else False
+        out = self.task_procedure.get_output(key) if self.task_procedure else None
+        is_dynamic = out.is_dynamic if out else False
 
         if not overwrite and is_dynamic:
             self.working_memory.facts.setdefault(key, []).append(value)
@@ -443,11 +427,10 @@ class BaseAgent(ABC):
                 logger.warning("FACTS — overwriting %r: %r → %r", key, existing, [value])
             self.working_memory.facts[key] = [value]
 
-    def _handle_read_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-        """Capture one or more screen values into working_memory.facts.
+    def _handle_read_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, str]]:
+        """Read and optionally verify one or more screen values via clipboard correction.
 
-        Each field is written via ``_set_fact``, which uses the TaskOutput.dynamic
-        flag to choose between scalar (overwrite) and dynamic (append) mode.
+        Does NOT write to working_memory.facts. Call ``_handle_save_field`` to persist.
 
         Clipboard-based correction is skipped when:
         - the matching TaskOutput has ``clipboard_correction: false``, OR
@@ -455,20 +438,16 @@ class BaseAgent(ABC):
         - gta1_client is unavailable, OR
         - the LLM omits a grounding target.
 
-        Dedup: for scalar fields, if the same value is already stored the call
-        is a no-op (avoids redundant GTA1 round-trips). Dynamic fields always
-        append (dedup is skipped so duplicate values can accumulate legitimately).
-
         Returns:
-            A tuple of (result_text, captured) where captured contains the
-            fields written during this call (keyed by field_name).
+            A tuple of (result_text, read_values) where read_values maps
+            field_name → verified value for all successfully read fields.
         """
         items = tc_args.get("fields", [])
         if not items:
             return "Error: fields list is required and must not be empty.", {}
 
         results = []
-        captured: Dict[str, Any] = {}
+        read_values: Dict[str, str] = {}
 
         for item in items:
             field_name = item.get("field_name", "")
@@ -479,14 +458,8 @@ class BaseAgent(ABC):
                 results.append("Error: field_name is required.")
                 continue
 
-            output_def = self._output_def_map.get(field_name)
-            agg_def = self._aggregate_def_map.get(field_name) if output_def is None else None
-            if agg_def is not None:
-                is_dynamic = True  # aggregate sources always accumulate
-                use_correction = agg_def.clipboard_correction
-            else:
-                is_dynamic = output_def.dynamic if output_def is not None else False
-                use_correction = output_def.clipboard_correction if output_def is not None else True
+            out = self.task_procedure.get_output(field_name) if self.task_procedure else None
+            use_correction = out.clipboard_correction if out else True
 
             corrected_list = [value]
             if use_correction and self.gta1_client and target:
@@ -498,20 +471,62 @@ class BaseAgent(ABC):
                     logger.warning("Field correction failed for '%s': %s", field_name, exc)
 
             corrected = corrected_list[0] if corrected_list else value
+            read_values[field_name] = corrected
+            results.append(f"Read: {field_name} = {corrected}")
 
-            # Dedup after correction: skip if scalar and corrected value already stored.
+        return "\n".join(results), read_values
+
+    def _handle_save_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, str]]:
+        """Persist one or more field values into working_memory.facts.
+
+        Each field is written via ``_set_fact``, which uses the TaskOutput.dynamic
+        flag to choose between scalar (overwrite) and dynamic (append) mode.
+
+        Dedup: for scalar fields, if the same value is already stored the call
+        is a no-op. Dynamic fields always append (dedup is skipped so duplicate
+        values can accumulate legitimately).
+
+        An optional ``note`` on each field item is logged at INFO level for
+        traceability but not stored in facts.
+
+        Returns:
+            A tuple of (result_text, captured) where captured contains the
+            fields written during this call (keyed by field_name).
+        """
+        items = tc_args.get("fields", [])
+        if not items:
+            return "Error: fields list is required and must not be empty.", {}
+
+        results = []
+        captured: Dict[str, str] = {}
+
+        for item in items:
+            field_name = item.get("field_name", "")
+            value = item.get("value", "")
+            note = item.get("note")
+
+            if not field_name:
+                results.append("Error: field_name is required.")
+                continue
+
+            if note:
+                logger.info("SAVE_FIELD note for '%s': %s", field_name, note)
+
+            out = self.task_procedure.get_output(field_name) if self.task_procedure else None
+            is_dynamic = out.is_dynamic if out else False
+
+            # Dedup: skip if scalar and this exact value is already the sole stored entry.
             # Dynamic fields always append — dedup is skipped so duplicates can accumulate.
-            if not is_dynamic and field_name in self.working_memory.facts:
-                if corrected in self.working_memory.facts[field_name]:
-                    results.append(
-                        f"Field '{field_name}' already captured: "
-                        f"{self.working_memory.facts[field_name]}"
-                    )
-                    continue
+            if not is_dynamic and self.working_memory.facts.get(field_name) == [value]:
+                results.append(
+                    f"Field '{field_name}' already saved: "
+                    f"{self.working_memory.facts[field_name]}"
+                )
+                continue
 
-            self._set_fact(field_name, corrected)
-            captured[field_name] = corrected
-            results.append(f"Captured: {field_name} = {corrected}")
+            self._set_fact(field_name, value)
+            captured[field_name] = value
+            results.append(f"Saved: {field_name} = {value}")
 
         return "\n".join(results), captured
 
@@ -529,14 +544,11 @@ class BaseAgent(ABC):
             if out.aggregate is None:
                 continue
             source_values = self.working_memory.facts.get(out.aggregate.source, [])
-            invalid = [raw for raw in source_values if not isinstance(raw, str)]
-            if invalid:
-                logger.error(
-                    "_apply_template_aggregates: facts invariant violated for %r — "
-                    "expected all str, got non-str values %r; skipping aggregate.",
-                    out.key, invalid,
+            if not all(isinstance(v, str) for v in source_values):
+                raise TypeError(
+                    f"facts invariant violated for {out.key!r}: "
+                    f"non-str values in {source_values!r}"
                 )
-                continue
             if not source_values:
                 logger.warning(
                     "Aggregate for %r: no values in source %r", out.key, out.aggregate.source
@@ -652,7 +664,8 @@ class BaseAgent(ABC):
             last_b64 = self.working_memory.parsed_screen.get("resized_image_base64")
         if not last_b64:
             try:
-                last_b64 = self._capture_screen().get("raw_image_base64")
+                captured = self._capture_screen()
+                last_b64 = captured.get("resized_image_base64") or captured.get("raw_image_base64")
             except Exception as exc:
                 logger.warning("Failed to capture final screenshot: %s", exc)
         if last_b64:

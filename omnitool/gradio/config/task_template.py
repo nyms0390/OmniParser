@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Dict, List, Optional
 
 import yaml
@@ -97,6 +98,15 @@ class TaskOutput:
     clipboard_correction: bool = True
     dynamic: bool = False
     aggregate: Optional[TaskOutputAggregate] = None
+
+    @property
+    def is_dynamic(self) -> bool:
+        """True when values accumulate rather than overwrite.
+
+        A field is dynamic when explicitly flagged, or when it is the source
+        of an aggregate output (those always accumulate).
+        """
+        return self.dynamic or self.aggregate is not None
 
     @classmethod
     def from_dict(cls, data) -> "TaskOutput":
@@ -190,8 +200,9 @@ class TaskProcedure:
         if steps_raw:
             lines.append("\nSteps:")
             substituted = self._substitute_inputs(steps_raw)
-            for raw_line, sub_line in zip(steps_raw.splitlines(), substituted.splitlines()):
-                lines.append(sub_line)
+            for raw_line, display_line in zip(steps_raw.splitlines(), substituted.splitlines()):
+                lines.append(display_line)
+                # Match against raw_line: {key} placeholders intact before substitution
                 for out in self._referenced_outputs(raw_line):
                     if out.aggregate:
                         lines.append(
@@ -233,6 +244,24 @@ class TaskProcedure:
         must not be captured directly by the LLM.
         """
         return {out.key: out.description for out in self.outputs if out.aggregate is None}
+
+    @cached_property
+    def _output_index(self) -> Dict[str, "TaskOutput"]:
+        """Map each field name (or aggregate source key) to its TaskOutput, built once."""
+        index: Dict[str, TaskOutput] = {}
+        for out in self.outputs:
+            key = out.key if out.aggregate is None else out.aggregate.source
+            index.setdefault(key, out)
+        return index
+
+    def get_output(self, field_name: str) -> Optional[TaskOutput]:
+        """Return the TaskOutput matching *field_name* (or its aggregate source), or None.
+
+        Callers read attributes directly (``out.is_dynamic``,
+        ``out.clipboard_correction``) and apply their own defaults when the
+        field is unknown.
+        """
+        return self._output_index.get(field_name)
 
     # ------------------------------------------------------------------
     # Class-level constructor
