@@ -58,12 +58,10 @@ External services: Windows host at port 5000 (screenshots, mouse/keyboard), GTA1
 
 `ui/app.py` → `ui/callbacks.py:on_submit()` → `core/agents/factory.py:create_agent()` → agent `.run()` generator → Gradio streams events to UI.
 
-Every agent subclasses `BaseAgent` (`core/agents/base.py`). Base class owns: `_capture_screen()`, `execute_tool_calls()`, `_compact_screen_elements()`, cost/token tracking, `_run_init()` (checklist + plan, once before loop), `_run_reflect_step()` (ledger eval + hint injection, per step in ORCHESTRATED/TASK mode), `_handle_read_field()`, `_handle_focus_region()`.
+Every agent subclasses `BaseAgent` (`core/agents/base.py`). Base class owns: `_capture_screen()`, `execute_tool_calls()`, cost/token tracking, `_handle_read_field()`, `_handle_focus_region()`, `_handle_mark_screenshot()`, `_set_fact()`, `_apply_template_aggregates()`.
 
 **Agent types:**
-- `VLMAgent` — Plan→Reflect loop (`_run_init`/`_run_reflect_step`), native tool calling, pluggable `GroundingStrategy`; maintains `_tc_history` separate from `state.chat`
-- `ReActAgent` — no Plan→Reflect; one tool call per turn (`parallel_tool_calls=False`); harness-triggered compaction every 8 steps; loop detection after ≥3 repeated `(tool, args)` in last 5 actions
-- `AnthropicAgent` — Claude computer-use API via Anthropic SDK; uses OmniParser for screen parsing
+- `ReActAgent` — only agent; one tool call per turn (`parallel_tool_calls=False`); harness-triggered compaction every 8 steps; pluggable `GroundingStrategy`
 
 ### GroundingStrategy
 
@@ -71,7 +69,7 @@ Two implementations in `core/agents/grounding.py`:
 - `OmniParserGrounding` — SOM-annotated image + element list; LLM uses integer `box_id`
 - `GTA1Grounding` — raw screenshot; LLM uses natural-language `target`; GTA1 server resolves to pixel coords
 
-Both agents accept `grounding="omniparser"` or `"gta1"`.
+`ReActAgent` accepts `grounding="omniparser"` or `"gta1"`.
 
 ### Key modules
 
@@ -80,7 +78,7 @@ Both agents accept `grounding="omniparser"` or `"gta1"`.
 - `services/file_handler.py` — `FileHandler` (run folder management)
 - `clients/llm/` — LLM clients inheriting `BaseLLMClient`; return `(response_text, metadata)`; `metadata` must include `tool_calls` and `assistant_message` for history reconstruction
 - `clients/external/` — `omniparser.py`, `gta1.py`, `windows_host.py`, `paddleocr.py`
-- `core/tools/schemas.py` — tool schemas: `OMNIPARSER_COMPUTER_TOOLS`, `GTA1_COMPUTER_TOOLS`, `READ_FIELD_TOOL`, `FOCUS_TOOL`, `FINISH_TOOL`
+- `core/tools/schemas.py` — tool schemas: `OMNIPARSER_COMPUTER_TOOLS`, `GTA1_COMPUTER_TOOLS`, `READ_FIELD_TOOL`, `FOCUS_TOOL`, `MARK_SCREENSHOT_TOOL`, `FINISH_TOOL`; `AUXILIARY_TOOLS` bundles the three always-on tools
 - `config/prompts.py` — all prompts; dynamic screen content injected in **user messages** (not system prompt) to keep system prompt static and cacheable
 
 ### Event protocol
