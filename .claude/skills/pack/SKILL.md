@@ -25,7 +25,7 @@ Always exclude:
 
 ## Scope
 
-- **"Pack the latest commit"** → resolve the target commit first (by hash or description: `git log --oneline | head -20`), then use `git diff-tree --no-commit-id -r --name-only <hash>`
+- **Default (no qualifier)** / **"Pack the latest commit"** → use `git diff-tree --no-commit-id -r --name-only HEAD`
 - **"Pack changes"** / **"Pack branch"** → combine all three lists above into a deduplicated set; skip deleted files
 
 After collecting the file list, filter out:
@@ -36,9 +36,9 @@ After collecting the file list, filter out:
 
 1. **Collect files** per the scope above, then apply the exclusions. Write the final list to a temp file.
 
-   For **"pack the latest commit"** (single commit by hash):
+   For **default / "pack the latest commit"**:
    ```bash
-   git diff-tree --no-commit-id -r --name-only <hash> \
+   git diff-tree --no-commit-id -r --name-only HEAD \
      | grep -v '^\.claude/' \
      | while read f; do [ -f "$f" ] && (git check-ignore -q "$f" || echo "$f"); done \
      > /tmp/pack_files.txt
