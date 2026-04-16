@@ -408,24 +408,26 @@ class BaseAgent(ABC):
     # read_field tool handler
     # ------------------------------------------------------------------
 
-    def _set_fact(self, key: str, value: str, *, overwrite: bool = False) -> None:
+    def _set_fact(self, key: str, value: str | list[str], *, overwrite: bool = False) -> None:
         """Write a value into working_memory.facts.
 
-        Mode is determined by the matching TaskOutput.dynamic flag and the
-        ``overwrite`` parameter:
-        - dynamic=True, overwrite=False: appends to the list (accumulates across calls)
-        - all other cases: overwrites with a single-element list
+        - overwrite=False: appends to the list; *value* must be a plain ``str``.
+        - overwrite=True: replaces the stored list entirely. When *value* is already
+          a ``list[str]`` (e.g. from ``AggregateOperation.NONE``) it is stored
+          as-is; a plain ``str`` is wrapped in a single-element list.
         """
-        out = self.task_procedure.get_output(key) if self.task_procedure else None
-        is_dynamic = out.is_dynamic if out else False
-
-        if not overwrite and is_dynamic:
-            self.working_memory.facts.setdefault(key, []).append(value)
-        else:
+        if overwrite:
+            stored = value if isinstance(value, list) else [value]
             existing = self.working_memory.facts.get(key)
-            if existing is not None and existing != [value]:
-                logger.warning("FACTS — overwriting %r: %r → %r", key, existing, [value])
-            self.working_memory.facts[key] = [value]
+            if existing is not None and existing != stored:
+                logger.warning("FACTS — overwriting %r: %r → %r", key, existing, stored)
+            self.working_memory.facts[key] = stored
+        else:
+            if not isinstance(value, str):
+                raise TypeError(
+                    f"_set_fact append path requires str, got {type(value).__name__!r}"
+                )
+            self.working_memory.facts.setdefault(key, []).append(value)
 
     def _handle_read_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, str]]:
         """Read and optionally verify one or more screen values via clipboard correction.
@@ -486,9 +488,6 @@ class BaseAgent(ABC):
         is a no-op. Dynamic fields always append (dedup is skipped so duplicate
         values can accumulate legitimately).
 
-        An optional ``note`` on each field item is logged at INFO level for
-        traceability but not stored in facts.
-
         Returns:
             A tuple of (result_text, captured) where captured contains the
             fields written during this call (keyed by field_name).
@@ -503,14 +502,11 @@ class BaseAgent(ABC):
         for item in items:
             field_name = item.get("field_name", "")
             value = item.get("value", "")
-            note = item.get("note")
-
             if not field_name:
                 results.append("Error: field_name is required.")
                 continue
 
-            if note:
-                logger.info("SAVE_FIELD note for '%s': %s", field_name, note)
+            logger.info("SAVE_FIELD '%s': %s", field_name, value)
 
             out = self.task_procedure.get_output(field_name) if self.task_procedure else None
             is_dynamic = out.is_dynamic if out else False
@@ -524,7 +520,7 @@ class BaseAgent(ABC):
                 )
                 continue
 
-            self._set_fact(field_name, value)
+            self._set_fact(field_name, value, overwrite=not is_dynamic)
             captured[field_name] = value
             results.append(f"Saved: {field_name} = {value}")
 

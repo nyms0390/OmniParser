@@ -286,8 +286,7 @@ SAVE_FIELD_TOOL: dict = {
         "description": (
             "Commit one or more field values to working memory. "
             "Call this after read_field (and any optional reasoning or reformatting) "
-            "to permanently record the final value(s). "
-            "Use the note parameter to document any transformation applied to the raw value."
+            "to permanently record the final value(s)."
         ),
         "parameters": {
             "type": "object",
@@ -312,14 +311,6 @@ SAVE_FIELD_TOOL: dict = {
                                     "The final value to record. May differ from the read_field result "
                                     "if you applied post-processing (e.g. stripped currency symbols, "
                                     "reformatted a date)."
-                                ),
-                            },
-                            "note": {
-                                "type": "string",
-                                "description": (
-                                    "Optional: describe any transformation applied to the raw value "
-                                    "(e.g. 'stripped $ and commas', 'converted MM/DD/YYYY to ISO 8601'). "
-                                    "Logged for traceability — does not affect what is saved."
                                 ),
                             },
                         },

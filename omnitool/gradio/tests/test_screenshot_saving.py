@@ -557,3 +557,15 @@ class TestAggregateTransience:
             {"field_name": "line_amount", "value": "10.00", "target": "amount field"}
         ]})
         agent._correct_field_via_clipboard.assert_not_called()
+
+    def test_none_aggregate_preserves_list(self, tmp_path):
+        """NONE operation stores the full source list under the output key."""
+        agg = TaskOutputAggregate(operation=AggregateOperation.NONE, source="item")
+        outputs = [
+            TaskOutput(key="item", dynamic=True),
+            TaskOutput(key="all_items", aggregate=agg),
+        ]
+        agent = self._make_agent_with_outputs(tmp_path, outputs)
+        agent.working_memory.facts["item"] = ["alpha", "beta", "gamma"]
+        agent._apply_template_aggregates()
+        assert agent.working_memory.facts["all_items"] == ["alpha", "beta", "gamma"]

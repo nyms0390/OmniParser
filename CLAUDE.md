@@ -23,7 +23,6 @@ Install in editable mode so absolute imports work: `pip install -e .`
 ```bash
 # Tests
 conda run -n omni pytest omnitool/gradio/tests/
-conda run -n omni pytest omnitool/gradio/tests/ -m "not slow"
 
 # Lint
 conda run -n omni ruff check omnitool/gradio/

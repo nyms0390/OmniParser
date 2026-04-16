@@ -43,13 +43,20 @@ class AggregateOperation(StrEnum):
     """Supported aggregation operations for the read_field tool."""
     SUM = "sum"
     CONCAT = "concat"
+    NONE = "none"
 
-    def apply(self, values: list[str]) -> str:
-        """Apply this operation to a list of raw string values and return a string result.
+    def apply(self, values: list[str]) -> str | list[str]:
+        """Apply this operation to a list of raw string values.
+
+        Returns a ``str`` for reducing operations (SUM, CONCAT) or the original
+        list for pass-through operations (NONE).
 
         Raises:
-            ValueError: If *values* is empty, or if SUM encounters a non-numeric string.
+            ValueError: If *values* is empty for reducing operations (SUM, CONCAT),
+                or if SUM encounters a non-numeric string. NONE never raises on empty input.
         """
+        if self == AggregateOperation.NONE:
+            return list(values)
         if not values:
             raise ValueError(f"{self!r}.apply() called with empty list")
         if self == AggregateOperation.SUM:
