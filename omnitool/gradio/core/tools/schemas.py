@@ -284,9 +284,8 @@ SAVE_FIELD_TOOL: dict = {
     "function": {
         "name": "save_field",
         "description": (
-            "Commit one or more field values to working memory. "
-            "Call this after read_field (and any optional reasoning or reformatting) "
-            "to permanently record the final value(s)."
+            "Commit one or more previously read field values to working memory. "
+            "Call this after read_field to permanently record the verified value(s)."
         ),
         "parameters": {
             "type": "object",
@@ -305,16 +304,8 @@ SAVE_FIELD_TOOL: dict = {
                                     "Must match the field_name used in the preceding read_field call."
                                 ),
                             },
-                            "value": {
-                                "type": "string",
-                                "description": (
-                                    "The final value to record. May differ from the read_field result "
-                                    "if you applied post-processing (e.g. stripped currency symbols, "
-                                    "reformatted a date)."
-                                ),
-                            },
                         },
-                        "required": ["field_name", "value"],
+                        "required": ["field_name"],
                     },
                 },
             },

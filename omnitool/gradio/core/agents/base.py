@@ -43,13 +43,16 @@ class WorkingMemory:
 
     Attributes:
         task: The user's task string.
-        facts: Key-value pairs read from screen mid-loop via ``read_field``.
+        facts: Key-value pairs committed to memory via ``save_field``.
+        staged_reads: Verified values from ``read_field``, keyed by field_name,
+            pending commit via ``save_field``.
         trajectory: Ordered list of step data dicts (action history).
         parsed_screen: Most recent captured screen state.
     """
 
     task: Optional[str] = None
     facts: Dict[str, List[str]] = field(default_factory=dict)
+    staged_reads: Dict[str, str] = field(default_factory=dict)
     trajectory: List[Dict[str, Any]] = field(default_factory=list)
     parsed_screen: Optional[Dict[str, Any]] = None
 
@@ -474,6 +477,14 @@ class BaseAgent(ABC):
 
             corrected = corrected_list[0] if corrected_list else value
             read_values[field_name] = corrected
+            if field_name in self.working_memory.staged_reads:
+                logger.warning(
+                    "STAGED_READS — overwriting unsaved '%s': %r → %r",
+                    field_name,
+                    self.working_memory.staged_reads[field_name],
+                    corrected,
+                )
+            self.working_memory.staged_reads[field_name] = corrected
             results.append(f"Read: {field_name} = {corrected}")
 
         return "\n".join(results), read_values
@@ -501,9 +512,15 @@ class BaseAgent(ABC):
 
         for item in items:
             field_name = item.get("field_name", "")
-            value = item.get("value", "")
             if not field_name:
                 results.append("Error: field_name is required.")
+                continue
+
+            value = self.working_memory.staged_reads.pop(field_name, None)
+            if value is None:
+                results.append(
+                    f"Error: no staged value for '{field_name}' — call read_field first."
+                )
                 continue
 
             logger.info("SAVE_FIELD '%s': %s", field_name, value)

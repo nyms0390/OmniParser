@@ -190,53 +190,70 @@ class TestSaveField:
 
     def test_facts_stored_in_working_memory_after_save_field(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        agent._handle_save_field({"fields": [{"field_name": "order_id", "value": "12345"}]})
+        agent._handle_read_field({"fields": [{"field_name": "order_id", "value": "12345"}]})
+        agent._handle_save_field({"fields": [{"field_name": "order_id"}]})
         assert agent.working_memory.facts["order_id"] == ["12345"]
         assert not (tmp_path / "facts.json").exists()
 
     def test_facts_captured_value_in_working_memory(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        agent._handle_save_field({"fields": [{"field_name": "total", "value": "$99.00"}]})
+        agent._handle_read_field({"fields": [{"field_name": "total", "value": "$99.00"}]})
+        agent._handle_save_field({"fields": [{"field_name": "total"}]})
         assert agent.working_memory.facts["total"] == ["$99.00"]
         assert not (tmp_path / "facts.json").exists()
 
     def test_facts_accumulate_across_calls_in_working_memory(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        agent._handle_save_field({"fields": [{"field_name": "a", "value": "1"}]})
-        agent._handle_save_field({"fields": [{"field_name": "b", "value": "2"}]})
+        agent._handle_read_field({"fields": [{"field_name": "a", "value": "1"}]})
+        agent._handle_save_field({"fields": [{"field_name": "a"}]})
+        agent._handle_read_field({"fields": [{"field_name": "b", "value": "2"}]})
+        agent._handle_save_field({"fields": [{"field_name": "b"}]})
         assert agent.working_memory.facts == {"a": ["1"], "b": ["2"]}
         assert not (tmp_path / "facts.json").exists()
 
     def test_duplicate_field_is_not_overwritten(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
         agent.working_memory.facts["x"] = ["v"]
-        agent._handle_save_field({"fields": [{"field_name": "x", "value": "v"}]})
+        agent._handle_read_field({"fields": [{"field_name": "x", "value": "v"}]})
+        agent._handle_save_field({"fields": [{"field_name": "x"}]})
         assert agent.working_memory.facts == {"x": ["v"]}
 
     def test_scalar_fact_default_replaces_prior_value(self, tmp_path):
         """With no task_procedure, fields are non-dynamic and save_field replaces."""
         agent = self._make_minimal_agent(tmp_path)
-        agent._handle_save_field({"fields": [{"field_name": "x", "value": "old"}]})
+        agent._handle_read_field({"fields": [{"field_name": "x", "value": "old"}]})
+        agent._handle_save_field({"fields": [{"field_name": "x"}]})
         assert agent.working_memory.facts["x"] == ["old"]
-        agent._handle_save_field({"fields": [{"field_name": "x", "value": "new"}]})
+        agent._handle_read_field({"fields": [{"field_name": "x", "value": "new"}]})
+        agent._handle_save_field({"fields": [{"field_name": "x"}]})
         assert agent.working_memory.facts["x"] == ["new"]
 
     def test_save_field_result_text_starts_with_saved(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        result_text, _ = agent._handle_save_field(
-            {"fields": [{"field_name": "total", "value": "$99.00"}]}
-        )
+        agent._handle_read_field({"fields": [{"field_name": "total", "value": "$99.00"}]})
+        result_text, _ = agent._handle_save_field({"fields": [{"field_name": "total"}]})
         assert result_text.startswith("Saved:")
 
-    def test_note_is_logged_but_not_stored(self, tmp_path):
+    def test_save_field_without_prior_read_returns_error(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        agent._handle_save_field({"fields": [
-            {"field_name": "amount", "value": "1234.56", "note": "stripped $ and commas"}
-        ]})
-        assert agent.working_memory.facts["amount"] == ["1234.56"]
-        # note must not appear anywhere in facts
-        assert "note" not in agent.working_memory.facts
-        assert "stripped" not in str(agent.working_memory.facts)
+        result_text, captured = agent._handle_save_field(
+            {"fields": [{"field_name": "order_id"}]}
+        )
+        assert "Error" in result_text
+        assert captured == {}
+
+    def test_double_save_without_second_read_fails_for_dynamic(self, tmp_path):
+        """Second save_field without intervening read_field must error and not double-append."""
+        outputs = [TaskOutput(key="line_amount", dynamic=True)]
+        proc = TaskProcedure(id=1, description="test", outputs=outputs)
+        agent = self._make_minimal_agent(tmp_path)
+        agent.task_procedure = proc
+        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
+        agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
+        result_text, captured = agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
+        assert "Error" in result_text
+        assert captured == {}
+        assert agent.working_memory.facts["line_amount"] == ["10.00"]
 
 
 # ===========================================================================
@@ -321,9 +338,8 @@ class TestReActMarkScreenshotDispatch:
         land in working_memory.facts — guards against dispatch-layer regressions
         that handler-level unit tests would miss."""
         agent = _make_react_agent(tmp_path, [
-            _tool_response("save_field", {"fields": [
-                {"field_name": "order_id", "value": "A-42"},
-            ]}),
+            _tool_response("read_field", {"fields": [{"field_name": "order_id", "value": "A-42"}]}),
+            _tool_response("save_field", {"fields": [{"field_name": "order_id"}]}),
         ])
         list(agent.run())
         assert agent.working_memory.facts.get("order_id") == ["A-42"]
@@ -385,7 +401,7 @@ class TestWriteRunSummary:
     def test_summary_facts_populated_from_save_field(self, tmp_path):
         agent = _make_react_agent(tmp_path, [
             _tool_response("read_field", {"fields": [{"field_name": "order_id", "value": "99"}]}),
-            _tool_response("save_field", {"fields": [{"field_name": "order_id", "value": "99"}]}),
+            _tool_response("save_field", {"fields": [{"field_name": "order_id"}]}),
         ])
         list(agent.run())
         summary = json.loads((tmp_path / "summary.json").read_text())
@@ -430,8 +446,10 @@ class TestAggregateTransience:
     def test_dynamic_field_accumulates_across_calls(self, tmp_path):
         outputs = [TaskOutput(key="line_amount", dynamic=True)]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
-        agent._handle_save_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
-        agent._handle_save_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
+        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
+        agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
+        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
+        agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
         assert agent.working_memory.facts["line_amount"] == ["10.00", "5.00"]
 
     def test_aggregate_result_written_to_facts_at_finish(self, tmp_path):
@@ -536,8 +554,10 @@ class TestAggregateTransience:
             outputs=[TaskOutput(key="grand_total", aggregate=agg)],
         )
         agent = self._make_agent_via_constructor(tmp_path, proc)
-        agent._handle_save_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
-        agent._handle_save_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
+        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
+        agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
+        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
+        agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
         assert agent.working_memory.facts["line_amount"] == ["10.00", "5.00"], (
             "line_amount should accumulate across calls (dynamic=True inferred from aggregate source)"
         )
