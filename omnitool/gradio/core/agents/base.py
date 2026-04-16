@@ -52,7 +52,7 @@ class WorkingMemory:
 
     task: Optional[str] = None
     facts: Dict[str, List[str]] = field(default_factory=dict)
-    staged_reads: Dict[str, str] = field(default_factory=dict)
+    staged_reads: Dict[str, List[str]] = field(default_factory=dict)
     trajectory: List[Dict[str, Any]] = field(default_factory=list)
     parsed_screen: Optional[Dict[str, Any]] = None
 
@@ -432,27 +432,20 @@ class BaseAgent(ABC):
                 )
             self.working_memory.facts.setdefault(key, []).append(value)
 
-    def _handle_read_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, str]]:
+    def _handle_read_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, List[str]]]:
         """Read and optionally verify one or more screen values via clipboard correction.
 
-        Does NOT write to working_memory.facts. Call ``_handle_save_field`` to persist.
-
-        Clipboard-based correction is skipped when:
-        - the matching TaskOutput has ``clipboard_correction: false``, OR
-        - the field has no TaskOutput definition (defaults to correction enabled), OR
-        - gta1_client is unavailable, OR
-        - the LLM omits a grounding target.
-
-        Returns:
-            A tuple of (result_text, read_values) where read_values maps
-            field_name → verified value for all successfully read fields.
+        Each item is appended to ``staged_reads[field_name]`` — multiple items with
+        the same ``field_name`` accumulate in order across calls and within a single
+        call. Call ``_handle_save_field`` to drain the staged list into
+        ``working_memory.facts``.
         """
         items = tc_args.get("fields", [])
         if not items:
             return "Error: fields list is required and must not be empty.", {}
 
         results = []
-        read_values: Dict[str, str] = {}
+        read_values: Dict[str, List[str]] = {}
 
         for item in items:
             field_name = item.get("field_name", "")
@@ -476,39 +469,37 @@ class BaseAgent(ABC):
                     logger.warning("Field correction failed for '%s': %s", field_name, exc)
 
             corrected = corrected_list[0] if corrected_list else value
-            read_values[field_name] = corrected
-            if field_name in self.working_memory.staged_reads:
-                logger.warning(
-                    "STAGED_READS — overwriting unsaved '%s': %r → %r",
-                    field_name,
-                    self.working_memory.staged_reads[field_name],
-                    corrected,
+
+            self.working_memory.staged_reads.setdefault(field_name, []).append(corrected)
+
+            n = len(self.working_memory.staged_reads[field_name])
+            if n > 1:
+                logger.info(
+                    "STAGED_READS — appended to '%s' (now %d values): %r",
+                    field_name, n, corrected,
                 )
-            self.working_memory.staged_reads[field_name] = corrected
+            else:
+                logger.info("STAGED_READS — first value for '%s': %r", field_name, corrected)
+
             results.append(f"Read: {field_name} = {corrected}")
+            read_values.setdefault(field_name, []).append(corrected)
 
         return "\n".join(results), read_values
 
-    def _handle_save_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, str]]:
-        """Persist one or more field values into working_memory.facts.
+    def _handle_save_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, List[str]]]:
+        """Commit all staged values for each requested field to ``working_memory.facts``.
 
-        Each field is written via ``_set_fact``, which uses the TaskOutput.dynamic
-        flag to choose between scalar (overwrite) and dynamic (append) mode.
-
-        Dedup: for scalar fields, if the same value is already stored the call
-        is a no-op. Dynamic fields always append (dedup is skipped so duplicate
-        values can accumulate legitimately).
-
-        Returns:
-            A tuple of (result_text, captured) where captured contains the
-            fields written during this call (keyed by field_name).
+        Drains the entire ``staged_reads[field_name]`` list: dynamic fields append
+        each value via ``_set_fact(..., overwrite=False)``; scalar fields keep only
+        the last staged value via ``_set_fact(..., overwrite=True)``. Returns a
+        tool-result error string if a ``field_name`` has no staged reads.
         """
         items = tc_args.get("fields", [])
         if not items:
             return "Error: fields list is required and must not be empty.", {}
 
         results = []
-        captured: Dict[str, str] = {}
+        captured: Dict[str, List[str]] = {}
 
         for item in items:
             field_name = item.get("field_name", "")
@@ -516,30 +507,35 @@ class BaseAgent(ABC):
                 results.append("Error: field_name is required.")
                 continue
 
-            value = self.working_memory.staged_reads.pop(field_name, None)
-            if value is None:
+            # Pop the entire accumulated list
+            staged_values = self.working_memory.staged_reads.pop(field_name, [])
+            if not staged_values:
                 results.append(
                     f"Error: no staged value for '{field_name}' — call read_field first."
                 )
                 continue
 
-            logger.info("SAVE_FIELD '%s': %s", field_name, value)
+            logger.info("SAVE_FIELD '%s': committing %d value(s)", field_name, len(staged_values))
 
             out = self.task_procedure.get_output(field_name) if self.task_procedure else None
             is_dynamic = out.is_dynamic if out else False
 
-            # Dedup: skip if scalar and this exact value is already the sole stored entry.
-            # Dynamic fields always append — dedup is skipped so duplicates can accumulate.
-            if not is_dynamic and self.working_memory.facts.get(field_name) == [value]:
-                results.append(
-                    f"Field '{field_name}' already saved: "
-                    f"{self.working_memory.facts[field_name]}"
-                )
-                continue
+            captured[field_name] = staged_values
 
-            self._set_fact(field_name, value, overwrite=not is_dynamic)
-            captured[field_name] = value
-            results.append(f"Saved: {field_name} = {value}")
+            if is_dynamic:
+                for value in staged_values:
+                    self._set_fact(field_name, value, overwrite=False)
+                results.append(f"Saved {len(staged_values)} values to dynamic field '{field_name}'")
+            else:
+                if len(staged_values) > 1:
+                    logger.warning(
+                        "SAVE_FIELD '%s': scalar field has %d staged values — "
+                        "using last: %r (dropped: %r)",
+                        field_name, len(staged_values), staged_values[-1], staged_values[:-1],
+                    )
+                value = staged_values[-1]
+                self._set_fact(field_name, value, overwrite=True)
+                results.append(f"Saved: {field_name} = {value}")
 
         return "\n".join(results), captured
 

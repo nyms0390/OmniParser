@@ -218,10 +218,9 @@ READ_FIELD_TOOL: dict = {
         "name": "read_field",
         "description": (
             "Read and verify one or more text values visible on the current screen. "
-            "Pass every value you see as an item in the `fields` array — "
-            "all fields visible in the current screenshot can be read in a single call. "
-            "Values will be verified via clipboard if grounding targets are provided. "
-            "Does NOT save to memory — call save_field to record the result."
+            "Values are staged in memory — call save_field afterward to commit them. "
+            "All fields from the current screenshot can be read in a single call. "
+            "Values will be verified via clipboard if grounding targets are provided."
         ),
         "parameters": {
             "type": "object",
@@ -230,9 +229,10 @@ READ_FIELD_TOOL: dict = {
                     "type": "array",
                     "description": (
                         "List of fields to read from the current screen. "
-                        "Read every field visible in the current screenshot in a single call. "
-                        "For list-type fields with one value per row, add one item per row — "
-                        "do not merge multiple row values into a single item."
+                        "Fields with different field_names can all be batched in one call. "
+                        "For list-type fields (same field_name, one value per row): include "
+                        "all visible rows as separate items — they accumulate in order. "
+                        "Do not merge multiple values into a single item."
                     ),
                     "minItems": 1,
                     "items": {
@@ -284,8 +284,10 @@ SAVE_FIELD_TOOL: dict = {
     "function": {
         "name": "save_field",
         "description": (
-            "Commit one or more previously read field values to working memory. "
-            "Call this after read_field to permanently record the verified value(s)."
+            "Commit all staged values for the requested fields to working memory. "
+            "Drains every value accumulated by read_field for each field_name: "
+            "dynamic fields append each entry, scalar fields keep the last. "
+            "Call this after read_field — staging holds values until save_field is called."
         ),
         "parameters": {
             "type": "object",

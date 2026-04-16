@@ -153,7 +153,7 @@ class TestReadField:
         result_text, read_values = agent._handle_read_field(
             {"fields": [{"field_name": "total", "value": "$99.00"}]}
         )
-        assert read_values == {"total": "$99.00"}
+        assert read_values == {"total": ["$99.00"]}
 
     def test_read_field_result_text_starts_with_read(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
@@ -168,7 +168,7 @@ class TestReadField:
             {"field_name": "a", "value": "1"},
             {"field_name": "b", "value": "2"},
         ]})
-        assert read_values == {"a": "1", "b": "2"}
+        assert read_values == {"a": ["1"], "b": ["2"]}
         assert agent.working_memory.facts == {}
 
     def test_read_field_empty_fields_returns_error(self, tmp_path):
