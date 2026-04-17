@@ -10,7 +10,8 @@ Loop (per step):
        finish()         → exit loop, yield complete event
        computer action  → grounding.resolve() → execute_tool_calls()
   6. Append tool result to history
-  7. Every COMPACTION_INTERVAL steps → harness-triggered compaction
+  7. If step_count % COMPACTION_INTERVAL == 0 → set _compact_pending flag
+     (compaction executes next step, after screen capture, not after tool action)
 
 Compaction replaces the full history with a single LLM-authored summary,
 preserving: accomplished steps, failed attempts, current state, remaining work.
@@ -149,6 +150,15 @@ class ReActAgent(BaseAgent):
                     "raw_image_base64": screen_data.raw_image_b64,
                     "screen_info": str(screen_data.elements) if screen_data.elements else "",
                 }
+
+                # 1b. Compact history if flagged from the previous step.
+                #     Runs after screen capture so the LLM delay cannot corrupt
+                #     the UI state that the next generate() call will reason about.
+                if self._compact_pending:
+                    yield {"type": "status", "message": "Compacting history..."}
+                    history = self._compact_history(history, system_prompt)
+                    yield {"type": "status", "message": "History compacted, continuing..."}
+                    self._compact_pending = False
 
                 # 2. Build user message
                 history.append(self._build_user_message(screen_data, task))
@@ -315,11 +325,9 @@ class ReActAgent(BaseAgent):
                 if self.action_delay > 0:
                     time.sleep(self.action_delay)
 
-                # 8. Compaction (harness-triggered every N steps)
+                # 8. Schedule compaction for the next step's capture phase.
                 if self.step_count % self.compaction_interval == 0:
-                    yield {"type": "status", "message": "Compacting history..."}
-                    history = self._compact_history(history, system_prompt)
-                    yield {"type": "status", "message": "History compacted, continuing..."}
+                    self._compact_pending = True
 
             # ------------------------------------------------------------------
             # max_steps reached without finish()

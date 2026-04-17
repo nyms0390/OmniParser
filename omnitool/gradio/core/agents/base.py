@@ -108,6 +108,7 @@ class BaseAgent(ABC):
         self._focus_crop_count: int = 0
         self._start_time: Optional[datetime] = None
         self._flags: List[Dict[str, Any]] = []
+        self._compact_pending: bool = False
 
         # Working memory
         self.working_memory = WorkingMemory()
@@ -127,6 +128,7 @@ class BaseAgent(ABC):
         self._focus_crop_count = 0
         self._start_time = None
         self._flags = []
+        self._compact_pending = False
         self.working_memory = WorkingMemory()
 
     def _record_start(self) -> None:
@@ -457,6 +459,11 @@ class BaseAgent(ABC):
                 continue
 
             out = self.task_procedure.get_output(field_name) if self.task_procedure else None
+            if self.task_procedure is not None and out is None:
+                results.append(
+                    f"Error: field_name '{field_name}' is not declared in the task procedure."
+                )
+                continue
             use_correction = out.clipboard_correction if out else True
 
             corrected_list = [value]
@@ -518,6 +525,11 @@ class BaseAgent(ABC):
             logger.info("SAVE_FIELD '%s': committing %d value(s)", field_name, len(staged_values))
 
             out = self.task_procedure.get_output(field_name) if self.task_procedure else None
+            if self.task_procedure is not None and out is None:
+                results.append(
+                    f"Error: field_name '{field_name}' is not declared in the task procedure."
+                )
+                continue
             is_dynamic = out.is_dynamic if out else False
 
             captured[field_name] = staged_values
