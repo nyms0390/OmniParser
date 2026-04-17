@@ -311,11 +311,10 @@ SAVE_FIELD_TOOL: dict = {
                             "transformed_value": {
                                 "type": "string",
                                 "description": (
-                                    "Optional. Scalar fields only: if provided, this value is "
-                                    "committed to working memory instead of the raw staged value. "
-                                    "Apply any transformation (e.g. truncation, stripping) to the "
-                                    "corrected value shown in read_field's response, then pass the "
-                                    "result here. Not supported for dynamic (list) fields."
+                                    "Optional. Scalar fields only. Omit unless a transformation is "
+                                    "needed (e.g. stripping a currency symbol, truncating trailing "
+                                    "characters). When set, this value is committed instead of the "
+                                    "raw staged value. Not supported for dynamic (list) fields."
                                 ),
                             },
                         },
