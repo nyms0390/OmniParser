@@ -255,7 +255,9 @@ READ_FIELD_TOOL: dict = {
                                 "description": (
                                     "The exact single value as it appears on screen (raw, unprocessed). "
                                     "One item per value — never combine multiple values "
-                                    "with operators or separators (e.g. do NOT write '123+456')."
+                                    "with operators or separators (e.g. do NOT write '123+456'). "
+                                    "If the cell or field is blank, pass an empty string (\"\") — "
+                                    "do NOT skip the item or invent a placeholder like 'N/A'."
                                 ),
                             },
                             "target": {

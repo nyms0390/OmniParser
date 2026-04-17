@@ -486,9 +486,9 @@ class ComputerTool(BaseTool):
             result = self.windows_host_client.execute_command(
                 ["python", "-c", "import pyperclip; print(pyperclip.paste())"],
                 shell=False,
-                parse_output=True,
+                parse_output=False,
             )
-            text = str(result).strip() if result is not None else ""
+            text = result.get("output", "").strip() if isinstance(result, dict) else ""
             logger.debug("Clipboard content length: %d chars", len(text))
             return ToolResult(output=text)
         except Exception as e:

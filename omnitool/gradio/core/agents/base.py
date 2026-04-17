@@ -467,7 +467,7 @@ class BaseAgent(ABC):
             use_correction = out.clipboard_correction if out else True
 
             corrected_list = [value]
-            if use_correction and self.gta1_client and target:
+            if value and use_correction and self.gta1_client and target:
                 try:
                     corrected_list = self._correct_field_via_clipboard(
                         field_name, [value], self.working_memory.parsed_screen or {}
