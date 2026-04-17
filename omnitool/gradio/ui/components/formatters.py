@@ -178,6 +178,24 @@ def format_thinking(response_text: str) -> Optional[str]:
     )
 
 
+def format_compaction(summary: str) -> Optional[str]:
+    """Format a history compaction summary as a collapsed block.
+
+    Returns ``None`` when *summary* is empty so the caller can skip appending.
+    """
+    if not summary or not summary.strip():
+        return None
+    escaped = html.escape(summary.strip())
+    return (
+        '<details style="margin: 6px 0;">'
+        "<summary>[Compact] History Summary (click to expand)</summary>"
+        '<pre style="max-height: 300px; overflow-y: auto; '
+        "font-size: 0.85em; padding: 8px; background: #e8f5e9; "
+        f'border-radius: 4px; white-space: pre-wrap;">{escaped}</pre>'
+        "</details>"
+    )
+
+
 def format_action_result(
     tool_name: str,
     output: str = "",
@@ -329,6 +347,7 @@ __all__ = [
     "format_focus_region",
     "format_grounding",
     "format_thinking",
+    "format_compaction",
     "format_action_result",
     "format_plan",
     "format_ledger",

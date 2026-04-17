@@ -14,6 +14,7 @@ from omnitool.gradio.ui.components.formatters import (
     format_plan,
     format_raw_screen,
     format_thinking,
+    format_compaction,
 )
 from omnitool.gradio.ui.components.settings import (
     get_agent_choices,
@@ -34,6 +35,7 @@ __all__ = [
     "format_focus_region",
     "format_grounding",
     "format_thinking",
+    "format_compaction",
     "format_action_result",
     "format_plan",
     "format_ledger",

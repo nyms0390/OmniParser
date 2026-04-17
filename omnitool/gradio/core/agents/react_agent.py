@@ -156,7 +156,9 @@ class ReActAgent(BaseAgent):
                 #     the UI state that the next generate() call will reason about.
                 if self._compact_pending:
                     yield {"type": "status", "message": "Compacting history..."}
-                    history = self._compact_history(history, system_prompt)
+                    history, compaction_summary = self._compact_history(history, system_prompt)
+                    if compaction_summary:
+                        yield {"type": "compaction", "summary": compaction_summary}
                     yield {"type": "status", "message": "History compacted, continuing..."}
                     self._compact_pending = False
 
@@ -393,8 +395,8 @@ class ReActAgent(BaseAgent):
         self,
         history: List[Dict[str, Any]],
         system_prompt: str,
-    ) -> List[Dict[str, Any]]:
-        """Ask the LLM to summarise history; return a fresh two-message history."""
+    ) -> tuple[List[Dict[str, Any]], str]:
+        """Ask the LLM to summarise history; return (new_history, summary_text)."""
         try:
             compaction_messages = history + [
                 {"role": "user", "content": COMPACTION_PROMPT}
@@ -410,16 +412,16 @@ class ReActAgent(BaseAgent):
                 )
             self.update_cost(self._calculate_cost(compact_meta))
             if not summary:
-                return history  # compaction failed silently — keep history
+                return history, ""  # compaction failed silently — keep history
         except Exception as exc:
             logger.warning("History compaction failed: %s — keeping history", exc)
-            return history
+            return history, ""
 
         logger.info("History compacted at step %d", self.step_count)
         return [
             {"role": "user", "content": f"[Progress summary — steps 1–{self.step_count}]\n{summary}"},
             {"role": "assistant", "content": "Understood. Continuing the task."},
-        ]
+        ], summary
 
 
 # ---------------------------------------------------------------------------

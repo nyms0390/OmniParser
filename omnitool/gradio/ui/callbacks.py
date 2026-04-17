@@ -24,6 +24,7 @@ from omnitool.gradio.ui.components import (
     format_parsed_screen,
     format_plan,
     format_raw_screen,
+    format_compaction,
     format_thinking,
     get_provider_options_for_model,
     render_image,
@@ -223,6 +224,12 @@ class GradioCallbacks:
                     if thinking_html is not None:
                         history.append({"role": "assistant", "content": thinking_html})
                         yield history, "", "Agent is thinking...", state
+
+                elif update_type == "compaction":
+                    compaction_html = format_compaction(update.get("summary", ""))
+                    if compaction_html is not None:
+                        history.append({"role": "assistant", "content": compaction_html})
+                        yield history, "", "History compacted", state
 
                 elif update_type == "plan":
                     plan_html = format_plan(update.get("plan_text", ""))
