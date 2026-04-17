@@ -90,6 +90,15 @@ LLM_MODELS: Dict[str, Dict[str, Any]] = {
         "max_tokens": 4096,
         "temperature": 0.0,
     },
+    "gpt-5.4": {
+        "internal_name": "gpt-5.4",
+        "supported_providers": [APIProvider.AZURE, APIProvider.OPENAI],
+        "pricing": {
+            "_default": {"input": 2.00, "output": 16.00},
+        },
+        "max_tokens": 4096,
+        "temperature": 0.0,
+    },
     "o1": {
         "internal_name": "o1",
         "supported_providers": [APIProvider.OPENAI],

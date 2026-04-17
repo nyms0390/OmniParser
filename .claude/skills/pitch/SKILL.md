@@ -1,11 +1,11 @@
 ---
 name: pitch
-description: Pre-implementation idea review. Explore the codebase, challenge assumptions, surface gaps, suggest improvements. Use before writing any code.
+description: Pre-implementation idea review. Explore the codebase, validate the idea against real code, surface risks and gaps, give a concrete recommendation.
 user-invocable: true
 allowed-tools: [Read, Grep, Glob]
 ---
 
-The user has described an idea. Do NOT write any code. Your job is to think critically and helpfully before implementation begins.
+The user has described an idea or problem. Do NOT write any code. Your job is to validate the idea against the current codebase and give actionable feedback before implementation begins.
 
 ## Step 1 — Explore
 
@@ -16,17 +16,17 @@ Extract keywords and concepts from the idea. Use Glob and Grep to find relevant 
 
 ## Step 2 — Respond
 
-Produce a short, structured response in three sections. Be direct. Top 3 points per section maximum.
+Three sections. Be direct. Top 3 points per section maximum. Skip sections that have nothing useful to say.
 
-### Challenges
-What assumptions in the idea might be wrong or risky? What could go wrong? Cite specific files or patterns where relevant.
+### Relevant Context
+What exists in the repo that directly bears on this idea — existing hooks, contracts, patterns, or prior art the user should know about. Ground the feedback in specific files and line references.
 
-### Implementation Details Not Addressed
-Concrete gaps the idea doesn't cover — error paths, streaming event types, interface contracts, test surface, edge cases. Be specific (e.g. "VLMAgent._tc_history is separate from state.chat — which one does this touch?").
+### Risks & Gaps
+Concrete problems: wrong assumptions, missing pieces, violated interface contracts, unhandled edge cases. Cite files. Be specific (e.g. "BaseAgent._tc_history is separate from state.chat — which one does this touch?").
 
-### Suggestions
-Alternatives or refinements worth considering, with a one-line tradeoff for each.
+### Recommendation
+One clear directive: what to do, or what to do instead. Include the key tradeoff in one line. If there are two genuinely different paths, list both — but pick one.
 
 ## Tone
 
-Balanced: surface real risks and gaps, but also note what's sound about the approach. Punchy — no filler.
+Direct. Skip what's obviously fine. If the idea is mostly sound, say so in one line and focus on what needs attention.

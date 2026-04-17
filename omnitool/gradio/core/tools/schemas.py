@@ -308,6 +308,16 @@ SAVE_FIELD_TOOL: dict = {
                                     "Must match the field_name used in the preceding read_field call."
                                 ),
                             },
+                            "transformed_value": {
+                                "type": "string",
+                                "description": (
+                                    "Optional. Scalar fields only: if provided, this value is "
+                                    "committed to working memory instead of the raw staged value. "
+                                    "Apply any transformation (e.g. truncation, stripping) to the "
+                                    "corrected value shown in read_field's response, then pass the "
+                                    "result here. Not supported for dynamic (list) fields."
+                                ),
+                            },
                         },
                         "required": ["field_name"],
                     },
