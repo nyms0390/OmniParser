@@ -7,10 +7,7 @@ are mocked.  No network calls are made.
 
 from unittest.mock import Mock
 
-from omnitool.gradio.core.agents.react_agent import (
-    _tool_msg,
-    COMPACTION_INTERVAL,
-)
+from omnitool.gradio.core.agents.react_agent import _tool_msg
 from omnitool.gradio.tests._helpers import (
     all_user_message_texts as _all_user_message_texts,
     finish_response as _finish_response,
@@ -20,13 +17,14 @@ from omnitool.gradio.tests._helpers import (
 )
 
 
-def _make_agent(tmp_path, max_steps=10, compaction_interval=COMPACTION_INTERVAL):
-    """Thin wrapper for backward compatibility with existing tests."""
+def _make_agent(tmp_path, max_steps=10, compaction_token_threshold=1_000_000):
+    """Build a test agent. Default threshold is intentionally high so tests that
+    don't care about compaction never trigger it accidentally."""
     return make_react_agent(
         tmp_path,
         side_effects=[_tool_response(), _finish_response()],
         max_steps=max_steps,
-        compaction_interval=compaction_interval,
+        compaction_token_threshold=compaction_token_threshold,
     )
 
 
@@ -196,21 +194,22 @@ class TestEvictOldImages:
 # ===========================================================================
 
 class TestReActAgentCompaction:
-    def test_compaction_triggered_at_interval(self, tmp_path):
-        """Compaction LLM call is made after exactly compaction_interval steps."""
-        interval = 3
-        agent = _make_agent(tmp_path, max_steps=interval + 2, compaction_interval=interval)
+    # tool_response() returns input_tokens=25; threshold=20 ensures compaction
+    # fires on the first step that would otherwise continue.
+    _THRESHOLD = 20
+
+    def test_compaction_triggered_by_token_threshold(self, tmp_path):
+        """Compaction LLM call is made when input_tokens exceeds the threshold."""
+        agent = _make_agent(tmp_path, max_steps=5, compaction_token_threshold=self._THRESHOLD)
 
         call_log = []
 
         def generate_side_effect(messages, system_prompt, tools=None):
-            # First call without tools = compaction call
             if tools is None:
                 call_log.append("compact")
                 return ("Summary of progress.", {"tokens": 10, "input_tokens": 5, "output_tokens": 5, "tool_calls": [], "assistant_message": {"role": "assistant", "content": ""}})
             call_log.append("step")
-            step_num = call_log.count("step")
-            if step_num > interval:
+            if call_log.count("step") > 1:
                 return _finish_response()
             return _tool_response()
 
@@ -225,17 +224,16 @@ class TestReActAgentCompaction:
     def test_compaction_replaces_history_with_summary(self, tmp_path):
         """After compaction, post-compaction generate() calls see a shorter history
         that includes the compaction summary text."""
-        interval = 2
-        agent = _make_agent(tmp_path, max_steps=interval + 2, compaction_interval=interval)
+        agent = _make_agent(tmp_path, max_steps=5, compaction_token_threshold=self._THRESHOLD)
 
         summary_text = "Steps done: step 1, step 2. Still need: finish."
         pre_compaction_history_len = []
         post_compaction_history_len = []
         compaction_fired = [False]
+        step_count = [0]
 
         def generate_side_effect(messages, system_prompt, tools=None):
             if tools is None:
-                # Compaction call — record history size at compaction time
                 pre_compaction_history_len.append(len(messages))
                 compaction_fired[0] = True
                 return (summary_text, {
@@ -244,15 +242,14 @@ class TestReActAgentCompaction:
                 })
             if compaction_fired[0]:
                 post_compaction_history_len.append(len(messages))
-            step_n = agent.step_count
-            if step_n > interval:
+            step_count[0] += 1
+            if step_count[0] > 1:
                 return _finish_response()
             return _tool_response()
 
         agent.llm_client.generate.side_effect = generate_side_effect
         events = list(agent.run())
 
-        # Agent should reach complete without crashing after compaction
         assert any(e["type"] == "complete" for e in events)
         assert compaction_fired[0], "Compaction was not triggered"
 
@@ -272,25 +269,47 @@ class TestReActAgentCompaction:
 
     def test_compaction_failure_keeps_history(self, tmp_path):
         """If the compaction LLM call raises, history is preserved and loop continues."""
-        interval = 2
-        agent = _make_agent(tmp_path, max_steps=interval + 2, compaction_interval=interval)
+        agent = _make_agent(tmp_path, max_steps=5, compaction_token_threshold=self._THRESHOLD)
 
-        call_count = [0]
+        step_count = [0]
 
         def generate_side_effect(messages, system_prompt, tools=None):
-            call_count[0] += 1
             if tools is None:
                 raise RuntimeError("LLM timeout")
-            step_n = agent.step_count
-            if step_n > interval:
+            step_count[0] += 1
+            if step_count[0] > 1:
                 return _finish_response()
             return _tool_response()
 
         agent.llm_client.generate.side_effect = generate_side_effect
         events = list(agent.run())
-        # Despite compaction failure, loop should reach finish (complete) or max_steps
         final_types = {e["type"] for e in events}
         assert "complete" in final_types or "error" in final_types
+
+    def test_compaction_suppressed_with_pending_staged_reads(self, tmp_path):
+        """Compaction is not scheduled while a read_field → save_field sequence
+        is in progress (staged_reads non-empty)."""
+        agent = _make_agent(tmp_path, max_steps=3, compaction_token_threshold=self._THRESHOLD)
+
+        compaction_called = []
+        step_count = [0]
+
+        def generate_side_effect(messages, system_prompt, tools=None):
+            if tools is None:
+                compaction_called.append(True)
+                return ("Summary.", {"tokens": 10, "input_tokens": 5, "output_tokens": 5, "tool_calls": [], "assistant_message": {"role": "assistant", "content": ""}})
+            step_count[0] += 1
+            if step_count[0] == 1:
+                # Simulate a pending staged_read before the trigger check runs.
+                agent.working_memory.staged_reads["field"] = ["value"]
+                return _tool_response()  # input_tokens=25 > threshold, but guard fires
+            return _finish_response()
+
+        agent.llm_client.generate.side_effect = generate_side_effect
+        list(agent.run())
+        assert not compaction_called, (
+            "Compaction should not fire while staged_reads are pending"
+        )
 
 
 # ===========================================================================

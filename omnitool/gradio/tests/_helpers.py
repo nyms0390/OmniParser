@@ -30,7 +30,7 @@ from PIL import Image
 from omnitool.gradio.services import AppState
 from omnitool.gradio.core.agents.grounding import ScreenData
 from omnitool.gradio.core.agents.preprocessing import PreprocessingMode
-from omnitool.gradio.core.agents.react_agent import COMPACTION_INTERVAL, ReActAgent
+from omnitool.gradio.core.agents.react_agent import COMPACTION_TOKEN_THRESHOLD, ReActAgent
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +189,7 @@ def make_react_agent(
     side_effects: Iterable[Tuple[str, dict]] | None = None,
     *,
     max_steps: int = 10,
-    compaction_interval: int = COMPACTION_INTERVAL,
+    compaction_token_threshold: int = COMPACTION_TOKEN_THRESHOLD,
     preprocessing_mode: PreprocessingMode = PreprocessingMode.RAW,
     task_procedure: Any = None,
     user_message: str = "Click the Start button",
@@ -241,7 +241,7 @@ def make_react_agent(
         save_folder=tmp_path,
         grounding_strategy=grounding,
         max_steps=max_steps,
-        compaction_interval=compaction_interval,
+        compaction_token_threshold=compaction_token_threshold,
         action_delay=0,
         preprocessing_mode=preprocessing_mode,
         task_procedure=task_procedure,

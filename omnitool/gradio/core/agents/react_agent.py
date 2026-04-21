@@ -10,8 +10,8 @@ Loop (per step):
        finish()         → exit loop, yield complete event
        computer action  → grounding.resolve() → execute_tool_calls()
   6. Append tool result to history
-  7. If step_count % COMPACTION_INTERVAL == 0 → set _compact_pending flag
-     (compaction executes next step, after screen capture, not after tool action)
+  7. If input_tokens > COMPACTION_TOKEN_THRESHOLD and no staged_reads pending →
+     set _compact_pending flag (executes next step, after screen capture)
 
 Compaction replaces the full history with a single LLM-authored summary,
 preserving: accomplished steps, failed attempts, current state, remaining work.
@@ -33,8 +33,8 @@ from omnitool.gradio.core.tools.schemas import AUXILIARY_TOOLS, FINISH_TOOL
 
 logger = logging.getLogger(__name__)
 
-# How many steps between automatic compactions.
-COMPACTION_INTERVAL = 8
+# Compact when the LLM's input context exceeds this many tokens.
+COMPACTION_TOKEN_THRESHOLD = 80_000
 
 _NO_TOOL_HINT = "Please use one of the provided tools to take an action."
 
@@ -45,8 +45,9 @@ class ReActAgent(BaseAgent):
     Args:
         grounding_strategy: Determines screen preprocessing and element reference
             style (OmniParser box_id vs GTA1 natural language).
-        compaction_interval: Steps between harness-triggered history compactions
-            (default :data:`COMPACTION_INTERVAL`).
+        compaction_token_threshold: Compact history when a step's input_tokens
+            exceeds this value and no staged_reads are pending
+            (default :data:`COMPACTION_TOKEN_THRESHOLD`).
         All other args forwarded to :class:`BaseAgent`.
     """
 
@@ -58,7 +59,7 @@ class ReActAgent(BaseAgent):
         tools_collection,
         save_folder: Path,
         grounding_strategy: GroundingStrategy,
-        compaction_interval: int = COMPACTION_INTERVAL,
+        compaction_token_threshold: int = COMPACTION_TOKEN_THRESHOLD,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -70,7 +71,7 @@ class ReActAgent(BaseAgent):
             **kwargs,
         )
         self.grounding_strategy = grounding_strategy
-        self.compaction_interval = compaction_interval
+        self.compaction_token_threshold = compaction_token_threshold
 
     def _get_tools(self) -> List[dict]:
         return self.grounding_strategy.get_tools() + AUXILIARY_TOOLS + [FINISH_TOOL]
@@ -159,7 +160,7 @@ class ReActAgent(BaseAgent):
                     history, compaction_summary = self._compact_history(history, system_prompt)
                     if compaction_summary:
                         yield {"type": "compaction", "summary": compaction_summary}
-                    yield {"type": "status", "message": "History compacted, continuing..."}
+                        yield {"type": "status", "message": "History compacted, continuing..."}
                     self._compact_pending = False
 
                 # 2. Build user message
@@ -328,7 +329,12 @@ class ReActAgent(BaseAgent):
                     time.sleep(self.action_delay)
 
                 # 8. Schedule compaction for the next step's capture phase.
-                if self.step_count % self.compaction_interval == 0:
+                #    Guard: skip when staged_reads are pending so a mid-loop
+                #    read_field → save_field sequence is never interrupted.
+                if (
+                    metadata.get("input_tokens", 0) > self.compaction_token_threshold
+                    and not self.working_memory.staged_reads
+                ):
                     self._compact_pending = True
 
             # ------------------------------------------------------------------
@@ -406,7 +412,7 @@ class ReActAgent(BaseAgent):
                 system_prompt=system_prompt,
             )
             self.update_token_usage(compact_meta.get("tokens", 0))
-            if "input_tokens" not in compact_meta and "output_tokens" not in compact_meta:
+            if "input_tokens" not in compact_meta or "output_tokens" not in compact_meta:
                 logger.warning(
                     "Compaction metadata missing token breakdown — compaction cost not tracked."
                 )
@@ -419,7 +425,7 @@ class ReActAgent(BaseAgent):
 
         logger.info("History compacted at step %d", self.step_count)
         return [
-            {"role": "user", "content": f"[Progress summary — steps 1–{self.step_count}]\n{summary}"},
+            {"role": "user", "content": f"[Progress summary — steps 1–{self.step_count - 1}]\n{summary}"},
             {"role": "assistant", "content": "Understood. Continuing the task."},
         ], summary
 
