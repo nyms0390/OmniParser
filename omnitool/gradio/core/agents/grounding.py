@@ -106,6 +106,7 @@ class GroundingStrategy(ABC):
         Raises:
             ValueError: If required arguments are missing or resolution fails.
         """
+        self._reset_grounding_state()
         dispatch: Dict[str, Any] = {"tool": "computer", "action": tool_name}
 
         if tool_name in POSITIONAL_ACTIONS:
@@ -123,6 +124,14 @@ class GroundingStrategy(ABC):
         # "wait" — bare dispatch, no extra args needed
 
         return dispatch
+
+    def _reset_grounding_state(self) -> None:
+        """Hook called at the start of every :meth:`resolve` call.
+
+        Subclasses that accumulate per-call grounding state (e.g.
+        :class:`GTA1Grounding`) override this to clear that state so
+        stale events from a prior action are never re-emitted.
+        """
 
     @abstractmethod
     def _resolve_positional(
@@ -305,9 +314,15 @@ class GTA1Grounding(GroundingStrategy):
     def element_reference_hint(self) -> str:
         return (
             "Describe the UI element you want to interact with in plain English "
-            "using the `target` parameter "
-            "(e.g. 'the blue Submit button near the bottom of the form')."
+            "using the `target` parameter. For list items, include the item's exact "
+            "text, its 1-based index within the list, and its container when relevant "
+            "(e.g. 'the blue Submit button near the bottom of the form', "
+            "'the 2nd item in the left sidebar list, labeled \"Downloads\"', "
+            "'the 1st search result titled \"Project Alpha\"')."
         )
+
+    def _reset_grounding_state(self) -> None:
+        self._last_grounding_events = []
 
     def preprocess(
         self,
