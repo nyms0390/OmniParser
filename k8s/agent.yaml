@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+  namespace: omni
+data:
+  GTA1_URL: "http://gta1-server.omni.svc.cluster.local:8002"
+  OMNIPARSER_URL: "http://omniparser-server.omni.svc.cluster.local:8000"
+  PADDLEOCR_URL: "http://paddleocr-server.omni.svc.cluster.local:8001"
+  WINDOWS_HOST_URL: ""   # external Windows host, fill in
+  RUN_FOLDER: "/runs"
+  LOG_LEVEL: "INFO"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agent-secrets
+  namespace: omni
+type: Opaque
+stringData:
+  ANTHROPIC_API_KEY: ""
+  OPENAI_API_KEY: ""
+  GROQ_API_KEY: ""
+  DASHSCOPE_API_KEY: ""
+  AZURE_OPENAI_ENDPOINT: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+  namespace: omni
+  labels:
+    app: agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent
+  template:
+    metadata:
+      labels:
+        app: agent
+    spec:
+      imagePullSecrets:
+        - name: regcred
+      containers:
+      - name: agent
+        image:
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 7860
+        envFrom:
+        - configMapRef:
+            name: agent-config
+        - secretRef:
+            name: agent-secrets
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 7860
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 7860
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent
+  namespace: omni
+  labels:
+    app: agent
+spec:
+  selector:
+    app: agent
+  ports:
+  - port: 7860
+    targetPort: 7860
+    nodePort: 30786
+  type: NodePort

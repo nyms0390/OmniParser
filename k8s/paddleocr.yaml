@@ -1,0 +1,135 @@
+# --- AKS: Azure Blob PVC (comment out for local testing) ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: paddleocr-models-pvc
+  namespace: omni
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage:    # fill in: e.g. 5Gi
+  storageClassName: azure-blob-weights
+  volumeName: paddleocr-models-blob   # pre-created blob container name
+# ---
+# --- Local testing: hostPath PV + PVC (comment out for AKS) ---
+# apiVersion: v1
+# kind: PersistentVolume
+# metadata:
+#   name: paddleocr-models-pv
+# spec:
+#   capacity:
+#     storage:    # fill in
+#   accessModes:
+#     - ReadWriteOnce
+#   hostPath:
+#     path:       # fill in
+#   persistentVolumeReclaimPolicy: Retain
+#   storageClassName: ""
+# ---
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: paddleocr-models-pvc
+#   namespace: omni
+# spec:
+#   accessModes:
+#     - ReadWriteOnce
+#   resources:
+#     requests:
+#       storage:  # fill in
+#   storageClassName: ""
+#   volumeName: paddleocr-models-pv
+# ---
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: paddleocr-config
+  namespace: omni
+data:
+  HOST: "0.0.0.0"
+  PORT: "8001"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paddleocr-server
+  namespace: omni
+  labels:
+    app: paddleocr-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: paddleocr-server
+  template:
+    metadata:
+      labels:
+        app: paddleocr-server
+    spec:
+      # --- AKS GPU node targeting (remove for local testing without GPU) ---
+      # nodeSelector:
+      #   agentpool: gpupool
+      # tolerations:
+      #   - key: sku
+      #     value: gpu
+      #     effect: NoSchedule
+      # ---
+      imagePullSecrets:
+        - name: regcred
+      containers:
+      - name: paddleocr-server
+        image:
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8001
+        envFrom:
+        - configMapRef:
+            name: paddleocr-config
+        volumeMounts:
+        - name: models
+          mountPath: /models
+          readOnly: true
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+          requests:
+            nvidia.com/gpu: "1"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 90
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+      volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: paddleocr-models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: paddleocr-server
+  namespace: omni
+  labels:
+    app: paddleocr-server
+spec:
+  selector:
+    app: paddleocr-server
+  ports:
+  - port: 8001
+    targetPort: 8001
+    nodePort: 30001
+  type: NodePort

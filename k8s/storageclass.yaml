@@ -1,0 +1,19 @@
+# Azure Blob CSI StorageClass for model weights (AKS only).
+# Requires the Blob CSI driver, enabled by default on AKS 1.21+:
+#   az aks update -n <cluster> -g <rg> --enable-blob-driver
+#
+# Pre-populate each blob container with model files before deploying:
+#   az storage blob upload-batch --account-name <sa> -d gta1-models    -s ./GTA1/models/
+#   az storage blob upload-batch --account-name <sa> -d omni-weights   -s ./OmniParser/weights/
+#   az storage blob upload-batch --account-name <sa> -d paddleocr-models -s ./paddleocr/models/
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: azure-blob-weights
+provisioner: blob.csi.azure.com
+parameters:
+  skuName: Standard_LRS
+  # storageAccount: <your-storage-account>   # optional; auto-selected if omitted
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+allowVolumeExpansion: false

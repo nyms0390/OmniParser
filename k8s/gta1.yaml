@@ -1,0 +1,141 @@
+# --- AKS: Azure Blob PVC (comment out for local testing) ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gta1-models-pvc
+  namespace: omni
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: azure-blob-weights
+  volumeName: gta1-models-blob   # pre-created blob container name
+# ---
+# --- Local testing: hostPath PV + PVC (comment out for AKS) ---
+# apiVersion: v1
+# kind: PersistentVolume
+# metadata:
+#   name: gta1-models-pv
+# spec:
+#   capacity:
+#     storage: 50Gi
+#   accessModes:
+#     - ReadWriteOnce
+#   hostPath:
+#     path: /Users/zhangyang/Documents/GTA1/models
+#   persistentVolumeReclaimPolicy: Retain
+#   storageClassName: ""
+# ---
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: gta1-models-pvc
+#   namespace: omni
+# spec:
+#   accessModes:
+#     - ReadWriteOnce
+#   resources:
+#     requests:
+#       storage: 50Gi
+#   storageClassName: ""
+#   volumeName: gta1-models-pv
+# ---
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gta1-config
+  namespace: omni
+data:
+  MODEL_PATH: "/models/GTA1-7B"
+  HOST: "0.0.0.0"
+  PORT: "8002"
+  MAX_NEW_TOKENS: "32"
+  GPU_MEMORY_UTILIZATION: "0.9"
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+  HF_DATASETS_OFFLINE: "1"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gta1-server
+  namespace: omni
+  labels:
+    app: gta1-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gta1-server
+  template:
+    metadata:
+      labels:
+        app: gta1-server
+    spec:
+      # --- AKS GPU node targeting (remove for local testing without GPU) ---
+      # nodeSelector:
+      #   agentpool: gpupool
+      # tolerations:
+      #   - key: sku
+      #     value: gpu
+      #     effect: NoSchedule
+      # ---
+      imagePullSecrets:
+        - name: regcred
+      containers:
+      - name: gta1-server
+        image: localhost:5001/gta1-server:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8002
+        envFrom:
+        - configMapRef:
+            name: gta1-config
+        volumeMounts:
+        - name: models
+          mountPath: /models
+          readOnly: true
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+          requests:
+            nvidia.com/gpu: "1"
+        readinessProbe:
+          httpGet:
+            path: /probe
+            port: 8002
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+        livenessProbe:
+          httpGet:
+            path: /probe
+            port: 8002
+          initialDelaySeconds: 180
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+      volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: gta1-models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gta1-server
+  namespace: omni
+  labels:
+    app: gta1-server
+spec:
+  selector:
+    app: gta1-server
+  ports:
+  - port: 8002
+    targetPort: 8002
+    nodePort: 30002
+  type: NodePort

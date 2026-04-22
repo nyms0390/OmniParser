@@ -1,0 +1,138 @@
+# --- AKS: Azure Blob PVC (comment out for local testing) ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: omniparser-weights-pvc
+  namespace: omni
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: azure-blob-weights
+  volumeName: omniparser-weights-blob   # pre-created blob container name
+# ---
+# --- Local testing: hostPath PV + PVC (comment out for AKS) ---
+# apiVersion: v1
+# kind: PersistentVolume
+# metadata:
+#   name: omniparser-weights-pv
+# spec:
+#   capacity:
+#     storage: 10Gi
+#   accessModes:
+#     - ReadWriteOnce
+#   hostPath:
+#     path: /Users/zhangyang/Documents/OmniParser/weights
+#   persistentVolumeReclaimPolicy: Retain
+#   storageClassName: ""
+# ---
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: omniparser-weights-pvc
+#   namespace: omni
+# spec:
+#   accessModes:
+#     - ReadWriteOnce
+#   resources:
+#     requests:
+#       storage: 10Gi
+#   storageClassName: ""
+#   volumeName: omniparser-weights-pv
+# ---
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: omniparser-config
+  namespace: omni
+data:
+  HOST: "0.0.0.0"
+  PORT: "8000"
+  SOM_MODEL_PATH: "/weights/icon_detect/model.pt"
+  CAPTION_MODEL_NAME: "florence2"
+  CAPTION_MODEL_PATH: "/weights/icon_caption_florence"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: omniparser-server
+  namespace: omni
+  labels:
+    app: omniparser-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: omniparser-server
+  template:
+    metadata:
+      labels:
+        app: omniparser-server
+    spec:
+      # --- AKS GPU node targeting (remove for local testing without GPU) ---
+      # nodeSelector:
+      #   agentpool: gpupool
+      # tolerations:
+      #   - key: sku
+      #     value: gpu
+      #     effect: NoSchedule
+      # ---
+      imagePullSecrets:
+        - name: regcred
+      containers:
+      - name: omniparser-server
+        image:
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: omniparser-config
+        volumeMounts:
+        - name: weights
+          mountPath: /weights
+          readOnly: true
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+          requests:
+            nvidia.com/gpu: "1"
+        readinessProbe:
+          httpGet:
+            path: /health/
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+        livenessProbe:
+          httpGet:
+            path: /health/
+            port: 8000
+          initialDelaySeconds: 90
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+      volumes:
+      - name: weights
+        persistentVolumeClaim:
+          claimName: omniparser-weights-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: omniparser-server
+  namespace: omni
+  labels:
+    app: omniparser-server
+spec:
+  selector:
+    app: omniparser-server
+  ports:
+  - port: 8000
+    targetPort: 8000
+    nodePort: 30000
+  type: NodePort

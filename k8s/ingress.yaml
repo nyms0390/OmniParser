@@ -1,0 +1,44 @@
+# Requires NGINX ingress controller: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.0/deploy/static/provider/cloud/deploy.yaml
+# For local testing without ingress, use the NodePort directly: localhost:30002
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: omni-ingress
+  namespace: omni
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /gta1(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: gta1-server
+                port:
+                  number: 8002
+          # Uncomment when other services are added:
+          # - path: /ocr(/|$)(.*)
+          #   pathType: ImplementationSpecific
+          #   backend:
+          #     service:
+          #       name: paddleocr-server
+          #       port:
+          #         number: 8001
+          # - path: /parse(/|$)(.*)
+          #   pathType: ImplementationSpecific
+          #   backend:
+          #     service:
+          #       name: omniparser-server
+          #       port:
+          #         number: 8000
+          # Agent UI — catch-all, must be last so specific paths above match first.
+          # - path: /(/|$)(.*)
+          #   pathType: ImplementationSpecific
+          #   backend:
+          #     service:
+          #       name: agent
+          #       port:
+          #         number: 7860
