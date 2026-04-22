@@ -264,7 +264,13 @@ READ_FIELD_TOOL: dict = {
                                 "type": "string",
                                 "description": (
                                     "Natural-language description of the on-screen element showing "
-                                    "this value. Used for clipboard-based verification — omit if not needed."
+                                    "this value, used for clipboard-based verification. "
+                                    "Always describe the element's visual location, not just its content. "
+                                    "For list-type fields (multiple items sharing the same field_name), "
+                                    "include the 1-based row index to disambiguate "
+                                    "(e.g. 'the amount in the 3rd row of the line items table', "
+                                    "'the 2nd entry in the Quantity column'). "
+                                    "Omit to skip clipboard verification."
                                 ),
                             },
                         },

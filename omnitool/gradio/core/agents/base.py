@@ -380,35 +380,6 @@ class BaseAgent(ABC):
             )
             return "extraction failed"
 
-    def _correct_field_via_clipboard(
-        self,
-        field_name: str,
-        ocr_value: List[str],
-        parsed_screen: Dict[str, Any],
-    ) -> List[str]:
-        """Correct LLM-extracted field values using GTA1 + triple-click + clipboard.
-
-        Uses each LLM-extracted value as the GTA1 grounding instruction to locate
-        the exact element on screen, then reads the true value from the clipboard.
-        Falls back to the original item string if GTA1 fails for that item.
-        """
-        corrected = []
-        for idx, item in enumerate(ocr_value):
-            item_str = str(item)
-            instruction = f'the element showing "{item_str}"'
-            result = self._read_field_via_clipboard(
-                f"{field_name}[{idx}]", instruction, parsed_screen
-            )
-            corrected.append(
-                result if result not in ("extraction failed", "null") else item_str
-            )
-        changed = sum(1 for a, b in zip(corrected, ocr_value) if str(a) != str(b))
-        logger.info(
-            "_correct_field_via_clipboard: %r corrected %d/%d items",
-            field_name, changed, len(ocr_value),
-        )
-        return corrected
-
     # ------------------------------------------------------------------
     # read_field tool handler
     # ------------------------------------------------------------------
@@ -466,16 +437,16 @@ class BaseAgent(ABC):
                 continue
             use_correction = out.clipboard_correction if out else True
 
-            corrected_list = [value]
+            corrected = value
             if value and use_correction and self.gta1_client and target:
                 try:
-                    corrected_list = self._correct_field_via_clipboard(
-                        field_name, [value], self.working_memory.parsed_screen or {}
+                    result = self._read_field_via_clipboard(
+                        field_name, target, self.working_memory.parsed_screen or {}
                     )
+                    if result not in ("extraction failed", "null"):
+                        corrected = result
                 except Exception as exc:
                     logger.warning("Field correction failed for '%s': %s", field_name, exc)
-
-            corrected = corrected_list[0] if corrected_list else value
 
             self.working_memory.staged_reads.setdefault(field_name, []).append(corrected)
 

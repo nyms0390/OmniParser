@@ -604,11 +604,11 @@ class TestAggregateTransience:
         )
         agent = self._make_agent_via_constructor(tmp_path, proc)
         agent.gta1_client = Mock()
-        agent._correct_field_via_clipboard = Mock(return_value=["corrected"])
+        agent._read_field_via_clipboard = Mock(return_value="corrected")
         agent._handle_read_field({"fields": [
             {"field_name": "line_amount", "value": "10.00", "target": "amount field"}
         ]})
-        agent._correct_field_via_clipboard.assert_not_called()
+        agent._read_field_via_clipboard.assert_not_called()
 
     def test_none_aggregate_preserves_list(self, tmp_path):
         """NONE operation stores the full source list under the output key."""
