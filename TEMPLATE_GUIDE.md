@@ -134,7 +134,16 @@ outputs:
 | `format` | No | Expected format of the captured value. |
 | `clipboard_correction` | No | `true` (default) or `false`. When `true`, the agent captures the value by tri-clicking the field to select its content, then reading the clipboard. **Before enabling this, verify that the target system's input fields support tri-click selection** (triple-click selects the full field content). Set to `false` for fields where tri-click does not select text, or where the value only needs to be visually confirmed rather than extracted. |
 | `dynamic` | No | `false` (default) or `true`. When `true`, the agent captures this key once per matching step and accumulates all captured values into a list (useful for reading the same field across multiple rows). |
-| `aggregate` | No | Declares an auto-computed output. **Not captured by the agent directly** — computed at finish from a dynamic field. Requires two sub-fields: `operation` (currently only `sum`) and `source` (the `key` of the dynamic output to aggregate). |
+| `aggregate` | No | Declares an auto-computed output. **Not captured by the agent directly** — computed at finish from a dynamic field. Requires two sub-fields: `operation` (see table below) and `source` (the `key` of the dynamic output to aggregate). |
+
+**Aggregate operations:**
+
+| `operation` | Result type | What it does |
+|---|---|---|
+| `sum` | string (number) | Adds all captured values numerically. Values may include currency symbols or commas — non-numeric characters are stripped before summing. |
+| `concat` | string | Joins all captured values into one string with no separator. |
+| `none` | list | Returns the raw list of captured values unchanged. |
+| `dedup` | list | Returns the list with duplicate values removed, preserving order. |
 
 **Dynamic + aggregate pattern** — use this when a value appears once per row and you want a total:
 
