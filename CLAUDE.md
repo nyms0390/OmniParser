@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workflow
 
+At the start of every conversation, run `/karpathy-guidelines`.
+
 After implementing a plan, always:
 1. Review the code with `/improve`
 2. Run the tests with `/test`
