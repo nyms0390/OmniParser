@@ -44,19 +44,24 @@ class AggregateOperation(StrEnum):
     SUM = "sum"
     CONCAT = "concat"
     NONE = "none"
+    DEDUP = "dedup"
 
     def apply(self, values: list[str]) -> str | list[str]:
         """Apply this operation to a list of raw string values.
 
-        Returns a ``str`` for reducing operations (SUM, CONCAT) or the original
-        list for pass-through operations (NONE).
+        Returns a ``str`` for reducing operations (SUM, CONCAT) or a
+        ``list[str]`` for list-returning operations (NONE, DEDUP).
 
         Raises:
-            ValueError: If *values* is empty for reducing operations (SUM, CONCAT),
-                or if SUM encounters a non-numeric string. NONE never raises on empty input.
+            ValueError: If *values* is empty for reducing operations (SUM,
+                CONCAT), or if SUM encounters a non-numeric string. NONE and
+                DEDUP tolerate empty input.
         """
         if self == AggregateOperation.NONE:
             return list(values)
+        if self == AggregateOperation.DEDUP:
+            # dict.fromkeys preserves insertion order (Python 3.7+) while dropping duplicate keys
+            return list(dict.fromkeys(values))
         if not values:
             raise ValueError(f"{self!r}.apply() called with empty list")
         if self == AggregateOperation.SUM:

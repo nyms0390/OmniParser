@@ -621,3 +621,39 @@ class TestAggregateTransience:
         agent.working_memory.facts["item"] = ["alpha", "beta", "gamma"]
         agent._apply_template_aggregates()
         assert agent.working_memory.facts["all_items"] == ["alpha", "beta", "gamma"]
+
+    def test_dedup_aggregate_removes_duplicates_preserving_order(self, tmp_path):
+        """DEDUP operation stores deduplicated list, preserving first-seen order."""
+        agg = TaskOutputAggregate(operation=AggregateOperation.DEDUP, source="item")
+        outputs = [
+            TaskOutput(key="item", dynamic=True),
+            TaskOutput(key="unique_items", aggregate=agg),
+        ]
+        agent = self._make_agent_with_outputs(tmp_path, outputs)
+        agent.working_memory.facts["item"] = ["alpha", "beta", "alpha", "gamma", "beta"]
+        agent._apply_template_aggregates()
+        assert agent.working_memory.facts["unique_items"] == ["alpha", "beta", "gamma"]
+
+    def test_dedup_aggregate_all_duplicates_collapses_to_single(self, tmp_path):
+        """DEDUP collapses an all-duplicates input to a single-element list."""
+        agg = TaskOutputAggregate(operation=AggregateOperation.DEDUP, source="item")
+        outputs = [
+            TaskOutput(key="item", dynamic=True),
+            TaskOutput(key="unique_items", aggregate=agg),
+        ]
+        agent = self._make_agent_with_outputs(tmp_path, outputs)
+        agent.working_memory.facts["item"] = ["alpha", "alpha", "alpha"]
+        agent._apply_template_aggregates()
+        assert agent.working_memory.facts["unique_items"] == ["alpha"]
+
+    def test_dedup_aggregate_single_element_unchanged(self, tmp_path):
+        """DEDUP with a single element returns that element unchanged."""
+        agg = TaskOutputAggregate(operation=AggregateOperation.DEDUP, source="item")
+        outputs = [
+            TaskOutput(key="item", dynamic=True),
+            TaskOutput(key="unique_items", aggregate=agg),
+        ]
+        agent = self._make_agent_with_outputs(tmp_path, outputs)
+        agent.working_memory.facts["item"] = ["only"]
+        agent._apply_template_aggregates()
+        assert agent.working_memory.facts["unique_items"] == ["only"]
