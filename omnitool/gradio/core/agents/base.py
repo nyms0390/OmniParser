@@ -208,7 +208,7 @@ class BaseAgent(ABC):
             if orig_img.width > self.screenshot_max_width:
                 ratio = self.screenshot_max_width / orig_img.width
                 new_w = self.screenshot_max_width
-                new_h = int(orig_img.height * ratio)
+                new_h = round(orig_img.height * ratio)
                 resized_img = orig_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                 buf = BytesIO()
                 resized_img.save(buf, format="PNG")

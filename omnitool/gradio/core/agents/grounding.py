@@ -42,18 +42,21 @@ class ScreenData:
     """Normalised screen observation returned by :meth:`GroundingStrategy.preprocess`.
 
     Attributes:
-        raw_image_b64:     Resized raw screenshot (base64 PNG).
-        display_image_b64: Image shown to the LLM — SOM-annotated for OmniParser,
-                           same as raw for GTA1.
-        elements:          Parsed element list from OmniParser; empty for GTA1.
-        screen_width:      Original (unresized) screen width in pixels.
-        screen_height:     Original (unresized) screen height in pixels.
-        resized_width:     Width of the image sent to the LLM.
-        resized_height:    Height of the image sent to the LLM.
+        raw_image_b64:      Resized non-preprocessed screenshot shown to the LLM (base64 PNG).
+        display_image_b64:  Image shown to the LLM — SOM-annotated for OmniParser,
+                            same as raw_image_b64 for GTA1.
+        grounding_image_b64: Image sent to the grounding model (may be preprocessed).
+                            Falls back to raw_image_b64 when empty.
+        elements:           Parsed element list from OmniParser; empty for GTA1.
+        screen_width:       Original (unresized) screen width in pixels.
+        screen_height:      Original (unresized) screen height in pixels.
+        resized_width:      Width of the image sent to the LLM.
+        resized_height:     Height of the image sent to the LLM.
     """
 
     raw_image_b64: str
     display_image_b64: str
+    grounding_image_b64: str = ""
     elements: List[Dict[str, Any]] = field(default_factory=list)
     screen_width: int = 1920
     screen_height: int = 1080
@@ -68,6 +71,7 @@ class GroundingStrategy(ABC):
     def preprocess(
         self,
         raw_b64: str,
+        preprocessed_b64: str,
         screen_width: int,
         screen_height: int,
         resized_width: int,
@@ -76,11 +80,12 @@ class GroundingStrategy(ABC):
         """Preprocess a raw screenshot into a :class:`ScreenData`.
 
         Args:
-            raw_b64:        Resized raw screenshot (base64 PNG).
-            screen_width:   Original screen width in pixels.
-            screen_height:  Original screen height in pixels.
-            resized_width:  Width of the VLM-facing image.
-            resized_height: Height of the VLM-facing image.
+            raw_b64:          Resized non-preprocessed screenshot (base64 PNG).
+            preprocessed_b64: Same image after preprocessing (CLAHE, edges, etc.).
+            screen_width:     Original screen width in pixels.
+            screen_height:    Original screen height in pixels.
+            resized_width:    Width of the VLM-facing image.
+            resized_height:   Height of the VLM-facing image.
         """
 
     @abstractmethod
@@ -241,6 +246,7 @@ class OmniParserGrounding(GroundingStrategy):
     def preprocess(
         self,
         raw_b64: str,
+        preprocessed_b64: str,  # noqa: ARG002 — OmniParser uses the clean image for text precision
         screen_width: int,
         screen_height: int,
         resized_width: int,
@@ -293,7 +299,9 @@ class OmniParserGrounding(GroundingStrategy):
 class GTA1Grounding(GroundingStrategy):
     """Natural-language grounding via GTA1 server.
 
-    No screen preprocessing — the raw screenshot is sent directly to the LLM.
+    The LLM always sees the clean resized screenshot for accurate text reading.
+    The GTA1 grounding model receives the preprocessed variant (CLAHE/edges)
+    when available, falling back to the clean image if preprocessing is disabled.
     Positional actions carry a natural-language ``target`` description that the
     GTA1 model resolves to pixel coordinates.
     """
@@ -327,15 +335,18 @@ class GTA1Grounding(GroundingStrategy):
     def preprocess(
         self,
         raw_b64: str,
+        preprocessed_b64: str,
         screen_width: int,
         screen_height: int,
         resized_width: int,
         resized_height: int,
     ) -> ScreenData:
-        # Pass-through: GTA1 works on the raw screenshot.
+        # display == raw so the LLM sees clean pixels for text reading;
+        # grounding_image_b64 carries the preprocessed variant for GTA1 detection.
         return ScreenData(
             raw_image_b64=raw_b64,
             display_image_b64=raw_b64,
+            grounding_image_b64=preprocessed_b64,
             elements=[],
             screen_width=screen_width,
             screen_height=screen_height,
@@ -356,7 +367,10 @@ class GTA1Grounding(GroundingStrategy):
         if not target:
             raise ValueError(f"'{tool_name}' requires target")
 
-        coord = self._resolve_coordinate(screen_data.raw_image_b64, target)
+        # Use the preprocessed image for grounding when available; fall back to
+        # the clean resized image when preprocessing is disabled (empty string).
+        grounding_b64 = screen_data.grounding_image_b64 or screen_data.raw_image_b64
+        coord = self._resolve_coordinate(grounding_b64, target)
         if coord is None:
             self._last_grounding_events = [{
                 "instruction": target,

@@ -58,7 +58,7 @@ class TestOmniParserGroundingPreprocess:
             "parsed_content_list": [{"bbox": [0, 0, 0.5, 0.5], "content": "button"}],
         }
         strategy = OmniParserGrounding(client)
-        result = strategy.preprocess("rawb64", 1920, 1080, 1920, 1080)
+        result = strategy.preprocess("rawb64", "preprocessedb64", 1920, 1080, 1920, 1080)
 
         assert isinstance(result, ScreenData)
         assert result.display_image_b64 == "somimage"
@@ -72,14 +72,14 @@ class TestOmniParserGroundingPreprocess:
             "parsed_content_list": [],
         }
         strategy = OmniParserGrounding(client)
-        result = strategy.preprocess("rawb64", 1920, 1080, 1920, 1080)
+        result = strategy.preprocess("rawb64", "preprocessedb64", 1920, 1080, 1920, 1080)
         assert result.display_image_b64 == "rawb64"
 
     def test_preprocess_falls_back_on_client_exception(self):
         client = Mock()
         client.parse_screenshot.side_effect = RuntimeError("server down")
         strategy = OmniParserGrounding(client)
-        result = strategy.preprocess("rawb64", 1920, 1080, 1920, 1080)
+        result = strategy.preprocess("rawb64", "preprocessedb64", 1920, 1080, 1920, 1080)
 
         assert result.raw_image_b64 == "rawb64"
         assert result.display_image_b64 == "rawb64"
@@ -92,7 +92,7 @@ class TestOmniParserGroundingPreprocess:
             "parsed_content_list": [],
         }
         strategy = OmniParserGrounding(client)
-        result = strategy.preprocess("rawb64", 2560, 1440, 1280, 720)
+        result = strategy.preprocess("rawb64", "preprocessedb64", 2560, 1440, 1280, 720)
 
         assert result.screen_width == 2560
         assert result.screen_height == 1440
@@ -208,17 +208,23 @@ class TestOmniParserGroundingResolve:
 # ===========================================================================
 
 class TestGTA1GroundingPreprocess:
-    def test_preprocess_is_passthrough(self):
+    def test_preprocess_sets_display_to_raw(self):
         strategy = GTA1Grounding(Mock())
-        result = strategy.preprocess("rawb64", 1920, 1080, 1920, 1080)
+        result = strategy.preprocess("rawb64", "preprocessedb64", 1920, 1080, 1920, 1080)
 
         assert result.raw_image_b64 == "rawb64"
         assert result.display_image_b64 == "rawb64"
         assert result.elements == []
 
+    def test_preprocess_sets_grounding_image_b64(self):
+        strategy = GTA1Grounding(Mock())
+        result = strategy.preprocess("rawb64", "preprocessedb64", 1920, 1080, 1920, 1080)
+
+        assert result.grounding_image_b64 == "preprocessedb64"
+
     def test_preprocess_stores_dimensions(self):
         strategy = GTA1Grounding(Mock())
-        result = strategy.preprocess("rawb64", 2560, 1440, 1280, 720)
+        result = strategy.preprocess("rawb64", "preprocessedb64", 2560, 1440, 1280, 720)
         assert result.screen_width == 2560
         assert result.screen_height == 1440
 
@@ -304,6 +310,27 @@ class TestGTA1GroundingResolve:
         events = strategy.last_grounding_events
         assert len(events) == 1
         assert events[0]["success"] is False
+
+    def test_resolve_uses_grounding_image_not_display(self):
+        """GTA1 client must receive grounding_image_b64, not raw_image_b64."""
+        client = Mock()
+        client.ground.return_value = {"x": 100, "y": 100}
+        strategy = GTA1Grounding(client)
+        b64 = _make_raw_b64()
+        screen_data = ScreenData(
+            raw_image_b64="display-image",
+            display_image_b64="display-image",
+            grounding_image_b64=b64,
+            elements=[],
+            screen_width=1920,
+            screen_height=1080,
+            resized_width=960,
+            resized_height=540,
+        )
+        strategy.resolve("left_click", {"target": "button"}, screen_data)
+        called_image = client.ground.call_args[0][0]
+        assert called_image == b64
+        assert called_image != "display-image"
 
     def test_type_text_does_not_call_gta1(self):
         client = Mock()

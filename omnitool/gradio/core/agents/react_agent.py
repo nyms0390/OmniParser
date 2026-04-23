@@ -137,7 +137,8 @@ class ReActAgent(BaseAgent):
                 yield {"type": "status", "message": f"Step {self.step_count}: Observing..."}
                 raw_screen = self._capture_screen()
                 screen_data = self.grounding_strategy.preprocess(
-                    raw_b64=raw_screen["preprocessed_image_base64"],
+                    raw_b64=raw_screen["resized_image_base64"],
+                    preprocessed_b64=raw_screen["preprocessed_image_base64"],
                     screen_width=raw_screen["screen_width"],
                     screen_height=raw_screen["screen_height"],
                     resized_width=raw_screen["resized_screen_width"],
