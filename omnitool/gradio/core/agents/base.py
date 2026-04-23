@@ -440,8 +440,9 @@ class BaseAgent(ABC):
             corrected = value
             if value and use_correction and self.gta1_client and target:
                 try:
+                    description = f"{target} (showing '{value}')"
                     result = self._read_field_via_clipboard(
-                        field_name, target, self.working_memory.parsed_screen or {}
+                        field_name, description, self.working_memory.parsed_screen or {}
                     )
                     if result not in ("extraction failed", "null"):
                         corrected = result

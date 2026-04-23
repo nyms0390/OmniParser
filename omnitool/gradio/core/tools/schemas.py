@@ -153,7 +153,8 @@ def _gta1_positional(name: str, description: str) -> dict:
                     "target": {
                         "type": "string",
                         "description": (
-                            "Natural-language description of the UI element "
+                            "Natural-language description of the UI element. "
+                            "Always describe the element's visual location, not just its content "
                             "(e.g. 'the blue Submit button at the bottom of the form')."
                         ),
                     },
