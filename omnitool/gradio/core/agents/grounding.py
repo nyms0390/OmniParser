@@ -246,14 +246,15 @@ class OmniParserGrounding(GroundingStrategy):
     def preprocess(
         self,
         raw_b64: str,
-        preprocessed_b64: str,  # noqa: ARG002 — OmniParser uses the clean image for text precision
+        preprocessed_b64: str,
         screen_width: int,
         screen_height: int,
         resized_width: int,
         resized_height: int,
     ) -> ScreenData:
+        parse_b64 = preprocessed_b64 or raw_b64
         try:
-            result = self._client.parse_screenshot(raw_b64)
+            result = self._client.parse_screenshot(parse_b64)
             som_b64 = result.get("labeled_screenshot_base64", "") or raw_b64
             elements = result.get("parsed_content_list", [])
         except Exception as exc:

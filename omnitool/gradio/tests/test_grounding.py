@@ -99,6 +99,26 @@ class TestOmniParserGroundingPreprocess:
         assert result.resized_width == 1280
         assert result.resized_height == 720
 
+    def test_preprocess_sends_preprocessed_image_to_omniparser(self):
+        client = Mock()
+        client.parse_screenshot.return_value = {
+            "labeled_screenshot_base64": "somimage",
+            "parsed_content_list": [],
+        }
+        strategy = OmniParserGrounding(client)
+        strategy.preprocess("rawb64", "preprocessedb64", 1920, 1080, 1920, 1080)
+        client.parse_screenshot.assert_called_once_with("preprocessedb64")
+
+    def test_preprocess_falls_back_to_raw_when_preprocessed_empty(self):
+        client = Mock()
+        client.parse_screenshot.return_value = {
+            "labeled_screenshot_base64": "somimage",
+            "parsed_content_list": [],
+        }
+        strategy = OmniParserGrounding(client)
+        strategy.preprocess("rawb64", "", 1920, 1080, 1920, 1080)
+        client.parse_screenshot.assert_called_once_with("rawb64")
+
     def test_get_tools_returns_omniparser_schemas(self):
         from omnitool.gradio.core.tools.schemas import OMNIPARSER_COMPUTER_TOOLS
         strategy = OmniParserGrounding(Mock())
