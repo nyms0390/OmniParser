@@ -294,6 +294,18 @@ Output only the summary text, no extra formatting.\
 """
 
 
+TABLE_EXTRACTION_PROMPT = """\
+You are a data extraction assistant. You will receive one or more HTML tables from a web page.
+
+Your task:
+1. If a hint is provided, select the table that best matches it. Otherwise, select the most data-rich table (most rows × columns).
+2. Output the table as plain text using ` | ` (space-pipe-space) as a column separator.
+3. First row must be the header row. One data row per output line.
+4. Reproduce cell values verbatim — do not summarize, truncate, or reformat numbers.
+5. Output only the table text. No preamble, no explanation, no markdown fences.\
+"""
+
+
 # ---------------------------------------------------------------------------
 # 6. Builder functions — assemble fully-rendered prompts from templates above
 # ---------------------------------------------------------------------------

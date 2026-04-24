@@ -292,7 +292,14 @@ class ReActAgent(BaseAgent):
                     result_text = self._handle_mark_screenshot(arguments.get("reason", ""))
                     history.append(_tool_msg(tool_call_id, result_text))
 
-                # 5e. Computer action → grounding → execute
+                # 5e. read_table → capture page HTML, LLM extraction
+                elif tool_name == "read_table":
+                    table_text, display_text = self._handle_read_table(arguments)
+                    history.append(_tool_msg(tool_call_id, table_text))
+                    logger.info("READ_TABLE — %d chars", len(table_text))
+                    yield {"type": "table_read", "text": display_text}
+
+                # 5f. Computer action → grounding → execute
                 else:
                     try:
                         dispatch = self.grounding_strategy.resolve(tool_name, arguments, screen_data)

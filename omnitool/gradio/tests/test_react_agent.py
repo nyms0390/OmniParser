@@ -384,3 +384,169 @@ class TestReActAgentNoToolCall:
         thinking_events = [e for e in events if e["type"] == "thinking"]
         assert len(thinking_events) >= 1
         assert any("I will click now" in e.get("response_text", "") for e in thinking_events)
+
+
+# ===========================================================================
+# _extract_tables_from_html
+# ===========================================================================
+
+class TestExtractTablesFromHtml:
+    """Unit tests for BaseAgent._extract_tables_from_html static method."""
+
+    def _extract(self, html: str) -> str:
+        from omnitool.gradio.core.agents.base import BaseAgent
+        return BaseAgent._extract_tables_from_html(html)
+
+    def test_single_table_extracted(self):
+        html = "<html><body><table><tr><td>A</td></tr></table></body></html>"
+        result = self._extract(html)
+        assert "--- Table 1 ---" in result
+        assert "<table>" in result
+
+    def test_multiple_tables_numbered(self):
+        html = "<table><tr><td>1</td></tr></table><table><tr><td>2</td></tr></table>"
+        result = self._extract(html)
+        assert "--- Table 1 ---" in result
+        assert "--- Table 2 ---" in result
+
+    def test_nested_table_counted_as_one(self):
+        html = "<table><tr><td><table><tr><td>inner</td></tr></table></td></tr></table>"
+        result = self._extract(html)
+        assert "--- Table 1 ---" in result
+        assert "--- Table 2 ---" not in result
+
+    def test_empty_input_returns_empty(self):
+        assert self._extract("") == ""
+
+    def test_no_tables_returns_empty(self):
+        assert self._extract("<div>no tables here</div>") == ""
+
+    def test_uppercase_tags_handled(self):
+        html = "<TABLE><TR><TD>A</TD></TR></TABLE>"
+        result = self._extract(html)
+        assert "--- Table 1 ---" in result
+
+    def test_table_content_preserved_verbatim(self):
+        html = '<table id="t1"><tr><td>Hello &amp; World</td></tr></table>'
+        result = self._extract(html)
+        assert 'Hello &amp; World' in result
+
+
+# ===========================================================================
+# _handle_read_table
+# ===========================================================================
+
+def _make_clip_mock(output: str = "", error: str = ""):
+    from unittest.mock import Mock
+    m = Mock()
+    m.output = output
+    m.error = error
+    return m
+
+
+_TABLE_HTML = (
+    "<html><body>"
+    "<table><tr><th>Name</th><th>Price</th></tr>"
+    "<tr><td>Widget</td><td>9.99</td></tr></table>"
+    "</body></html>"
+)
+_EXTRACTED_TABLE = "Name | Price\nWidget | 9.99"
+_EXTRACTION_META = {"tokens": 20, "input_tokens": 15, "output_tokens": 5}
+
+
+class TestHandleReadTable:
+    """Integration tests for _handle_read_table via agent.run()."""
+
+    def _make_agent_for_table(self, tmp_path, clip_mock, llm_extract_response=None):
+        """Build agent with read_table as first LLM call."""
+        extract = llm_extract_response or (_EXTRACTED_TABLE, _EXTRACTION_META)
+        agent = make_react_agent(
+            tmp_path,
+            side_effects=[
+                _tool_response("read_table", args={}),
+                extract,
+                _finish_response(),
+            ],
+        )
+        agent.tools_collection.run.return_value = clip_mock
+        return agent
+
+    def test_read_table_yields_table_read_event(self, tmp_path):
+        agent = self._make_agent_for_table(tmp_path, _make_clip_mock(_TABLE_HTML))
+        events = list(agent.run())
+        assert any(e["type"] == "table_read" for e in events)
+
+    def test_table_text_in_event(self, tmp_path):
+        agent = self._make_agent_for_table(tmp_path, _make_clip_mock(_TABLE_HTML))
+        events = list(agent.run())
+        table_events = [e for e in events if e["type"] == "table_read"]
+        assert _EXTRACTED_TABLE in table_events[0]["text"]
+
+    def test_clipboard_error_yields_error_text(self, tmp_path):
+        agent = self._make_agent_for_table(
+            tmp_path, _make_clip_mock(error="clipboard unavailable")
+        )
+        events = list(agent.run())
+        table_events = [e for e in events if e["type"] == "table_read"]
+        assert any("read_table failed" in e["text"] for e in table_events)
+
+    def test_no_tables_in_html_yields_not_found_message(self, tmp_path):
+        agent = self._make_agent_for_table(
+            tmp_path, _make_clip_mock("<html><div>no tables</div></html>")
+        )
+        events = list(agent.run())
+        table_events = [e for e in events if e["type"] == "table_read"]
+        assert any("no tables found" in e["text"] for e in table_events)
+
+    def test_llm_extraction_exception_yields_error_text(self, tmp_path):
+        agent = make_react_agent(tmp_path, side_effects=[
+            _tool_response("read_table", args={}),
+            _finish_response(),
+        ])
+        agent.tools_collection.run.return_value = _make_clip_mock(_TABLE_HTML)
+        # Make secondary LLM call raise on the second call (first is the main loop call)
+        from unittest.mock import Mock
+        original_side_effect = list(agent.llm_client.generate.side_effect)
+        def _raise_on_table_call(*args, **kwargs):
+            msgs = (args[0] if args else kwargs.get("messages", []))
+            if msgs and "Name" in str(msgs[0].get("content", "")):
+                raise RuntimeError("LLM service unavailable")
+            return original_side_effect.pop(0)
+        agent.llm_client.generate.side_effect = _raise_on_table_call
+
+        events = list(agent.run())
+        table_events = [e for e in events if e["type"] == "table_read"]
+        assert any("extraction error" in e["text"] for e in table_events)
+
+
+# ===========================================================================
+# format_table_read
+# ===========================================================================
+
+class TestFormatTableRead:
+    """Tests for format_table_read formatter."""
+
+    def _fmt(self, text: str) -> str:
+        from omnitool.gradio.ui.components.formatters import format_table_read
+        return format_table_read(text)
+
+    def test_non_empty_text_contains_details_and_pre(self):
+        result = self._fmt("Col1 | Col2\nA | B")
+        assert "<details" in result
+        assert "<pre" in result
+
+    def test_non_empty_text_contains_table_label(self):
+        result = self._fmt("Col1 | Col2\nA | B")
+        assert "[Table]" in result
+
+    def test_html_special_chars_escaped(self):
+        result = self._fmt("A & B | <em>C</em>")
+        assert "&amp;" in result
+        assert "&lt;" in result
+        assert "&gt;" in result
+
+    def test_empty_string_returns_empty(self):
+        assert self._fmt("") == ""
+
+    def test_whitespace_only_returns_empty(self):
+        assert self._fmt("   \n  ") == ""

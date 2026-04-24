@@ -27,6 +27,7 @@ from omnitool.gradio.core.agents.preprocessing import PreprocessingMode, preproc
 from omnitool.gradio.config import (
     AgentMode,
     SCREENSHOT_MAX_WIDTH,
+    TABLE_EXTRACTION_PROMPT,
     TaskProcedure,
     get_llm_config,
     get_pricing,
@@ -638,6 +639,77 @@ class BaseAgent(ABC):
             logger.warning("Failed to save screenshot flag: %s", exc)
             return f"Error flagging {screenshot_file}: {exc}"
         return f"Flagged {screenshot_file}: {reason}"
+
+    @staticmethod
+    def _extract_tables_from_html(html_content: str) -> str:
+        """Extract top-level <table> elements from raw HTML, numbered."""
+        lower = html_content.lower()
+        tables, depth, start = [], 0, -1
+        i = 0
+        while i < len(lower):
+            if lower[i:i+6] == "<table" and (len(lower) == i+6 or lower[i+6] in " \t\n\r/>"):
+                if depth == 0:
+                    start = i
+                depth += 1
+                i += 6
+            elif lower[i:i+8] == "</table>":
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0:
+                        tables.append(html_content[start:i+8])
+                        start = -1
+                i += 8
+            else:
+                i += 1
+        if not tables:
+            return ""
+        return "\n\n".join(f"--- Table {j+1} ---\n{t}" for j, t in enumerate(tables))
+
+    def _handle_read_table(self, tc_args: Dict[str, Any]) -> Tuple[str, str]:
+        """Capture page HTML via DevTools, strip to tables, LLM-extract as pipe-separated text."""
+        hint = tc_args.get("hint", "")
+
+        self.tools_collection.run("computer", "key", text="ctrl+shift+j")
+        self.tools_collection.run("computer", "type",
+                                   text="copy(document.documentElement.outerHTML)")
+        self.tools_collection.run("computer", "key", text="return")
+        self.tools_collection.run("computer", "key", text="ctrl+shift+j")
+
+        clip_result = self.tools_collection.run("computer", "read_clipboard")
+        if clip_result.error:
+            msg = f"read_table failed: could not capture HTML ({clip_result.error})"
+            logger.warning(msg)
+            return msg, msg
+
+        tables_html = self._extract_tables_from_html(clip_result.output or "")
+        if not tables_html:
+            msg = "read_table: no tables found on this page"
+            logger.warning(msg)
+            return msg, msg
+
+        user_content = TABLE_EXTRACTION_PROMPT
+        if hint:
+            user_content += f"\n\nHint: {hint}"
+        user_content += f"\n\n{tables_html}"
+
+        try:
+            table_text, meta = self.llm_client.generate(
+                messages=[{"role": "user", "content": user_content}]
+            )
+            self.update_token_usage(meta.get("tokens", 0))
+            self.update_cost(self._calculate_cost(meta))
+        except Exception as exc:
+            msg = f"read_table failed: extraction error ({exc})"
+            logger.warning(msg)
+            return msg, msg
+
+        table_text = (table_text or "").strip()
+        if not table_text:
+            msg = "read_table: LLM returned empty extraction"
+            logger.warning(msg)
+            return msg, msg
+
+        return table_text, table_text
 
     def _write_run_summary(self, success: bool, message: str) -> None:
         """Write summary.json to save_folder at the end of every run."""

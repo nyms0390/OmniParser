@@ -340,6 +340,20 @@ def format_extraction_result(fields: dict) -> str:
     )
 
 
+def format_table_read(text: str) -> str:
+    if not text or not text.strip():
+        return ""
+    escaped = html.escape(text.strip())
+    return (
+        '<details open style="margin: 6px 0;">'
+        "<summary>[Table] Extracted table (click to collapse)</summary>"
+        '<pre style="max-height: 400px; overflow-y: auto; font-size: 0.85em; '
+        "padding: 8px; background: #e3f2fd; border-radius: 4px; "
+        f'white-space: pre-wrap;">{escaped}</pre>'
+        "</details>"
+    )
+
+
 __all__ = [
     "render_image",
     "format_parsed_screen",
@@ -353,4 +367,5 @@ __all__ = [
     "format_ledger",
     "format_extraction_result",
     "format_field_saved",
+    "format_table_read",
 ]

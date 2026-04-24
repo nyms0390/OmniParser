@@ -394,8 +394,38 @@ MARK_SCREENSHOT_TOOL: dict = {
     },
 }
 
+READ_TABLE_TOOL: dict = {
+    "type": "function",
+    "function": {
+        "name": "read_table",
+        "description": (
+            "Extract a data table from the current web page using browser DevTools. "
+            "Opens Chrome DevTools console, captures the live DOM HTML via clipboard, "
+            "and returns the main table as plain pipe-separated text in your message history. "
+            "Use this for multi-row tabular data. After the table appears in history, "
+            "call commit_field with the values you need to persist."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "hint": {
+                    "type": "string",
+                    "description": (
+                        "Optional description of which table to extract "
+                        "(e.g. 'invoice line items', 'order history'). "
+                        "When omitted, the most data-rich table is selected."
+                    ),
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
 # Always-on tools — present regardless of grounding strategy or finish signal
-AUXILIARY_TOOLS: List[dict] = [READ_FIELD_TOOL, SAVE_FIELD_TOOL, FOCUS_TOOL, MARK_SCREENSHOT_TOOL]
+AUXILIARY_TOOLS: List[dict] = [
+    READ_FIELD_TOOL, SAVE_FIELD_TOOL, FOCUS_TOOL, MARK_SCREENSHOT_TOOL, READ_TABLE_TOOL
+]
 
 __all__ = [
     "OMNIPARSER_COMPUTER_TOOLS",
@@ -406,5 +436,6 @@ __all__ = [
     "SAVE_FIELD_TOOL",
     "FOCUS_TOOL",
     "MARK_SCREENSHOT_TOOL",
+    "READ_TABLE_TOOL",
     "AUXILIARY_TOOLS",
 ]

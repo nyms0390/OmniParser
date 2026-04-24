@@ -622,6 +622,28 @@ class TestOnSubmitEventRouting:
         all_contents = [m.get("content", "") for update in updates for m in update[0]]
         assert any("Task complete!" in c for c in all_contents)
 
+    def test_table_read_event_appended_to_history(self, tmp_path):
+        events = [
+            {"type": "table_read", "text": "Name | Price\nWidget | 9.99"},
+            {"type": "complete", "total_steps": 1, "total_tokens": 10, "total_cost": 0},
+        ]
+        app, mock_orch = _make_submit_app(tmp_path, events)
+        updates = _run_submit(app, tmp_path, mock_orchestrator=mock_orch)
+
+        all_contents = [m.get("content", "") for update in updates for m in update[0]]
+        assert any("[Table]" in c for c in all_contents)
+
+    def test_table_read_empty_text_not_appended(self, tmp_path):
+        events = [
+            {"type": "table_read", "text": ""},
+            {"type": "complete", "total_steps": 1, "total_tokens": 10, "total_cost": 0},
+        ]
+        app, mock_orch = _make_submit_app(tmp_path, events)
+        updates = _run_submit(app, tmp_path, mock_orchestrator=mock_orch)
+
+        all_contents = [m.get("content", "") for update in updates for m in update[0]]
+        assert not any("[Table]" in c for c in all_contents)
+
 
 class TestOnSubmitYamlTemplateIntegration:
     """Verify YAML template overrides message in TASK mode."""

@@ -25,6 +25,7 @@ from omnitool.gradio.ui.components import (
     format_plan,
     format_raw_screen,
     format_compaction,
+    format_table_read,
     format_thinking,
     get_provider_options_for_model,
     render_image,
@@ -300,6 +301,12 @@ class GradioCallbacks:
                         fields=update.get("fields", {}),
                     )
                     history.append({"role": "assistant", "content": saved_html})
+                    yield history, "", status, state
+
+                elif update_type == "table_read":
+                    table_html = format_table_read(update.get("text", ""))
+                    if table_html:
+                        history.append({"role": "assistant", "content": table_html})
                     yield history, "", status, state
 
                 elif update_type == "complete":
