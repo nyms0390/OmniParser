@@ -199,14 +199,14 @@ class TestTaskProcedureAggregateRouting:
             TaskOutputAggregate,
             TaskProcedure,
         )
-        from omnitool.gradio.config.enums import AggregateOperation
+        from omnitool.gradio.config.enums import AggregateOperation, FieldKind
 
         agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
         proc = TaskProcedure(
             id=1,
             description="Test procedure",
             outputs=[
-                TaskOutput(key="line_amount", description="Amount per line", dynamic=True),
+                TaskOutput(key="line_amount", description="Amount per line", kind=FieldKind.ROW),
                 TaskOutput(key="grand_total", description="Sum of all lines", aggregate=agg),
             ],
             executions=[
@@ -263,6 +263,62 @@ class TestTaskProcedureAggregateRouting:
         )
         fields = proc.to_extract_fields()
         assert "order_id" in fields
+
+
+class TestSystemConfig:
+    """SystemConfig registry lookup and prompt-builder integration."""
+
+    def test_get_system_config_known(self):
+        from omnitool.gradio.config import get_system_config
+
+        cfg = get_system_config("EPA")
+        assert cfg is not None
+        assert cfg.is_browser is True
+        assert cfg.name == "EPA"
+
+    def test_get_system_config_unknown_returns_none(self):
+        from omnitool.gradio.config import get_system_config
+
+        assert get_system_config("does-not-exist") is None
+
+    def test_build_react_prompt_no_system_unchanged(self):
+        """When system is None, the rendered prompt is byte-identical to the
+        no-system case — protects prompt cache stability.
+        """
+        from omnitool.gradio.config import build_react_system_prompt
+
+        baseline = build_react_system_prompt(
+            platform="windows", element_reference_hint="hint"
+        )
+        with_none = build_react_system_prompt(
+            platform="windows", element_reference_hint="hint", system=None
+        )
+        assert baseline == with_none
+
+    def test_build_react_prompt_empty_fragment_unchanged(self):
+        """A SystemConfig with an empty prompt_fragment must not alter the prompt."""
+        from omnitool.gradio.config import SystemConfig, build_react_system_prompt
+
+        baseline = build_react_system_prompt(
+            platform="windows", element_reference_hint="hint"
+        )
+        empty_sys = SystemConfig(name="X", is_browser=False, prompt_fragment="")
+        with_empty = build_react_system_prompt(
+            platform="windows", element_reference_hint="hint", system=empty_sys
+        )
+        assert baseline == with_empty
+
+    def test_build_react_prompt_appends_fragment(self):
+        from omnitool.gradio.config import SystemConfig, build_react_system_prompt
+
+        sys_with_frag = SystemConfig(
+            name="EPA", is_browser=True, prompt_fragment="Use the search bar at the top."
+        )
+        prompt = build_react_system_prompt(
+            platform="windows", element_reference_hint="hint", system=sys_with_frag
+        )
+        assert "## System: EPA" in prompt
+        assert "Use the search bar at the top." in prompt
 
 
 if __name__ == "__main__":

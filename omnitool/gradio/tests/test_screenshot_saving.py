@@ -13,7 +13,7 @@ from unittest.mock import Mock
 
 from PIL import Image
 
-from omnitool.gradio.config.enums import AggregateOperation
+from omnitool.gradio.config.enums import AggregateOperation, FieldKind
 from omnitool.gradio.config.task_template import TaskOutput, TaskOutputAggregate, TaskProcedure
 from omnitool.gradio.tests._helpers import (
     finish_response as _finish_response,
@@ -150,21 +150,21 @@ class TestReadField:
 
     def test_read_field_returns_read_values_dict(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        result_text, read_values = agent._handle_read_field(
+        result_text, read_values, events = agent._handle_read_field(
             {"fields": [{"field_name": "total", "value": "$99.00"}]}
         )
         assert read_values == {"total": ["$99.00"]}
 
     def test_read_field_result_text_starts_with_read(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        result_text, _ = agent._handle_read_field(
+        result_text, _, _events = agent._handle_read_field(
             {"fields": [{"field_name": "total", "value": "$99.00"}]}
         )
         assert result_text.startswith("Read:")
 
     def test_read_field_multiple_fields_returned(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        _, read_values = agent._handle_read_field({"fields": [
+        _, read_values, _events = agent._handle_read_field({"fields": [
             {"field_name": "a", "value": "1"},
             {"field_name": "b", "value": "2"},
         ]})
@@ -173,7 +173,7 @@ class TestReadField:
 
     def test_read_field_empty_fields_returns_error(self, tmp_path):
         agent = self._make_minimal_agent(tmp_path)
-        result_text, read_values = agent._handle_read_field({"fields": []})
+        result_text, read_values, events = agent._handle_read_field({"fields": []})
         assert "Error" in result_text
         assert read_values == {}
 
@@ -244,7 +244,7 @@ class TestSaveField:
 
     def test_double_save_without_second_read_fails_for_dynamic(self, tmp_path):
         """Second save_field without intervening read_field must error and not double-append."""
-        outputs = [TaskOutput(key="line_amount", dynamic=True)]
+        outputs = [TaskOutput(key="line_amount", kind=FieldKind.ROW)]
         proc = TaskProcedure(id=1, description="test", outputs=outputs)
         agent = self._make_minimal_agent(tmp_path)
         agent.task_procedure = proc
@@ -267,7 +267,7 @@ class TestSaveField:
         assert "1234567890" not in result_text
 
     def test_transformed_value_on_dynamic_field_returns_error_and_restores_staged(self, tmp_path):
-        outputs = [TaskOutput(key="line_amount", dynamic=True)]
+        outputs = [TaskOutput(key="line_amount", kind=FieldKind.ROW)]
         proc = TaskProcedure(id=1, description="test", outputs=outputs)
         agent = self._make_minimal_agent(tmp_path)
         agent.task_procedure = proc
@@ -476,7 +476,7 @@ class TestAggregateTransience:
         return agent
 
     def test_dynamic_field_accumulates_across_calls(self, tmp_path):
-        outputs = [TaskOutput(key="line_amount", dynamic=True)]
+        outputs = [TaskOutput(key="line_amount", kind=FieldKind.ROW)]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
         agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
         agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
@@ -487,7 +487,7 @@ class TestAggregateTransience:
     def test_aggregate_result_written_to_facts_at_finish(self, tmp_path):
         agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
         outputs = [
-            TaskOutput(key="line_amount", dynamic=True),
+            TaskOutput(key="line_amount", kind=FieldKind.ROW),
             TaskOutput(key="grand_total", aggregate=agg),
         ]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
@@ -500,7 +500,7 @@ class TestAggregateTransience:
     def test_all_non_numeric_source_skips_aggregate(self, tmp_path):
         agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="labels")
         outputs = [
-            TaskOutput(key="labels", dynamic=True),
+            TaskOutput(key="labels", kind=FieldKind.ROW),
             TaskOutput(key="total", aggregate=agg),
         ]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
@@ -523,8 +523,8 @@ class TestAggregateTransience:
         agg1 = TaskOutputAggregate(operation=AggregateOperation.SUM, source="prices")
         agg2 = TaskOutputAggregate(operation=AggregateOperation.SUM, source="fees")
         outputs = [
-            TaskOutput(key="prices", dynamic=True),
-            TaskOutput(key="fees", dynamic=True),
+            TaskOutput(key="prices", kind=FieldKind.ROW),
+            TaskOutput(key="fees", kind=FieldKind.ROW),
             TaskOutput(key="price_total", aggregate=agg1),
             TaskOutput(key="fee_total", aggregate=agg2),
         ]
@@ -538,7 +538,7 @@ class TestAggregateTransience:
     def test_empty_source_field_skips_aggregate(self, tmp_path):
         agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
         outputs = [
-            TaskOutput(key="line_amount", dynamic=True),
+            TaskOutput(key="line_amount", kind=FieldKind.ROW),
             TaskOutput(key="grand_total", aggregate=agg),
         ]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
@@ -549,7 +549,7 @@ class TestAggregateTransience:
     def test_aggregate_overwrites_existing_value(self, tmp_path):
         agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
         outputs = [
-            TaskOutput(key="line_amount", dynamic=True),
+            TaskOutput(key="line_amount", kind=FieldKind.ROW),
             TaskOutput(key="grand_total", aggregate=agg),
         ]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
@@ -562,7 +562,7 @@ class TestAggregateTransience:
     # Aggregate-source field lookup in _handle_save_field
     # When ONLY the aggregate output is declared (no standalone source field),
     # save_field calls with aggregate.source as field_name must still resolve
-    # is_dynamic=True and clipboard_correction from the aggregate definition.
+    # is_kind=FieldKind.ROW and clipboard_correction from the aggregate definition.
     # ------------------------------------------------------------------
 
     def _make_agent_via_constructor(self, tmp_path, proc):
@@ -578,7 +578,7 @@ class TestAggregateTransience:
         return agent
 
     def test_save_field_via_aggregate_source_accumulates_when_only_aggregate_declared(self, tmp_path):
-        """save_field with aggregate.source field_name must accumulate (dynamic=True)
+        """save_field with aggregate.source field_name must accumulate (kind=FieldKind.ROW)
         even when no standalone TaskOutput for that field is declared."""
         agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
         proc = TaskProcedure(
@@ -591,7 +591,7 @@ class TestAggregateTransience:
         agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
         agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
         assert agent.working_memory.facts["line_amount"] == ["10.00", "5.00"], (
-            "line_amount should accumulate across calls (dynamic=True inferred from aggregate source)"
+            "line_amount should accumulate across calls (kind=FieldKind.ROW inferred from aggregate source)"
         )
 
     def test_read_field_via_aggregate_source_respects_clipboard_correction_flag(self, tmp_path):
@@ -614,7 +614,7 @@ class TestAggregateTransience:
         """NONE operation stores the full source list under the output key."""
         agg = TaskOutputAggregate(operation=AggregateOperation.NONE, source="item")
         outputs = [
-            TaskOutput(key="item", dynamic=True),
+            TaskOutput(key="item", kind=FieldKind.ROW),
             TaskOutput(key="all_items", aggregate=agg),
         ]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
@@ -626,7 +626,7 @@ class TestAggregateTransience:
         """DEDUP operation stores deduplicated list, preserving first-seen order."""
         agg = TaskOutputAggregate(operation=AggregateOperation.DEDUP, source="item")
         outputs = [
-            TaskOutput(key="item", dynamic=True),
+            TaskOutput(key="item", kind=FieldKind.ROW),
             TaskOutput(key="unique_items", aggregate=agg),
         ]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
@@ -638,7 +638,7 @@ class TestAggregateTransience:
         """DEDUP collapses an all-duplicates input to a single-element list."""
         agg = TaskOutputAggregate(operation=AggregateOperation.DEDUP, source="item")
         outputs = [
-            TaskOutput(key="item", dynamic=True),
+            TaskOutput(key="item", kind=FieldKind.ROW),
             TaskOutput(key="unique_items", aggregate=agg),
         ]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
@@ -650,7 +650,7 @@ class TestAggregateTransience:
         """DEDUP with a single element returns that element unchanged."""
         agg = TaskOutputAggregate(operation=AggregateOperation.DEDUP, source="item")
         outputs = [
-            TaskOutput(key="item", dynamic=True),
+            TaskOutput(key="item", kind=FieldKind.ROW),
             TaskOutput(key="unique_items", aggregate=agg),
         ]
         agent = self._make_agent_with_outputs(tmp_path, outputs)

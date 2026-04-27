@@ -26,11 +26,14 @@ from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.core.agents.preprocessing import PreprocessingMode, preprocess_b64
 from omnitool.gradio.config import (
     AgentMode,
+    FieldKind,
     SCREENSHOT_MAX_WIDTH,
+    SystemConfig,
     TABLE_EXTRACTION_PROMPT,
     TaskProcedure,
     get_llm_config,
     get_pricing,
+    get_system_config,
 )
 from omnitool.gradio.core.agents.image_utils import _crop_b64
 from omnitool.gradio.services.state import AppState
@@ -116,6 +119,13 @@ class BaseAgent(ABC):
 
         # Task procedure — provided at construction when running in TASK mode.
         self.task_procedure: Optional[TaskProcedure] = task_procedure
+
+        # Resolve system config from the procedure's first execution block.
+        # Returns None when no procedure is set, no executions are declared,
+        # or the system name is not in the SYSTEMS registry.
+        self.system_config: Optional[SystemConfig] = None
+        if task_procedure is not None and task_procedure.executions:
+            self.system_config = get_system_config(task_procedure.executions[0].system)
 
     # ------------------------------------------------------------------
     # Lifecycle & accounting
@@ -406,25 +416,38 @@ class BaseAgent(ABC):
                 )
             self.working_memory.facts.setdefault(key, []).append(value)
 
-    def _handle_read_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, List[str]]]:
-        """Read and optionally verify one or more screen values via clipboard correction.
+    def _handle_read_field(
+        self, tc_args: Dict[str, Any]
+    ) -> Tuple[str, Dict[str, List[str]], List[dict]]:
+        """Read and optionally verify one or more screen values.
 
-        Each item is appended to ``staged_reads[field_name]`` — multiple items with
-        the same ``field_name`` accumulate in order across calls and within a single
-        call. Call ``_handle_save_field`` to drain the staged list into
-        ``working_memory.facts``.
+        Routes by TaskOutput.kind:
+        - SCALAR: clipboard correction path (when enabled) or direct value.
+        - ROW (browser): DevTools LLM extraction same as TABLE.
+        - ROW (non-browser): per-item accumulation fallback.
+        - TABLE (browser): DevTools LLM extraction via _extract_table_via_devtools.
+        - TABLE (non-browser): error (OCR not implemented).
+
+        Returns (tool_result_str, read_values, events) where events is a list of
+        dicts to yield upstream (e.g. table_read events).
         """
         items = tc_args.get("fields", [])
         if not items:
-            return "Error: fields list is required and must not be empty.", {}
+            return "Error: fields list is required and must not be empty.", {}, []
 
         results = []
         read_values: Dict[str, List[str]] = {}
+        events: List[dict] = []
+        is_browser = bool(self.system_config and self.system_config.is_browser)
+        # Track fields already extracted via DevTools in this call to avoid duplicate
+        # round-trips when the LLM batches multiple items for the same table field.
+        extracted_fields: set = set()
 
         for item in items:
             field_name = item.get("field_name", "")
             value = item.get("value", "")
             target = item.get("target")
+            hint = item.get("hint")
 
             if not field_name:
                 results.append("Error: field_name is required.")
@@ -436,47 +459,82 @@ class BaseAgent(ABC):
                     f"Error: field_name '{field_name}' is not declared in the task procedure."
                 )
                 continue
+
+            kind = out.kind if out else FieldKind.SCALAR
             use_correction = out.clipboard_correction if out else True
 
-            corrected = value
-            if value and use_correction and self.gta1_client and target:
-                try:
-                    description = f"{target} (showing '{value}')"
-                    result = self._read_field_via_clipboard(
-                        field_name, description, self.working_memory.parsed_screen or {}
+            if kind in (FieldKind.ROW, FieldKind.TABLE) and is_browser:
+                if field_name in extracted_fields:
+                    logger.info(
+                        "READ_FIELD — skipping duplicate table extraction for '%s' (already extracted in this call)",
+                        field_name,
                     )
-                    if result not in ("extraction failed", "null"):
-                        corrected = result
-                except Exception as exc:
-                    logger.warning("Field correction failed for '%s': %s", field_name, exc)
-
-            self.working_memory.staged_reads.setdefault(field_name, []).append(corrected)
-
-            n = len(self.working_memory.staged_reads[field_name])
-            if n > 1:
-                logger.info(
-                    "STAGED_READS — appended to '%s' (now %d values): %r",
-                    field_name, n, corrected,
+                    results.append(f"Skipped duplicate extraction for {field_name}")
+                    continue
+                try:
+                    rows = self._extract_table_via_devtools(hint)
+                    extracted_fields.add(field_name)
+                    events.append({"type": "table_read", "text": "\n".join(rows)})
+                    self.working_memory.staged_reads.setdefault(field_name, []).extend(rows)
+                    read_values.setdefault(field_name, []).extend(rows)
+                    n = len(self.working_memory.staged_reads[field_name])
+                    logger.info(
+                        "STAGED_READS — extracted %d rows for '%s' (total %d)",
+                        len(rows), field_name, n,
+                    )
+                    results.append(f"Extracted {len(rows)} rows for {field_name}")
+                except RuntimeError as exc:
+                    msg = f"Table extraction failed for '{field_name}': {exc}"
+                    logger.warning(msg)
+                    results.append(msg)
+                except Exception:
+                    logger.exception("Unexpected error in table extraction for '%s'", field_name)
+                    raise
+            elif kind == FieldKind.TABLE and not is_browser:
+                results.append(
+                    f"OCR not yet supported on this system; cannot extract '{field_name}'"
                 )
             else:
-                logger.info("STAGED_READS — first value for '%s': %r", field_name, corrected)
+                # SCALAR, or ROW on non-browser (per-item accumulation fallback)
+                corrected = value
+                if value and use_correction and self.gta1_client and target:
+                    try:
+                        description = f"{target} (showing '{value}')"
+                        result = self._read_field_via_clipboard(
+                            field_name, description, self.working_memory.parsed_screen or {}
+                        )
+                        if result not in ("extraction failed", "null"):
+                            corrected = result
+                    except Exception as exc:
+                        logger.warning("Field correction failed for '%s': %s", field_name, exc)
 
-            results.append(f"Read: {field_name} = {corrected}")
-            read_values.setdefault(field_name, []).append(corrected)
+                self.working_memory.staged_reads.setdefault(field_name, []).append(corrected)
 
-        return "\n".join(results), read_values
+                n = len(self.working_memory.staged_reads[field_name])
+                if n > 1:
+                    logger.info(
+                        "STAGED_READS — appended to '%s' (now %d values): %r",
+                        field_name, n, corrected,
+                    )
+                else:
+                    logger.info("STAGED_READS — first value for '%s': %r", field_name, corrected)
+
+                results.append(f"Read: {field_name} = {corrected}")
+                read_values.setdefault(field_name, []).append(corrected)
+
+        return "\n".join(results), read_values, events
 
     def _handle_save_field(self, tc_args: Dict[str, Any]) -> Tuple[str, Dict[str, List[str]]]:
         """Commit all staged values for each requested field to ``working_memory.facts``.
 
-        Drains the entire ``staged_reads[field_name]`` list: dynamic fields append
-        each value via ``_set_fact(..., overwrite=False)``; scalar fields keep only
-        the last staged value via ``_set_fact(..., overwrite=True)``. Returns a
-        tool-result error string if a ``field_name`` has no staged reads.
+        Drains the entire ``staged_reads[field_name]`` list: accumulating fields
+        append each value via ``_set_fact(..., overwrite=False)``; scalar fields
+        keep only the last staged value via ``_set_fact(..., overwrite=True)``.
+        Returns a tool-result error string if a ``field_name`` has no staged reads.
 
-        The returned ``captured`` dict mirrors what was committed: for dynamic fields
-        this is the full staged list; for scalar fields it is a single-element list
-        containing the committed value (which may be ``transformed_value`` when supplied).
+        The returned ``captured`` dict mirrors what was committed: for accumulating
+        fields this is the full staged list; for scalar fields it is a single-element
+        list containing the committed value (which may be ``transformed_value`` when supplied).
         """
         items = tc_args.get("fields", [])
         if not items:
@@ -507,19 +565,19 @@ class BaseAgent(ABC):
                     f"Error: field_name '{field_name}' is not declared in the task procedure."
                 )
                 continue
-            is_dynamic = out.is_dynamic if out else False
+            accumulates = out.accumulates if out else False
             transformed_value: str | None = item.get("transformed_value") or None
 
-            if is_dynamic:
+            if accumulates:
                 if transformed_value is not None:
                     results.append(
-                        f"Error: transformed_value is not supported for dynamic field '{field_name}'."
+                        f"Error: transformed_value is not supported for accumulating field '{field_name}'."
                     )
                     self.working_memory.staged_reads[field_name] = staged_values
                     continue
                 for value in staged_values:
                     self._set_fact(field_name, value, overwrite=False)
-                results.append(f"Saved {len(staged_values)} values to dynamic field '{field_name}'")
+                results.append(f"Saved {len(staged_values)} values to accumulating field '{field_name}'")
                 captured[field_name] = staged_values
             else:
                 if len(staged_values) > 1:
@@ -665,10 +723,12 @@ class BaseAgent(ABC):
             return ""
         return "\n\n".join(f"--- Table {j+1} ---\n{t}" for j, t in enumerate(tables))
 
-    def _handle_read_table(self, tc_args: Dict[str, Any]) -> Tuple[str, str]:
-        """Capture page HTML via DevTools, strip to tables, LLM-extract as pipe-separated text."""
-        hint = tc_args.get("hint", "")
+    def _extract_table_via_devtools(self, hint: Optional[str]) -> List[str]:
+        """Capture page HTML via DevTools, strip to tables, LLM-extract as pipe-separated rows.
 
+        Returns one pipe-separated string per row (header first). Raises RuntimeError
+        on capture/extraction failure so callers can format per-field error messages.
+        """
         self.tools_collection.run("computer", "key", text="ctrl+shift+j")
         self.tools_collection.run("computer", "type",
                                    text="copy(document.documentElement.outerHTML)")
@@ -677,39 +737,28 @@ class BaseAgent(ABC):
 
         clip_result = self.tools_collection.run("computer", "read_clipboard")
         if clip_result.error:
-            msg = f"read_table failed: could not capture HTML ({clip_result.error})"
-            logger.warning(msg)
-            return msg, msg
+            raise RuntimeError(f"could not capture HTML ({clip_result.error})")
 
         tables_html = self._extract_tables_from_html(clip_result.output or "")
         if not tables_html:
-            msg = "read_table: no tables found on this page"
-            logger.warning(msg)
-            return msg, msg
+            raise RuntimeError("no tables found on this page")
 
         user_content = TABLE_EXTRACTION_PROMPT
         if hint:
             user_content += f"\n\nHint: {hint}"
         user_content += f"\n\n{tables_html}"
 
-        try:
-            table_text, meta = self.llm_client.generate(
-                messages=[{"role": "user", "content": user_content}]
-            )
-            self.update_token_usage(meta.get("tokens", 0))
-            self.update_cost(self._calculate_cost(meta))
-        except Exception as exc:
-            msg = f"read_table failed: extraction error ({exc})"
-            logger.warning(msg)
-            return msg, msg
+        table_text, meta = self.llm_client.generate(
+            messages=[{"role": "user", "content": user_content}]
+        )
+        self.update_token_usage(meta.get("tokens", 0))
+        self.update_cost(self._calculate_cost(meta))
 
         table_text = (table_text or "").strip()
         if not table_text:
-            msg = "read_table: LLM returned empty extraction"
-            logger.warning(msg)
-            return msg, msg
+            raise RuntimeError("LLM returned empty extraction")
 
-        return table_text, table_text
+        return [stripped for row in table_text.split("\n") if (stripped := row.strip())]
 
     def _write_run_summary(self, success: bool, message: str) -> None:
         """Write summary.json to save_folder at the end of every run."""

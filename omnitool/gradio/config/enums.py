@@ -39,6 +39,18 @@ class AgentMode(StrEnum):
     TASK = "task"
 
 
+class FieldKind(StrEnum):
+    """Shape of a TaskOutput value as captured from the screen.
+
+    SCALAR — single value, optionally clipboard-corrected.
+    ROW    — accumulating list, one entry per read_field item.
+    TABLE  — extracted from page DOM (browser systems) or OCR (non-browser).
+    """
+    SCALAR = "scalar"
+    ROW = "row"
+    TABLE = "table"
+
+
 class AggregateOperation(StrEnum):
     """Supported aggregation operations for the read_field tool."""
     SUM = "sum"

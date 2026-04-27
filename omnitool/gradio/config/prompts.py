@@ -16,7 +16,9 @@ Prompt order mirrors the agentic loop:
 """
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
+
+from omnitool.gradio.config.systems import SystemConfig
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +302,7 @@ You are a data extraction assistant. You will receive one or more HTML tables fr
 Your task:
 1. If a hint is provided, select the table that best matches it. Otherwise, select the most data-rich table (most rows × columns).
 2. Output the table as plain text using ` | ` (space-pipe-space) as a column separator.
-3. First row must be the header row. One data row per output line.
+3. First row must be the header row. One data row per output line. Each row must be on its own line — output is split on newlines, so do not embed newlines inside a row.
 4. Reproduce cell values verbatim — do not summarize, truncate, or reformat numbers.
 5. Output only the table text. No preamble, no explanation, no markdown fences.\
 """
@@ -329,24 +331,32 @@ def build_anthropic_system_prompt(platform: str = "windows") -> str:
 def build_react_system_prompt(
     platform: str = "windows",
     element_reference_hint: str = "",
+    system: Optional[SystemConfig] = None,
 ) -> str:
     """Assemble the ReAct agent system prompt.
 
     Args:
         platform: Key into :data:`PLATFORM_PROMPTS` (default ``"windows"``).
         element_reference_hint: Grounding-strategy hint injected verbatim.
+        system: Optional system config. When provided with a non-empty
+            ``prompt_fragment``, the fragment is appended after the base prompt.
+            When ``None`` or with an empty fragment, the rendered prompt is
+            byte-identical to the no-system case (preserves cache stability).
 
     Returns:
         Fully-rendered system prompt string.
     """
     pp = PLATFORM_PROMPTS.get(platform, PLATFORM_PROMPTS["generic"])
-    return REACT_SYSTEM_PROMPT.format(
+    rendered = REACT_SYSTEM_PROMPT.format(
         platform_description=pp.description,
         interaction_constraints=pp.constraints,
         element_reference_hint=element_reference_hint,
         input_field_instructions=_INPUT_FIELD_INSTRUCTIONS,
         scroll_instructions=_SCROLL_INSTRUCTIONS,
     )
+    if system is not None and system.prompt_fragment:
+        rendered = f"{rendered}\n\n## System: {system.name}\n{system.prompt_fragment}"
+    return rendered
 
 
 def build_vlm_tool_system_prompt(

@@ -80,6 +80,7 @@ class ReActAgent(BaseAgent):
         return build_react_system_prompt(
             platform=self.platform,
             element_reference_hint=self.grounding_strategy.element_reference_hint,
+            system=self.system_config,
         )
 
     # ------------------------------------------------------------------
@@ -255,7 +256,9 @@ class ReActAgent(BaseAgent):
 
                 # 5b. read_field → verify value, return to LLM (does NOT save)
                 if tool_name == "read_field":
-                    result_text, read_values = self._handle_read_field(arguments)
+                    result_text, read_values, table_events = self._handle_read_field(arguments)
+                    for evt in table_events:
+                        yield evt
                     if read_values:
                         yield {"type": "screen_reading", "fields": read_values}
                     history.append(_tool_msg(tool_call_id, result_text))
@@ -292,14 +295,7 @@ class ReActAgent(BaseAgent):
                     result_text = self._handle_mark_screenshot(arguments.get("reason", ""))
                     history.append(_tool_msg(tool_call_id, result_text))
 
-                # 5e. read_table → capture page HTML, LLM extraction
-                elif tool_name == "read_table":
-                    table_text, display_text = self._handle_read_table(arguments)
-                    history.append(_tool_msg(tool_call_id, table_text))
-                    logger.info("READ_TABLE — %d chars", len(table_text))
-                    yield {"type": "table_read", "text": display_text}
-
-                # 5f. Computer action → grounding → execute
+                # 5e. Computer action → grounding → execute
                 else:
                     try:
                         dispatch = self.grounding_strategy.resolve(tool_name, arguments, screen_data)

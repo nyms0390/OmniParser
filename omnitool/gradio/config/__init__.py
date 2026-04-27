@@ -14,7 +14,7 @@ from omnitool.gradio.config.constants import (
     TYPING_DELAY_MS,
     WINDOWS_HOST_TIMEOUT_SECONDS,
 )
-from omnitool.gradio.config.enums import AgentMode, AggregateOperation, APIProvider
+from omnitool.gradio.config.enums import AgentMode, AggregateOperation, APIProvider, FieldKind
 from omnitool.gradio.config.models import (
     PROVIDER_CONFIG,
     LLM_MODELS,
@@ -50,6 +50,12 @@ from omnitool.gradio.config.settings import (
     load_settings,
     load_yaml_config,
 )
+from omnitool.gradio.config.systems import (
+    LoginConfig,
+    SystemConfig,
+    SYSTEMS,
+    get_system_config,
+)
 from omnitool.gradio.config.task_template import TaskInput, TaskProcedure, TaskTemplate, load_task_template
 
 __all__ = [
@@ -68,6 +74,7 @@ __all__ = [
     "AgentMode",
     "AggregateOperation",
     "APIProvider",
+    "FieldKind",
     # Models
     "PROVIDER_CONFIG",
     "LLM_MODELS",
@@ -107,4 +114,9 @@ __all__ = [
     "TaskProcedure",
     "TaskTemplate",
     "load_task_template",
+    # Systems
+    "LoginConfig",
+    "SystemConfig",
+    "SYSTEMS",
+    "get_system_config",
 ]

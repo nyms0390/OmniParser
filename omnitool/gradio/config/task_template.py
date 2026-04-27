@@ -36,7 +36,7 @@ from typing import Dict, List, Optional
 
 import yaml
 
-from omnitool.gradio.config.enums import AggregateOperation
+from omnitool.gradio.config.enums import AggregateOperation, FieldKind
 
 logger = logging.getLogger(__name__)
 
@@ -96,28 +96,38 @@ class TaskOutput:
     description: str = ""
     format: str = ""
     clipboard_correction: bool = True
-    dynamic: bool = False
+    kind: FieldKind = FieldKind.SCALAR
     aggregate: Optional[TaskOutputAggregate] = None
 
     @property
-    def is_dynamic(self) -> bool:
-        """True when values accumulate rather than overwrite.
+    def accumulates(self) -> bool:
+        """True when values append to a list rather than overwrite.
 
-        A field is dynamic when explicitly flagged, or when it is the source
-        of an aggregate output (those always accumulate).
+        ROW and TABLE kinds always accumulate. A SCALAR field also accumulates
+        when it is the source of an aggregate output (its values feed the
+        computation at finish).
         """
-        return self.dynamic or self.aggregate is not None
+        return self.kind in (FieldKind.ROW, FieldKind.TABLE) or self.aggregate is not None
 
     @classmethod
     def from_dict(cls, data) -> "TaskOutput":
         if isinstance(data, str):
             return cls(key=data)
+        raw_kind = data.get("kind", FieldKind.SCALAR.value)
+        try:
+            kind = FieldKind(raw_kind)
+        except ValueError:
+            valid = [k.value for k in FieldKind]
+            raise ValueError(
+                f"Invalid kind {raw_kind!r} for output {data.get('key')!r}. "
+                f"Valid values: {valid}"
+            ) from None
         return cls(
             key=data["key"],
             description=data.get("description", ""),
             format=data.get("format", ""),
             clipboard_correction=bool(data.get("clipboard_correction", True)),
-            dynamic=bool(data.get("dynamic", False)),
+            kind=kind,
             aggregate=(
                 TaskOutputAggregate.from_dict(raw_agg)
                 if (raw_agg := data.get("aggregate"))
@@ -219,7 +229,9 @@ class TaskProcedure:
         if capturable or auto_computed:
             lines.append("\nOutputs:")
             for out in capturable:
-                mode = " (one entry per row)" if out.dynamic else ""
+                # Aggregate outputs are routed to auto_computed below, so kind here
+                # only distinguishes SCALAR vs ROW/TABLE for direct-capture fields.
+                mode = " (one entry per row)" if out.kind != FieldKind.SCALAR else ""
                 lines.append(f"  - capture {out.key}{mode}: {out.description}")
             for out in auto_computed:
                 if out.aggregate.source not in capturable_keys:
@@ -257,7 +269,7 @@ class TaskProcedure:
     def get_output(self, field_name: str) -> Optional[TaskOutput]:
         """Return the TaskOutput matching *field_name* (or its aggregate source), or None.
 
-        Callers read attributes directly (``out.is_dynamic``,
+        Callers read attributes directly (``out.accumulates``,
         ``out.clipboard_correction``) and apply their own defaults when the
         field is unknown.
         """
