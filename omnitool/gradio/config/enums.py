@@ -55,22 +55,19 @@ class AggregateOperation(StrEnum):
     """Supported aggregation operations for the read_field tool."""
     SUM = "sum"
     CONCAT = "concat"
-    NONE = "none"
     DEDUP = "dedup"
 
     def apply(self, values: list[str]) -> str | list[str]:
         """Apply this operation to a list of raw string values.
 
         Returns a ``str`` for reducing operations (SUM, CONCAT) or a
-        ``list[str]`` for list-returning operations (NONE, DEDUP).
+        ``list[str]`` for list-returning operations (DEDUP).
 
         Raises:
             ValueError: If *values* is empty for reducing operations (SUM,
-                CONCAT), or if SUM encounters a non-numeric string. NONE and
-                DEDUP tolerate empty input.
+                CONCAT), or if SUM encounters a non-numeric string. DEDUP
+                tolerates empty input.
         """
-        if self == AggregateOperation.NONE:
-            return list(values)
         if self == AggregateOperation.DEDUP:
             # dict.fromkeys preserves insertion order (Python 3.7+) while dropping duplicate keys
             return list(dict.fromkeys(values))

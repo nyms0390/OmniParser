@@ -485,32 +485,27 @@ class TestAggregateTransience:
         assert agent.working_memory.facts["line_amount"] == ["10.00", "5.00"]
 
     def test_aggregate_result_written_to_facts_at_finish(self, tmp_path):
-        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
-        outputs = [
-            TaskOutput(key="line_amount", kind=FieldKind.ROW),
-            TaskOutput(key="grand_total", aggregate=agg),
-        ]
+        agg = TaskOutputAggregate(operation=AggregateOperation.SUM)
+        outputs = [TaskOutput(key="grand_total", aggregate=agg)]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
-        agent.working_memory.facts["line_amount"] = ["10.00", "5.00"]
+        agent.working_memory.facts["grand_total"] = ["10.00", "5.00"]
         agent._apply_template_aggregates()
         result = agent.working_memory.facts["grand_total"]
         assert len(result) == 1
         assert float(result[0]) == pytest.approx(15.0)
 
     def test_all_non_numeric_source_skips_aggregate(self, tmp_path):
-        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="labels")
-        outputs = [
-            TaskOutput(key="labels", kind=FieldKind.ROW),
-            TaskOutput(key="total", aggregate=agg),
-        ]
+        agg = TaskOutputAggregate(operation=AggregateOperation.SUM)
+        outputs = [TaskOutput(key="total", aggregate=agg)]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
-        agent.working_memory.facts["labels"] = ["N/A", "—"]
+        agent.working_memory.facts["total"] = ["N/A", "—"]
         agent._apply_template_aggregates()
-        assert "total" not in agent.working_memory.facts
+        # Non-numeric SUM raises ValueError, which is caught and logged — facts unchanged
+        assert agent.working_memory.facts["total"] == ["N/A", "—"]
 
     def test_unknown_operation_raises_at_load_time(self, tmp_path):
         with pytest.raises(ValueError, match="Invalid aggregate operation"):
-            TaskOutputAggregate.from_dict({"operation": "median", "source": "values"})
+            TaskOutputAggregate.from_dict({"operation": "median"})
 
     def test_no_task_procedure_is_noop(self, tmp_path):
         agent = _make_react_agent(tmp_path, [])
@@ -520,140 +515,58 @@ class TestAggregateTransience:
         assert "x" in agent.working_memory.facts  # unchanged
 
     def test_multiple_aggregate_outputs_all_computed(self, tmp_path):
-        agg1 = TaskOutputAggregate(operation=AggregateOperation.SUM, source="prices")
-        agg2 = TaskOutputAggregate(operation=AggregateOperation.SUM, source="fees")
+        agg1 = TaskOutputAggregate(operation=AggregateOperation.SUM)
+        agg2 = TaskOutputAggregate(operation=AggregateOperation.SUM)
         outputs = [
-            TaskOutput(key="prices", kind=FieldKind.ROW),
-            TaskOutput(key="fees", kind=FieldKind.ROW),
             TaskOutput(key="price_total", aggregate=agg1),
             TaskOutput(key="fee_total", aggregate=agg2),
         ]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
-        agent.working_memory.facts["prices"] = ["10.00", "20.00"]
-        agent.working_memory.facts["fees"] = ["1.00", "2.00"]
+        agent.working_memory.facts["price_total"] = ["10.00", "20.00"]
+        agent.working_memory.facts["fee_total"] = ["1.00", "2.00"]
         agent._apply_template_aggregates()
         assert agent.working_memory.facts["price_total"] == ["30"]
         assert agent.working_memory.facts["fee_total"] == ["3"]
 
     def test_empty_source_field_skips_aggregate(self, tmp_path):
-        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
-        outputs = [
-            TaskOutput(key="line_amount", kind=FieldKind.ROW),
-            TaskOutput(key="grand_total", aggregate=agg),
-        ]
+        agg = TaskOutputAggregate(operation=AggregateOperation.SUM)
+        outputs = [TaskOutput(key="grand_total", aggregate=agg)]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
-        # line_amount never captured
+        # grand_total never captured
         agent._apply_template_aggregates()
         assert "grand_total" not in agent.working_memory.facts
 
-    def test_aggregate_overwrites_existing_value(self, tmp_path):
-        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
-        outputs = [
-            TaskOutput(key="line_amount", kind=FieldKind.ROW),
-            TaskOutput(key="grand_total", aggregate=agg),
-        ]
+    def test_aggregate_reduces_in_place(self, tmp_path):
+        agg = TaskOutputAggregate(operation=AggregateOperation.SUM)
+        outputs = [TaskOutput(key="grand_total", aggregate=agg)]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
-        agent.working_memory.facts["grand_total"] = ["OLD"]
-        agent.working_memory.facts["line_amount"] = ["7.00"]
+        agent.working_memory.facts["grand_total"] = ["7.00"]
         agent._apply_template_aggregates()
         assert agent.working_memory.facts["grand_total"] == ["7"]
 
-    # ------------------------------------------------------------------
-    # Aggregate-source field lookup in _handle_save_field
-    # When ONLY the aggregate output is declared (no standalone source field),
-    # save_field calls with aggregate.source as field_name must still resolve
-    # is_kind=FieldKind.ROW and clipboard_correction from the aggregate definition.
-    # ------------------------------------------------------------------
-
-    def _make_agent_via_constructor(self, tmp_path, proc):
-        """Create agent with a real task_procedure attached."""
-        agent = make_react_agent(
-            tmp_path,
-            side_effects=[],
-            max_steps=5,
-            user_message="Do something",
-            task_procedure=proc,
-        )
-        agent.gta1_client = None
-        return agent
-
-    def test_save_field_via_aggregate_source_accumulates_when_only_aggregate_declared(self, tmp_path):
-        """save_field with aggregate.source field_name must accumulate (kind=FieldKind.ROW)
-        even when no standalone TaskOutput for that field is declared."""
-        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
-        proc = TaskProcedure(
-            id=1, description="test",
-            outputs=[TaskOutput(key="grand_total", aggregate=agg)],
-        )
-        agent = self._make_agent_via_constructor(tmp_path, proc)
-        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
-        agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
-        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
-        agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
-        assert agent.working_memory.facts["line_amount"] == ["10.00", "5.00"], (
-            "line_amount should accumulate across calls (kind=FieldKind.ROW inferred from aggregate source)"
-        )
-
-    def test_read_field_via_aggregate_source_respects_clipboard_correction_flag(self, tmp_path):
-        """clipboard_correction=False on the aggregate output must suppress correction
-        for its source field when no standalone source TaskOutput is declared."""
-        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
-        proc = TaskProcedure(
-            id=1, description="test",
-            outputs=[TaskOutput(key="grand_total", aggregate=agg, clipboard_correction=False)],
-        )
-        agent = self._make_agent_via_constructor(tmp_path, proc)
-        agent.gta1_client = Mock()
-        agent._read_field_via_clipboard = Mock(return_value="corrected")
-        agent._handle_read_field({"fields": [
-            {"field_name": "line_amount", "value": "10.00", "target": "amount field"}
-        ]})
-        agent._read_field_via_clipboard.assert_not_called()
-
-    def test_none_aggregate_preserves_list(self, tmp_path):
-        """NONE operation stores the full source list under the output key."""
-        agg = TaskOutputAggregate(operation=AggregateOperation.NONE, source="item")
-        outputs = [
-            TaskOutput(key="item", kind=FieldKind.ROW),
-            TaskOutput(key="all_items", aggregate=agg),
-        ]
-        agent = self._make_agent_with_outputs(tmp_path, outputs)
-        agent.working_memory.facts["item"] = ["alpha", "beta", "gamma"]
-        agent._apply_template_aggregates()
-        assert agent.working_memory.facts["all_items"] == ["alpha", "beta", "gamma"]
-
     def test_dedup_aggregate_removes_duplicates_preserving_order(self, tmp_path):
         """DEDUP operation stores deduplicated list, preserving first-seen order."""
-        agg = TaskOutputAggregate(operation=AggregateOperation.DEDUP, source="item")
-        outputs = [
-            TaskOutput(key="item", kind=FieldKind.ROW),
-            TaskOutput(key="unique_items", aggregate=agg),
-        ]
+        agg = TaskOutputAggregate(operation=AggregateOperation.DEDUP)
+        outputs = [TaskOutput(key="unique_items", aggregate=agg)]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
-        agent.working_memory.facts["item"] = ["alpha", "beta", "alpha", "gamma", "beta"]
+        agent.working_memory.facts["unique_items"] = ["alpha", "beta", "alpha", "gamma", "beta"]
         agent._apply_template_aggregates()
         assert agent.working_memory.facts["unique_items"] == ["alpha", "beta", "gamma"]
 
     def test_dedup_aggregate_all_duplicates_collapses_to_single(self, tmp_path):
         """DEDUP collapses an all-duplicates input to a single-element list."""
-        agg = TaskOutputAggregate(operation=AggregateOperation.DEDUP, source="item")
-        outputs = [
-            TaskOutput(key="item", kind=FieldKind.ROW),
-            TaskOutput(key="unique_items", aggregate=agg),
-        ]
+        agg = TaskOutputAggregate(operation=AggregateOperation.DEDUP)
+        outputs = [TaskOutput(key="unique_items", aggregate=agg)]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
-        agent.working_memory.facts["item"] = ["alpha", "alpha", "alpha"]
+        agent.working_memory.facts["unique_items"] = ["alpha", "alpha", "alpha"]
         agent._apply_template_aggregates()
         assert agent.working_memory.facts["unique_items"] == ["alpha"]
 
     def test_dedup_aggregate_single_element_unchanged(self, tmp_path):
         """DEDUP with a single element returns that element unchanged."""
-        agg = TaskOutputAggregate(operation=AggregateOperation.DEDUP, source="item")
-        outputs = [
-            TaskOutput(key="item", kind=FieldKind.ROW),
-            TaskOutput(key="unique_items", aggregate=agg),
-        ]
+        agg = TaskOutputAggregate(operation=AggregateOperation.DEDUP)
+        outputs = [TaskOutput(key="unique_items", aggregate=agg)]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
-        agent.working_memory.facts["item"] = ["only"]
+        agent.working_memory.facts["unique_items"] = ["only"]
         agent._apply_template_aggregates()
         assert agent.working_memory.facts["unique_items"] == ["only"]

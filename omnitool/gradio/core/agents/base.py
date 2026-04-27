@@ -400,7 +400,7 @@ class BaseAgent(ABC):
 
         - overwrite=False: appends to the list; *value* must be a plain ``str``.
         - overwrite=True: replaces the stored list entirely. When *value* is already
-          a ``list[str]`` (e.g. from ``AggregateOperation.NONE``) it is stored
+          a ``list[str]`` (e.g. from ``AggregateOperation.DEDUP``) it is stored
           as-is; a plain ``str`` is wrapped in a single-element list.
         """
         if overwrite:
@@ -421,12 +421,15 @@ class BaseAgent(ABC):
     ) -> Tuple[str, Dict[str, List[str]], List[dict]]:
         """Read and optionally verify one or more screen values.
 
-        Routes by TaskOutput.kind:
+        Routes by TaskOutput.kind and aggregate:
         - SCALAR: clipboard correction path (when enabled) or direct value.
         - ROW (browser): DevTools LLM extraction same as TABLE.
         - ROW (non-browser): per-item accumulation fallback.
         - TABLE (browser): DevTools LLM extraction via _extract_table_via_devtools.
         - TABLE (non-browser): error (OCR not implemented).
+        - aggregate present (browser): DevTools extraction same as TABLE; rows
+          append across calls so multiple read_field invocations accumulate.
+        - aggregate present (non-browser): error (OCR not implemented).
 
         Returns (tool_result_str, read_values, events) where events is a list of
         dicts to yield upstream (e.g. table_read events).
@@ -462,8 +465,9 @@ class BaseAgent(ABC):
 
             kind = out.kind if out else FieldKind.SCALAR
             use_correction = out.clipboard_correction if out else True
+            has_aggregate = out is not None and out.aggregate is not None
 
-            if kind in (FieldKind.ROW, FieldKind.TABLE) and is_browser:
+            if (kind in (FieldKind.ROW, FieldKind.TABLE) or has_aggregate) and is_browser:
                 if field_name in extracted_fields:
                     logger.info(
                         "READ_FIELD — skipping duplicate table extraction for '%s' (already extracted in this call)",
@@ -490,7 +494,7 @@ class BaseAgent(ABC):
                 except Exception:
                     logger.exception("Unexpected error in table extraction for '%s'", field_name)
                     raise
-            elif kind == FieldKind.TABLE and not is_browser:
+            elif (kind == FieldKind.TABLE or has_aggregate) and not is_browser:
                 results.append(
                     f"OCR not yet supported on this system; cannot extract '{field_name}'"
                 )
@@ -565,7 +569,10 @@ class BaseAgent(ABC):
                     f"Error: field_name '{field_name}' is not declared in the task procedure."
                 )
                 continue
-            accumulates = out.accumulates if out else False
+            accumulates = out is not None and (
+                out.aggregate is not None
+                or out.kind in (FieldKind.ROW, FieldKind.TABLE)
+            )
             transformed_value: str | None = item.get("transformed_value") or None
 
             if accumulates:
@@ -604,27 +611,25 @@ class BaseAgent(ABC):
 
         Called once at finish. For each output in ``task_procedure`` that has
         an ``aggregate`` config, reads the accumulated list from
-        ``working_memory.facts[aggregate.source]``, applies the operation over
-        numeric values, and stores the result under ``output.key``.
+        ``working_memory.facts[output.key]``, applies the operation over the
+        values, and overwrites ``output.key`` with the reduced result.
         """
         if self.task_procedure is None:
             return
         for out in self.task_procedure.outputs:
             if out.aggregate is None:
                 continue
-            source_values = self.working_memory.facts.get(out.aggregate.source, [])
-            if not all(isinstance(v, str) for v in source_values):
+            accumulated = self.working_memory.facts.get(out.key, [])
+            if not all(isinstance(v, str) for v in accumulated):
                 raise TypeError(
                     f"facts invariant violated for {out.key!r}: "
-                    f"non-str values in {source_values!r}"
+                    f"non-str values in {accumulated!r}"
                 )
-            if not source_values:
-                logger.warning(
-                    "Aggregate for %r: no values in source %r", out.key, out.aggregate.source
-                )
+            if not accumulated:
+                logger.warning("Aggregate for %r: no accumulated values", out.key)
                 continue
             try:
-                result = out.aggregate.operation.apply(source_values)
+                result = out.aggregate.operation.apply(accumulated)
             except (NotImplementedError, ValueError) as exc:
                 logger.error(
                     "Aggregate operation %r failed for output %r: %s",
@@ -633,8 +638,8 @@ class BaseAgent(ABC):
                 continue
             self._set_fact(out.key, result, overwrite=True)
             logger.info(
-                "Aggregate %r = %r (from %d values in %r)",
-                out.key, result, len(source_values), out.aggregate.source,
+                "Aggregate %r = %r (from %d values)",
+                out.key, result, len(accumulated),
             )
 
     # ------------------------------------------------------------------

@@ -133,8 +133,8 @@ outputs:
 | `description` | No | Tells the agent what to look for on screen. |
 | `format` | No | Expected format of the captured value. |
 | `clipboard_correction` | No | `true` (default) or `false`. When `true`, the agent captures the value by tri-clicking the field to select its content, then reading the clipboard. **Before enabling this, verify that the target system's input fields support tri-click selection** (triple-click selects the full field content). Set to `false` for fields where tri-click does not select text, or where the value only needs to be visually confirmed rather than extracted. |
-| `dynamic` | No | `false` (default) or `true`. When `true`, the agent captures this key once per matching step and accumulates all captured values into a list (useful for reading the same field across multiple rows). |
-| `aggregate` | No | Declares an auto-computed output. **Not captured by the agent directly** — computed at finish from a dynamic field. Requires two sub-fields: `operation` (see table below) and `source` (the `key` of the dynamic output to aggregate). |
+| `kind` | No | `scalar` (default), `row`, or `table`. Controls how the agent collects values. `scalar` — a single value per field. `row` — accumulates one entry per row across multiple steps (useful when the same field appears in every row of a scrollable list). `table` — extracts an entire HTML table at once via browser DevTools; only works on browser-based systems (e.g. `system: EPA`); falls back to an error on desktop systems. |
+| `aggregate` | No | Declares an auto-computed output. **Not captured by the agent directly** — computed at finish from a `kind: row` field. Requires two sub-fields: `operation` (see table below) and `source` (the `key` of the row output to aggregate). |
 
 **Aggregate operations:**
 
@@ -145,23 +145,35 @@ outputs:
 | `none` | list | Returns the raw list of captured values unchanged. |
 | `dedup` | list | Returns the list with duplicate values removed, preserving order. |
 
-**Dynamic + aggregate pattern** — use this when a value appears once per row and you want a total:
+**Row accumulation + aggregate pattern** — use this when a value appears once per row and you want a total:
 
 ```yaml
 outputs:
   - key: row_fee
     description: "Fee shown on each row of the table."
     format: decimal
-    dynamic: true          # captured once per row, accumulates a list
+    kind: row              # accumulates one entry per row
   - key: total_fee
     description: "Sum of all row fees."
     format: decimal
     aggregate:
       operation: sum
-      source: row_fee      # aggregated from the dynamic field above
+      source: row_fee      # aggregated from the row field above
 ```
 
-The agent captures `row_fee` on every relevant step; `total_fee` is computed automatically when the procedure finishes. Do **not** reference `{total_fee}` in steps — only reference `{row_fee}` where it should be read.
+The agent captures `row_fee` once per row; `total_fee` is computed automatically when the procedure finishes. Do **not** reference `{total_fee}` in steps — only reference `{row_fee}` where it should be read.
+
+**Table extraction pattern** — use this when you want the agent to pull an entire HTML table in one shot (browser-based systems only):
+
+```yaml
+outputs:
+  - key: line_items
+    description: "All rows from the invoice line items table."
+    format: string
+    kind: table            # extracted via browser DevTools; not supported on desktop systems
+```
+
+Reference `{line_items}` in a single step such as `"Read the line items table as {line_items}."` The agent sends the page HTML to an LLM to extract rows as pipe-separated text; writing a descriptive step helps it target the right table when the page contains more than one.
 
 > **Key rules:** All key names must be unique across the entire template — no input and output may share the same name. Each key also holds exactly one value; do not pack multiple pieces of information into a single key (e.g., use `first_name` and `last_name`, not one `full_name` key for both).
 
@@ -287,6 +299,8 @@ procedures:
 | Using `<key>` for outputs | Outputs use curly braces: `{key}`, not angle brackets |
 | Duplicate key names across inputs/outputs | All key names must be unique across the entire template |
 | Mapping multiple values to one key | Define a separate key for each distinct piece of information |
+| Using `dynamic: true` (old format) | Use `kind: row` instead — `dynamic` is no longer recognized |
+| Using `kind: table` on a desktop system | `kind: table` requires a browser-based system; use `kind: row` for desktop per-row accumulation |
 | Vague `verify:` hints like "page updates" | Name the exact element, text, or screen state: which message, what it says, where it appears |
 | No scroll step before an off-screen element | Add an explicit step: "Scroll down until the Submit button is visible." |
 
@@ -304,6 +318,8 @@ procedures:
 - [ ] Input values are referenced as `<key>` in steps
 - [ ] Output values to capture are referenced as `{key}` in steps
 - [ ] All key names are unique across inputs and outputs; each key holds exactly one value
+- [ ] Outputs that collect one value per row use `kind: row`; outputs that extract a full browser table use `kind: table`
+- [ ] `kind: table` outputs are only used when `system:` refers to a browser-based application
 - [ ] Scroll steps are written explicitly before any element that may be off-screen
 - [ ] Ambiguous UI elements are identified by their neighboring labeled elements
 - [ ] Each `verify:` line names a specific element, text, or screen state

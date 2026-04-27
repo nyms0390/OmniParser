@@ -278,8 +278,9 @@ READ_FIELD_TOOL: dict = {
                                 "type": "string",
                                 "description": (
                                     "Optional description of which table to extract — only used for "
-                                    "outputs declared as kind: table or kind: row in the procedure, "
-                                    "and only on browser-based systems (DevTools-driven extraction). "
+                                    "outputs declared as kind: table, kind: row, or with an aggregate "
+                                    "in the procedure, and only on browser-based systems "
+                                    "(DevTools-driven extraction). "
                                     "(e.g. 'invoice line items', 'order history'). "
                                     "Ignored for scalar outputs and on non-browser systems."
                                 ),

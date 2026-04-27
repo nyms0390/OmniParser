@@ -68,13 +68,11 @@ class TaskInput:
 class TaskOutputAggregate:
     """Aggregate computation declared on a TaskOutput.
 
-    When present, the agent computes this aggregate at finish time by reading
-    the accumulated values of *source* from working_memory.facts and writing
-    the result under the parent output's key.
+    When present, the agent accumulates row values under the parent output's
+    own key during the run, then reduces the list in place at finish.
     """
 
     operation: AggregateOperation
-    source: str     # key of the dynamic field whose values are aggregated
 
     @classmethod
     def from_dict(cls, data: dict) -> "TaskOutputAggregate":
@@ -85,7 +83,7 @@ class TaskOutputAggregate:
             raise ValueError(
                 f"Invalid aggregate operation {data['operation']!r}. Valid values: {valid}"
             ) from None
-        return cls(operation=op, source=data["source"])
+        return cls(operation=op)
 
 
 @dataclass
@@ -98,16 +96,6 @@ class TaskOutput:
     clipboard_correction: bool = True
     kind: FieldKind = FieldKind.SCALAR
     aggregate: Optional[TaskOutputAggregate] = None
-
-    @property
-    def accumulates(self) -> bool:
-        """True when values append to a list rather than overwrite.
-
-        ROW and TABLE kinds always accumulate. A SCALAR field also accumulates
-        when it is the source of an aggregate output (its values feed the
-        computation at finish).
-        """
-        return self.kind in (FieldKind.ROW, FieldKind.TABLE) or self.aggregate is not None
 
     @classmethod
     def from_dict(cls, data) -> "TaskOutput":
@@ -214,62 +202,35 @@ class TaskProcedure:
                 lines.append(display_line)
                 # Match against raw_line: {key} placeholders intact before substitution
                 for out in self._referenced_outputs(raw_line):
-                    if out.aggregate:
-                        lines.append(
-                            f"   capture: {out.aggregate.source}"
-                            f"  [{out.key} is auto-computed as"
-                            f" {out.aggregate.operation.value} at finish — do not capture directly]"
-                        )
-                    else:
-                        lines.append(f"   capture: {out.key}")
+                    lines.append(f"   capture: {out.key}")
 
-        capturable = [o for o in self.outputs if o.aggregate is None]
-        auto_computed = [o for o in self.outputs if o.aggregate is not None]
-        capturable_keys = {o.key for o in capturable}
-        if capturable or auto_computed:
+        if self.outputs:
             lines.append("\nOutputs:")
-            for out in capturable:
-                # Aggregate outputs are routed to auto_computed below, so kind here
-                # only distinguishes SCALAR vs ROW/TABLE for direct-capture fields.
-                mode = " (one entry per row)" if out.kind != FieldKind.SCALAR else ""
-                lines.append(f"  - capture {out.key}{mode}: {out.description}")
-            for out in auto_computed:
-                if out.aggregate.source not in capturable_keys:
-                    lines.append(
-                        f"  - capture {out.aggregate.source} (one entry per row):"
-                        f" {out.description}"
-                        f"  [{out.key} will be auto-computed as"
-                        f" {out.aggregate.operation.value} of {out.aggregate.source}]"
-                    )
+            for out in self.outputs:
+                if out.aggregate is not None:
+                    mode = f" (all rows at once, reduced via {out.aggregate.operation.value} at finish)"
                 else:
-                    lines.append(
-                        f"  - {out.key} will be auto-computed as"
-                        f" {out.aggregate.operation.value} of {out.aggregate.source}"
-                    )
+                    mode = ""
+                lines.append(f"  - capture {out.key}{mode}: {out.description}")
 
         return "\n".join(lines)
 
     def to_extract_fields(self) -> Dict[str, str]:
-        """Return ``{output.key: output.description}`` for directly-capturable outputs only.
-
-        Aggregate outputs are excluded — they are auto-computed at finish and
-        must not be captured directly by the LLM.
-        """
-        return {out.key: out.description for out in self.outputs if out.aggregate is None}
+        """Return ``{output.key: output.description}`` for every declared output."""
+        return {out.key: out.description for out in self.outputs}
 
     @cached_property
     def _output_index(self) -> Dict[str, "TaskOutput"]:
-        """Map each field name (or aggregate source key) to its TaskOutput, built once."""
+        """Map each output key to its TaskOutput, built once."""
         index: Dict[str, TaskOutput] = {}
         for out in self.outputs:
-            key = out.key if out.aggregate is None else out.aggregate.source
-            index.setdefault(key, out)
+            index.setdefault(out.key, out)
         return index
 
     def get_output(self, field_name: str) -> Optional[TaskOutput]:
-        """Return the TaskOutput matching *field_name* (or its aggregate source), or None.
+        """Return the TaskOutput matching *field_name*, or None.
 
-        Callers read attributes directly (``out.accumulates``,
+        Callers read attributes directly (``out.kind``, ``out.aggregate``,
         ``out.clipboard_correction``) and apply their own defaults when the
         field is unknown.
         """

@@ -190,7 +190,7 @@ class TestToolCollection:
 # ---------------------------------------------------------------------------
 
 class TestTaskProcedureAggregateRouting:
-    """to_task_string must redirect capture hints for aggregate outputs to their source key."""
+    """Aggregate outputs are captured directly under their own key — no redirect."""
 
     def _make_proc(self):
         from omnitool.gradio.config.task_template import (
@@ -199,14 +199,13 @@ class TestTaskProcedureAggregateRouting:
             TaskOutputAggregate,
             TaskProcedure,
         )
-        from omnitool.gradio.config.enums import AggregateOperation, FieldKind
+        from omnitool.gradio.config.enums import AggregateOperation
 
-        agg = TaskOutputAggregate(operation=AggregateOperation.SUM, source="line_amount")
+        agg = TaskOutputAggregate(operation=AggregateOperation.SUM)
         proc = TaskProcedure(
             id=1,
             description="Test procedure",
             outputs=[
-                TaskOutput(key="line_amount", description="Amount per line", kind=FieldKind.ROW),
                 TaskOutput(key="grand_total", description="Sum of all lines", aggregate=agg),
             ],
             executions=[
@@ -218,39 +217,35 @@ class TestTaskProcedureAggregateRouting:
         )
         return proc
 
-    def test_capture_hint_redirected_to_source(self):
-        """Step reference to {grand_total} must produce `capture: line_amount`, not `capture: grand_total`."""
+    def test_aggregate_key_captured_directly(self):
+        """Step reference to {grand_total} must produce `capture: grand_total`."""
         task_str = self._make_proc().to_task_string()
-        assert "capture: line_amount" in task_str
-        assert "capture: grand_total" not in task_str
+        assert "capture: grand_total" in task_str
 
-    def test_aggregate_key_annotated_as_auto_computed(self):
-        """Task string must mention grand_total as auto-computed, not as a direct capture target."""
+    def test_aggregate_mode_text_present(self):
+        """Outputs section must annotate the aggregate operation, not call it auto-computed."""
         task_str = self._make_proc().to_task_string()
-        assert "grand_total" in task_str
-        assert "auto-computed" in task_str
+        assert "auto-computed" not in task_str
+        assert "all rows at once" in task_str
+        assert "reduced via sum" in task_str
 
-    def test_outputs_section_lists_source_not_aggregate_key(self):
-        """Outputs section must list line_amount as the capture key, not grand_total."""
+    def test_outputs_section_lists_aggregate_key(self):
+        """Outputs section must list grand_total as the capture key."""
         task_str = self._make_proc().to_task_string()
-        assert "capture line_amount" in task_str
-        # grand_total appears only in the auto-computed annotation
-        lines = [line for line in task_str.splitlines() if "capture grand_total" in line]
-        assert lines == [], f"Found unexpected 'capture grand_total' lines: {lines}"
+        assert "capture grand_total" in task_str
 
-    def test_to_extract_fields_excludes_aggregate_output(self):
-        """to_extract_fields must not include aggregate-output keys."""
+    def test_to_extract_fields_includes_aggregate_output(self):
+        """to_extract_fields must include aggregate-output keys."""
         proc = self._make_proc()
         fields = proc.to_extract_fields()
-        assert "line_amount" in fields
-        assert "grand_total" not in fields
+        assert "grand_total" in fields
 
-    def test_outputs_section_does_not_duplicate_source_key(self):
-        """line_amount must appear as a capture target exactly once in the Outputs section."""
+    def test_outputs_section_does_not_duplicate_aggregate_key(self):
+        """grand_total must appear as a capture target exactly once in the Outputs section."""
         task_str = self._make_proc().to_task_string()
         outputs_section = task_str.split("\nOutputs:")[-1]
-        count = sum(1 for line in outputs_section.splitlines() if "capture line_amount" in line)
-        assert count == 1, f"line_amount listed {count} times in Outputs section"
+        count = sum(1 for line in outputs_section.splitlines() if "capture grand_total" in line)
+        assert count == 1, f"grand_total listed {count} times in Outputs section"
 
     def test_to_extract_fields_scalar_output_included(self):
         """to_extract_fields must include non-aggregate, non-dynamic outputs."""
