@@ -63,7 +63,7 @@ _SCROLL = {
         "name": "scroll",
         "description": (
             "Scroll the current view up or down. "
-            "Use when a needed value or element is off-screen or partially hidden."
+            "Use when a needed value or element may be off-screen or partially hidden."
         ),
         "parameters": {
             "type": "object",
@@ -76,10 +76,10 @@ _SCROLL = {
                 "amount": {
                     "type": "integer",
                     "description": (
-                        "Scroll multiplier (default 1). "
-                        "Use 3–5 for longer pages or lazy-loading web content."
+                        "Scroll multiplier (default 3). "
+                        "Use 5-10 for longer pages or lazy-loading web content."
                     ),
-                    "default": 1,
+                    "default": 3,
                 },
             },
             "required": ["direction"],
@@ -306,9 +306,10 @@ SAVE_FIELD_TOOL: dict = {
                             "transformed_value": {
                                 "type": "string",
                                 "description": (
-                                    "Optional, scalar fields only. When set, committed instead "
-                                    "of the raw staged value. Use only for transformations like "
-                                    "stripping currency symbols or truncating trailing characters."
+                                    "Optional, scalar fields only. Omit unless a transformation is "
+                                    "needed. When set, committed instead of the raw staged value. "
+                                    "Use only for transformations like stripping currency symbols "
+                                    "or truncating trailing characters."
                                 ),
                             },
                         },
