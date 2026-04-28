@@ -168,14 +168,14 @@ class ReActAgent(BaseAgent):
                 #     the UI state that the next generate() call will reason about.
                 if self._compact_pending:
                     yield {"type": "status", "message": "Compacting history..."}
-                    history, compaction_summary = self._compact_history(history, system_prompt)
+                    history, compaction_summary = self._compact_history(history, system_prompt, task)
                     if compaction_summary:
                         yield {"type": "compaction", "summary": compaction_summary}
                         yield {"type": "status", "message": "History compacted, continuing..."}
                     self._compact_pending = False
 
                 # 2. Build user message
-                history.append(self._build_user_message(screen_data, task))
+                history.append(self._build_user_message(screen_data))
 
                 # 3. Evict old images — keep only the latest screenshot
                 _evict_old_images(history)
@@ -377,7 +377,7 @@ class ReActAgent(BaseAgent):
     # History helpers
     # ------------------------------------------------------------------
 
-    def _build_user_message(self, screen_data: ScreenData, task: str) -> Dict[str, Any]:
+    def _build_user_message(self, screen_data: ScreenData) -> Dict[str, Any]:
         """Build the multipart user message for one loop iteration."""
         content: List[Dict[str, Any]] = []
 
@@ -401,12 +401,7 @@ class ReActAgent(BaseAgent):
                 "text": f"Detected UI elements:\n<screen_elements>\n{compact}\n</screen_elements>",
             })
 
-        # Task reminder (keeps the goal visible at every turn)
-        if task:
-            content.append({
-                "type": "text",
-                "text": f"Task: {task}\nStep {self.step_count}/{self.max_steps}",
-            })
+        content.append({"type": "text", "text": f"Step {self.step_count}/{self.max_steps}"})
 
         return {"role": "user", "content": content}
 
@@ -414,6 +409,7 @@ class ReActAgent(BaseAgent):
         self,
         history: List[Dict[str, Any]],
         system_prompt: str,
+        task: str = "",
     ) -> tuple[List[Dict[str, Any]], str]:
         """Ask the LLM to summarise history; return (new_history, summary_text)."""
         try:
@@ -437,8 +433,11 @@ class ReActAgent(BaseAgent):
             return history, ""
 
         logger.info("History compacted at step %d", self.step_count)
+        summary_content = f"[Progress summary — steps 1–{self.step_count - 1}]\n{summary}"
+        if task:
+            summary_content = f"Task: {task}\n\n{summary_content}"
         return [
-            {"role": "user", "content": f"[Progress summary — steps 1–{self.step_count - 1}]\n{summary}"},
+            {"role": "user", "content": summary_content},
             {"role": "assistant", "content": "Understood. Continuing the task."},
         ], summary
 

@@ -13,9 +13,29 @@ Usage:
 
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Optional
+
+# Matches base64 payloads: 60+ consecutive base64 chars (image data is thousands).
+# Threshold is high enough to avoid false positives on tokens, UUIDs, and short hashes.
+_B64_RE = re.compile(r"[A-Za-z0-9+/]{60,}={0,2}")
+
+
+class _TruncateBase64Filter(logging.Filter):
+    """Replace long base64 strings in log records with a short placeholder."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        truncated = _B64_RE.sub(
+            lambda m: f"<base64:{len(m.group())}chars>",
+            msg,
+        )
+        if truncated != msg:
+            record.msg = truncated
+            record.args = ()
+        return True
 
 
 # Logging format (ISO timestamp, logger name, level, message)
@@ -70,9 +90,12 @@ def setup_logging(
     
     logger.setLevel(getattr(logging, final_level))
     
+    b64_filter = _TruncateBase64Filter()
+
     # Console handler (always active)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(getattr(logging, final_level))
+    console_handler.addFilter(b64_filter)
     console_formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
@@ -102,6 +125,7 @@ def setup_logging(
         try:
             file_handler = logging.FileHandler(final_log_file, mode="w")
             file_handler.setLevel(getattr(logging, final_level))
+            file_handler.addFilter(b64_filter)
             file_formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
             file_handler.setFormatter(file_formatter)
             logger.addHandler(file_handler)
