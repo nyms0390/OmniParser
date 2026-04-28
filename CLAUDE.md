@@ -59,7 +59,7 @@ External services: Windows host at port 5000 (screenshots, mouse/keyboard), GTA1
 
 `ui/app.py` → `ui/callbacks.py:on_submit()` → `core/agents/factory.py:create_agent()` → agent `.run()` generator → Gradio streams events to UI.
 
-Every agent subclasses `BaseAgent` (`core/agents/base.py`). Base class owns: `_capture_screen()`, `execute_tool_calls()`, cost/token tracking, `_handle_read_field()`, `_handle_focus_region()`, `_handle_mark_screenshot()`, `_set_fact()`, `_apply_template_aggregates()`.
+Every agent subclasses `BaseAgent` (`core/agents/base.py`). Base class owns: `_capture_screen()`, `execute_tool_calls()`, cost/token tracking, `_handle_read_field()`, `_handle_save_field()`, `_handle_focus_region()`, `_handle_mark_screenshot()`, `_set_fact()`, `_apply_template_aggregates()`, `_extract_table_via_devtools()`.
 
 **Agent types:**
 - `ReActAgent` — only agent; one tool call per turn (`parallel_tool_calls=False`); harness-triggered compaction every 8 steps; pluggable `GroundingStrategy`
@@ -70,7 +70,7 @@ Two implementations in `core/agents/grounding.py`:
 - `OmniParserGrounding` — SOM-annotated image + element list; LLM uses integer `box_id`
 - `GTA1Grounding` — raw screenshot; LLM uses natural-language `target`; GTA1 server resolves to pixel coords
 
-`ReActAgent` accepts `grounding="omniparser"` or `"gta1"`.
+`create_agent()` accepts `grounding="gta1"` (default) or `"omniparser"`.
 
 ### Key modules
 
@@ -79,12 +79,12 @@ Two implementations in `core/agents/grounding.py`:
 - `services/file_handler.py` — `FileHandler` (run folder management)
 - `clients/llm/` — LLM clients inheriting `BaseLLMClient`; return `(response_text, metadata)`; `metadata` must include `tool_calls` and `assistant_message` for history reconstruction
 - `clients/external/` — `omniparser.py`, `gta1.py`, `windows_host.py`, `paddleocr.py`
-- `core/tools/schemas.py` — tool schemas: `OMNIPARSER_COMPUTER_TOOLS`, `GTA1_COMPUTER_TOOLS`, `READ_FIELD_TOOL`, `FOCUS_TOOL`, `MARK_SCREENSHOT_TOOL`, `FINISH_TOOL`; `AUXILIARY_TOOLS` bundles the three always-on tools
+- `core/tools/schemas.py` — tool schemas: `OMNIPARSER_COMPUTER_TOOLS`, `GTA1_COMPUTER_TOOLS`, `READ_FIELD_TOOL`, `SAVE_FIELD_TOOL`, `FOCUS_TOOL`, `MARK_SCREENSHOT_TOOL`, `FINISH_TOOL`; `AUXILIARY_TOOLS` bundles the four always-on tools (read_field stages, save_field commits)
 - `config/prompts.py` — all prompts; dynamic screen content injected in **user messages** (not system prompt) to keep system prompt static and cacheable
 
 ### Event protocol
 
-`agent.run()` yields dicts consumed by `callbacks.py`. Key types: `status`, `step`, `progress`, `parsed_screen`, `grounding`, `thinking`, `action_result`, `screen_reading`, `plan`, `ledger`, `assistant_reply`, `extraction_result`, `complete`, `error`.
+`agent.run()` yields dicts consumed by `callbacks.py`. Key types: `status`, `step`, `progress`, `parsed_screen`, `grounding`, `thinking`, `compaction`, `action_result`, `screen_reading`, `field_saved`, `focus_region`, `table_read`, `plan`, `ledger`, `assistant_reply`, `complete`, `error`.
 
 **Critical:** `action_result` uses `output`/`error` keys (not `result`); `error` event uses `message` key (not `error`). Must match `format_action_result()` in `ui/components/formatters.py`.
 

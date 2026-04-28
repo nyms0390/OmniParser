@@ -308,6 +308,22 @@ Your task:
 """
 
 
+COLUMN_EXTRACTION_PROMPT = """\
+You are a data extraction assistant. You will receive one or more HTML tables from a web page and a target field.
+
+Your task:
+1. Identify the field using its key, description, and (when given) hint together.
+2. If a hint is provided, use it both to select the right table when multiple are present and to disambiguate which header/label or axis to match.
+3. Locate the field's label as either a column header or a row label.
+   - Prefer the column-axis match when both are present, unless the hint indicates otherwise.
+4. Return the values from the orthogonal axis — one value per output line, in document order.
+   - Column header match → output the cells of that column, top to bottom, skipping the header.
+   - Row label match → output the cells of that row, left to right, skipping the label.
+5. Reproduce cell values verbatim — do not summarize, truncate, or reformat numbers.
+6. Output only the values, one per line. No preamble, no explanation, no markdown fences.\
+"""
+
+
 # ---------------------------------------------------------------------------
 # 6. Builder functions — assemble fully-rendered prompts from templates above
 # ---------------------------------------------------------------------------

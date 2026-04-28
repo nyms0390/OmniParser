@@ -71,22 +71,22 @@ class TestScalarKind:
 # ---------------------------------------------------------------------------
 
 class TestRowKindBrowser:
-    def test_routes_to_devtools_and_stages_rows(self, tmp_path):
+    def test_routes_to_column_extractor_and_stages_values(self, tmp_path):
         agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=True)
-        agent._extract_table_via_devtools = Mock(return_value=["Header | Col", "row1 | v1", "row2 | v2"])
+        agent._extract_column_via_devtools = Mock(return_value=["10.00", "20.00", "30.00"])
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": "", "hint": "line items"}]
         })
-        agent._extract_table_via_devtools.assert_called_once_with("line items")
-        assert agent.working_memory.staged_reads["field1"] == ["Header | Col", "row1 | v1", "row2 | v2"]
-        assert read_values == {"field1": ["Header | Col", "row1 | v1", "row2 | v2"]}
+        agent._extract_column_via_devtools.assert_called_once_with("field1", "", "line items")
+        assert agent.working_memory.staged_reads["field1"] == ["10.00", "20.00", "30.00"]
+        assert read_values == {"field1": ["10.00", "20.00", "30.00"]}
         assert len(events) == 1
         assert events[0]["type"] == "table_read"
-        assert "row1 | v1" in events[0]["text"]
+        assert "20.00" in events[0]["text"]
 
     def test_deduplicates_extraction_for_same_field_in_one_call(self, tmp_path):
         agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=True)
-        agent._extract_table_via_devtools = Mock(return_value=["row1 | v1", "row2 | v2"])
+        agent._extract_column_via_devtools = Mock(return_value=["v1", "v2"])
         # Two items for the same field — should extract only once
         agent._handle_read_field({
             "fields": [
@@ -94,12 +94,12 @@ class TestRowKindBrowser:
                 {"field_name": "field1", "value": ""},
             ]
         })
-        agent._extract_table_via_devtools.assert_called_once()
-        assert agent.working_memory.staged_reads["field1"] == ["row1 | v1", "row2 | v2"]
+        agent._extract_column_via_devtools.assert_called_once()
+        assert agent.working_memory.staged_reads["field1"] == ["v1", "v2"]
 
     def test_devtools_failure_returns_error_string(self, tmp_path):
         agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=True)
-        agent._extract_table_via_devtools = Mock(side_effect=RuntimeError("no tables found"))
+        agent._extract_column_via_devtools = Mock(side_effect=RuntimeError("no tables found"))
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": ""}]
         })

@@ -26,6 +26,7 @@ from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.core.agents.preprocessing import PreprocessingMode, preprocess_b64
 from omnitool.gradio.config import (
     AgentMode,
+    COLUMN_EXTRACTION_PROMPT,
     FieldKind,
     SCREENSHOT_MAX_WIDTH,
     SystemConfig,
@@ -423,12 +424,14 @@ class BaseAgent(ABC):
 
         Routes by TaskOutput.kind and aggregate:
         - SCALAR: clipboard correction path (when enabled) or direct value.
-        - ROW (browser): DevTools LLM extraction same as TABLE.
+        - ROW (browser): orientation-agnostic column extraction via
+          _extract_column_via_devtools — LLM matches the field key/description
+          against a column header or row label and returns the orthogonal axis.
         - ROW (non-browser): per-item accumulation fallback.
-        - TABLE (browser): DevTools LLM extraction via _extract_table_via_devtools.
+        - TABLE (browser): whole-table extraction via _extract_table_via_devtools.
         - TABLE (non-browser): error (OCR not implemented).
-        - aggregate present (browser): DevTools extraction same as TABLE; rows
-          append across calls so multiple read_field invocations accumulate.
+        - aggregate present (browser): same column extraction path as ROW;
+          values append across calls so multiple read_field invocations accumulate.
         - aggregate present (non-browser): error (OCR not implemented).
 
         Returns (tool_result_str, read_values, events) where events is a list of
@@ -470,29 +473,34 @@ class BaseAgent(ABC):
             if (kind in (FieldKind.ROW, FieldKind.TABLE) or has_aggregate) and is_browser:
                 if field_name in extracted_fields:
                     logger.info(
-                        "READ_FIELD — skipping duplicate table extraction for '%s' (already extracted in this call)",
+                        "READ_FIELD — skipping duplicate extraction for '%s' (already extracted in this call)",
                         field_name,
                     )
                     results.append(f"Skipped duplicate extraction for {field_name}")
                     continue
                 try:
-                    rows = self._extract_table_via_devtools(hint)
+                    if kind == FieldKind.TABLE:
+                        rows = self._extract_table_via_devtools(hint)
+                    else:
+                        rows = self._extract_column_via_devtools(
+                            field_name, out.description if out else "", hint
+                        )
                     extracted_fields.add(field_name)
                     events.append({"type": "table_read", "text": "\n".join(rows)})
                     self.working_memory.staged_reads.setdefault(field_name, []).extend(rows)
                     read_values.setdefault(field_name, []).extend(rows)
                     n = len(self.working_memory.staged_reads[field_name])
                     logger.info(
-                        "STAGED_READS — extracted %d rows for '%s' (total %d)",
+                        "STAGED_READS — extracted %d values for '%s' (total %d)",
                         len(rows), field_name, n,
                     )
-                    results.append(f"Extracted {len(rows)} rows for {field_name}")
+                    results.append(f"Extracted {len(rows)} values for {field_name}")
                 except RuntimeError as exc:
-                    msg = f"Table extraction failed for '{field_name}': {exc}"
+                    msg = f"Extraction failed for '{field_name}': {exc}"
                     logger.warning(msg)
                     results.append(msg)
                 except Exception:
-                    logger.exception("Unexpected error in table extraction for '%s'", field_name)
+                    logger.exception("Unexpected error in extraction for '%s'", field_name)
                     raise
             elif (kind == FieldKind.TABLE or has_aggregate) and not is_browser:
                 results.append(
@@ -728,11 +736,10 @@ class BaseAgent(ABC):
             return ""
         return "\n\n".join(f"--- Table {j+1} ---\n{t}" for j, t in enumerate(tables))
 
-    def _extract_table_via_devtools(self, hint: Optional[str]) -> List[str]:
-        """Capture page HTML via DevTools, strip to tables, LLM-extract as pipe-separated rows.
+    def _capture_tables_html(self) -> str:
+        """Capture page HTML via DevTools and strip to <table> elements.
 
-        Returns one pipe-separated string per row (header first). Raises RuntimeError
-        on capture/extraction failure so callers can format per-field error messages.
+        Raises RuntimeError when the clipboard capture fails or no tables are present.
         """
         self.tools_collection.run("computer", "key", text="ctrl+shift+j")
         self.tools_collection.run("computer", "type",
@@ -747,23 +754,44 @@ class BaseAgent(ABC):
         tables_html = self._extract_tables_from_html(clip_result.output or "")
         if not tables_html:
             raise RuntimeError("no tables found on this page")
+        return tables_html
 
-        user_content = TABLE_EXTRACTION_PROMPT
-        if hint:
-            user_content += f"\n\nHint: {hint}"
-        user_content += f"\n\n{tables_html}"
-
-        table_text, meta = self.llm_client.generate(
-            messages=[{"role": "user", "content": user_content}]
+    def _llm_extract_lines(self, prompt: str, tables_html: str) -> List[str]:
+        """Send a tables payload to the LLM and parse newline-separated lines."""
+        text, meta = self.llm_client.generate(
+            messages=[{"role": "user", "content": f"{prompt}\n\n{tables_html}"}]
         )
         self.update_token_usage(meta.get("tokens", 0))
         self.update_cost(self._calculate_cost(meta))
 
-        table_text = (table_text or "").strip()
-        if not table_text:
+        text = (text or "").strip()
+        if not text:
             raise RuntimeError("LLM returned empty extraction")
+        return [stripped for row in text.split("\n") if (stripped := row.strip())]
 
-        return [stripped for row in table_text.split("\n") if (stripped := row.strip())]
+    def _extract_table_via_devtools(self, hint: Optional[str]) -> List[str]:
+        """LLM-extract the whole table as pipe-separated rows (header first)."""
+        tables_html = self._capture_tables_html()
+        prompt = TABLE_EXTRACTION_PROMPT
+        if hint:
+            prompt += f"\n\nHint: {hint}"
+        return self._llm_extract_lines(prompt, tables_html)
+
+    def _extract_column_via_devtools(
+        self, field_name: str, description: str, hint: Optional[str]
+    ) -> List[str]:
+        """LLM-extract one logical column (orientation-agnostic) for *field_name*.
+
+        The LLM matches *field_name*/*description* against either a column header
+        or a row label and returns the orthogonal axis values.
+        """
+        tables_html = self._capture_tables_html()
+        prompt = COLUMN_EXTRACTION_PROMPT + f"\n\nField key: {field_name}"
+        if description:
+            prompt += f"\nField description: {description}"
+        if hint:
+            prompt += f"\nHint: {hint}"
+        return self._llm_extract_lines(prompt, tables_html)
 
     def _write_run_summary(self, success: bool, message: str) -> None:
         """Write summary.json to save_folder at the end of every run."""

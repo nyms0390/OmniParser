@@ -43,10 +43,9 @@ _KEY_PRESS = {
         "name": "key_press",
         "description": (
             "Press a keyboard key or combination "
-            "(e.g. 'enter', 'ctrl+c', 'tab', 'escape', 'ctrl+shift+t'). "
-            "Use 'end'/'home' to jump to the bottom/top of a page or list instantly, "
-            "and 'pagedown'/'pageup' to move one page at a time — "
-            "faster than repeated scrolling."
+            "(e.g. 'enter', 'ctrl+c', 'tab', 'ctrl+shift+t'). "
+            "Use 'end'/'home' to jump to bottom/top, 'pagedown'/'pageup' "
+            "to move a page — faster than repeated scrolling."
         ),
         "parameters": {
             "type": "object",
@@ -64,8 +63,7 @@ _SCROLL = {
         "name": "scroll",
         "description": (
             "Scroll the current view up or down. "
-            "Use this when a value or element you need may be off-screen or "
-            "partially hidden — scroll to bring it fully into view before reading or clicking."
+            "Use when a needed value or element is off-screen or partially hidden."
         ),
         "parameters": {
             "type": "object",
@@ -186,8 +184,7 @@ FINISH_TOOL: dict = {
     "function": {
         "name": "finish",
         "description": (
-            "Signal that the task is fully complete. "
-            "Call this once all required steps are done and verified on screen."
+            "Signal that the task is fully complete — all required steps done and verified on screen."
         ),
         "parameters": {
             "type": "object",
@@ -218,23 +215,18 @@ READ_FIELD_TOOL: dict = {
     "function": {
         "name": "read_field",
         "description": (
-            "Read and verify one or more text values visible on the current screen. "
-            "Values are staged in memory — call save_field afterward to commit them. "
-            "All fields from the current screenshot can be read in a single call. "
-            "Values will be verified via clipboard if grounding targets are provided."
+            "Stage screen values into working memory; call save_field to commit. "
+            "Dispatch follows the field's declared kind:\n"
+            "- scalar: pass value (and optional target for clipboard verification).\n"
+            "- row: agent matches the field key/description against a column header "
+            "or row label and extracts the orthogonal axis (handles transposed tables).\n"
+            "- table: agent extracts the entire matching table verbatim."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "fields": {
                     "type": "array",
-                    "description": (
-                        "List of fields to read from the current screen. "
-                        "Fields with different field_names can all be batched in one call. "
-                        "For list-type fields (same field_name, one value per row): include "
-                        "all visible rows as separate items — they accumulate in order. "
-                        "Do not merge multiple values into a single item."
-                    ),
                     "minItems": 1,
                     "items": {
                         "type": "object",
@@ -242,47 +234,33 @@ READ_FIELD_TOOL: dict = {
                             "field_name": {
                                 "type": "string",
                                 "description": (
-                                    "Exact key name from the required outputs (e.g. 'order_total'). "
-                                    "For list-type outputs that collect multiple values across calls, "
-                                    "always use the same exact key for every entry — "
-                                    "do NOT append numbers or suffixes (e.g. use 'line_amount', not 'line_amount_1'). "
-                                    "Even when the raw value will need post-processing before saving, "
-                                    "still use the exact output key here — "
-                                    "do NOT invent variants like 'field_origin' or 'field_raw'."
+                                    "Exact key from the required outputs (e.g. 'order_total')."
                                 ),
                             },
                             "value": {
                                 "type": "string",
                                 "description": (
-                                    "The exact single value as it appears on screen (raw, unprocessed). "
-                                    "One item per value — never combine multiple values "
-                                    "with operators or separators (e.g. do NOT write '123+456'). "
-                                    "If the cell or field is blank, pass an empty string (\"\") — "
-                                    "do NOT skip the item or invent a placeholder like 'N/A'."
+                                    "Exact value as it appears on screen (raw, unprocessed). "
+                                    "Pass \"\" for blank cells or row/table fields (agent reads automatically)."
                                 ),
                             },
                             "target": {
                                 "type": "string",
                                 "description": (
-                                    "Natural-language description of the on-screen element showing "
-                                    "this value, used for clipboard-based verification. "
-                                    "Always describe the element's visual location, not just its content. "
-                                    "For list-type fields (multiple items sharing the same field_name), "
-                                    "include the 1-based row index to disambiguate "
-                                    "(e.g. 'the amount in the 3rd row of the line items table', "
-                                    "'the 2nd entry in the Quantity column'). "
-                                    "Omit to skip clipboard verification."
+                                    "Natural-language description of the on-screen element "
+                                    "(with visual location, not just content) for clipboard "
+                                    "verification of scalar fields. Omit to skip. "
+                                    "Ignored for row/table fields."
                                 ),
                             },
                             "hint": {
                                 "type": "string",
                                 "description": (
-                                    "Optional description of which table to extract — only used for "
-                                    "outputs declared as kind: table, kind: row, or with an aggregate "
-                                    "in the procedure, and only on browser-based systems "
-                                    "(DevTools-driven extraction). "
-                                    "(e.g. 'invoice line items', 'order history'). "
-                                    "Ignored for scalar outputs and on non-browser systems."
+                                    "Optional disambiguation for row/table fields. "
+                                    "Picks which on-screen table to read when multiple are present; "
+                                    "for row fields, also narrows which header/label or axis to match "
+                                    "(e.g. 'invoice line items', 'the rightmost Amount column'). "
+                                    "Ignored for scalar fields."
                                 ),
                             },
                         },
@@ -304,10 +282,9 @@ SAVE_FIELD_TOOL: dict = {
     "function": {
         "name": "save_field",
         "description": (
-            "Commit all staged values for the requested fields to working memory. "
-            "Drains every value accumulated by read_field for each field_name: "
-            "dynamic fields append each entry, scalar fields keep the last. "
-            "Call this after read_field — staging holds values until save_field is called."
+            "Commit staged values from preceding read_field calls into working memory. "
+            "Drains the staging buffer per field_name: dynamic fields append each entry, "
+            "scalar fields keep the last."
         ),
         "parameters": {
             "type": "object",
@@ -329,10 +306,9 @@ SAVE_FIELD_TOOL: dict = {
                             "transformed_value": {
                                 "type": "string",
                                 "description": (
-                                    "Optional. Scalar fields only. Omit unless a transformation is "
-                                    "needed (e.g. stripping a currency symbol, truncating trailing "
-                                    "characters). When set, this value is committed instead of the "
-                                    "raw staged value. Not supported for dynamic (list) fields."
+                                    "Optional, scalar fields only. When set, committed instead "
+                                    "of the raw staged value. Use only for transformations like "
+                                    "stripping currency symbols or truncating trailing characters."
                                 ),
                             },
                         },
@@ -354,10 +330,9 @@ FOCUS_TOOL: dict = {
     "function": {
         "name": "focus_region",
         "description": (
-            "Crop the current screenshot to a specific region for a clearer, zoomed-in view. "
-            "Call this whenever text, numbers, or labels are small, dense, or ambiguous in the "
-            "full screenshot — especially before calling read_field or verifying a value. "
-            "Provide the tight bounding box around the area of interest."
+            "Crop the current screenshot to a region for a zoomed-in view. "
+            "Use whenever text, numbers, or labels are small, dense, or ambiguous "
+            "in the full screenshot — especially before read_field."
         ),
         "parameters": {
             "type": "object",
@@ -366,9 +341,8 @@ FOCUS_TOOL: dict = {
                     "type": "array",
                     "items": {"type": "number"},
                     "description": (
-                        "Region to focus as [x1, y1, x2, y2] in resized image "
-                        "pixel coordinates (the same coordinate space as the "
-                        "screenshot shown to you)."
+                        "[x1, y1, x2, y2] in resized image pixel coordinates "
+                        "(same space as the screenshot shown to you)."
                     ),
                     "minItems": 4,
                     "maxItems": 4,
@@ -389,8 +363,7 @@ MARK_SCREENSHOT_TOOL: dict = {
         "name": "mark_screenshot",
         "description": (
             "Flag the current screenshot as important for later review. "
-            "Use this when the screen shows a key result, confirmation, or error "
-            "worth preserving — e.g. after completing a task step or verifying a value."
+            "Use when the screen shows a key result, confirmation, or error worth preserving."
         ),
         "parameters": {
             "type": "object",
