@@ -217,10 +217,10 @@ READ_FIELD_TOOL: dict = {
         "description": (
             "Stage screen values into working memory; call save_field to commit. "
             "Dispatch follows the field's declared kind:\n"
-            "- scalar: pass value (and optional target for clipboard verification).\n"
-            "- row: agent matches the field key/description against a column header "
-            "or row label and extracts the orthogonal axis (handles transposed tables).\n"
-            "- table: agent extracts the entire matching table verbatim."
+            "- scalar: pass value verbatim (optional target for clipboard verification).\n"
+            "- row: pass value=\"\" — system auto-extracts all values at once by matching "
+            "the field key/description against a column header or row label.\n"
+            "- table: pass value=\"\" — system extracts the entire table verbatim."
         ),
         "parameters": {
             "type": "object",

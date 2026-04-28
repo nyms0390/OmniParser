@@ -75,10 +75,10 @@ def setup_logging(
     """
     
     # Get logger
-    logger = logging.getLogger(name)
+    root = logging.getLogger(name)
     
     # Reset handlers to avoid duplicates
-    logger.handlers.clear()
+    root.handlers.clear()
     
     # Determine log level (priority: env var > arg > default INFO)
     env_level = os.environ.get("LOG_LEVEL", "").upper()
@@ -88,7 +88,7 @@ def setup_logging(
     if final_level not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
         final_level = "INFO"
     
-    logger.setLevel(getattr(logging, final_level))
+    root.setLevel(getattr(logging, final_level))
     
     b64_filter = _TruncateBase64Filter()
 
@@ -98,7 +98,7 @@ def setup_logging(
     console_handler.addFilter(b64_filter)
     console_formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
     console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
+    root.addHandler(console_handler)
     
     # File handler (if log_file specified or LOG_FILE env var set)
     env_log_file = os.environ.get("LOG_FILE", "").strip()
@@ -110,16 +110,16 @@ def setup_logging(
         if log_path.exists():
             try:
                 log_path.unlink()
-                logger.debug(f"Removed old log file: {final_log_file}")
+                root.debug(f"Removed old log file: {final_log_file}")
             except Exception as e:
-                logger.warning(f"Could not remove old log file {final_log_file}: {e}")
+                root.warning(f"Could not remove old log file {final_log_file}: {e}")
         
         # Create parent directories if needed
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            logger.warning(f"Could not create log directory: {e}")
-            return logger
+            root.warning(f"Could not create log directory: {e}")
+            return root
         
         # Create file handler
         try:
@@ -128,9 +128,9 @@ def setup_logging(
             file_handler.addFilter(b64_filter)
             file_formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
             file_handler.setFormatter(file_formatter)
-            logger.addHandler(file_handler)
-            logger.info(f"Logging to file: {final_log_file}")
+            root.addHandler(file_handler)
+            root.info(f"Logging to file: {final_log_file}")
         except Exception as e:
-            logger.error(f"Could not create file handler for {final_log_file}: {e}")
+            root.error(f"Could not create file handler for {final_log_file}: {e}")
     
-    return logger
+    return logging.getLogger(name)

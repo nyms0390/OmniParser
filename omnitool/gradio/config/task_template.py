@@ -208,7 +208,10 @@ class TaskProcedure:
             lines.append("\nOutputs:")
             for out in self.outputs:
                 if out.aggregate is not None:
-                    mode = f" (all rows at once, reduced via {out.aggregate.operation.value} at finish)"
+                    mode = (
+                        f" [row — call read_field once with value=\"\";"
+                        f" {out.aggregate.operation.value} applied at finish]"
+                    )
                 else:
                     mode = ""
                 lines.append(f"  - capture {out.key}{mode}: {out.description}")
