@@ -22,6 +22,7 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 from PIL import Image
 
 from omnitool.gradio.clients.external.gta1 import GTA1Client
+from omnitool.gradio.clients.external.paddleocr import PaddleOCRClient
 from omnitool.gradio.clients.llm.base import BaseLLMClient
 from omnitool.gradio.core.agents.preprocessing import PreprocessingMode, preprocess_b64
 from omnitool.gradio.config import (
@@ -81,6 +82,7 @@ class BaseAgent(ABC):
         max_steps: int = 20,
         action_delay: float = 1.5,
         gta1_client: Optional[GTA1Client] = None,
+        paddleocr_client: Optional[PaddleOCRClient] = None,
         provider: Optional[str] = None,
         preprocessing_mode: PreprocessingMode = PreprocessingMode.RAW,
         task_procedure: Optional[TaskProcedure] = None,
@@ -97,6 +99,7 @@ class BaseAgent(ABC):
         self.max_steps = max_steps
         self.action_delay = action_delay
         self.gta1_client = gta1_client
+        self.paddleocr_client = paddleocr_client
         self.screenshot_max_width = SCREENSHOT_MAX_WIDTH
         self.preprocessing_mode = preprocessing_mode
 
@@ -424,15 +427,13 @@ class BaseAgent(ABC):
 
         Routes by TaskOutput.kind and aggregate:
         - SCALAR: clipboard correction path (when enabled) or direct value.
-        - ROW (browser): orientation-agnostic column extraction via
-          _extract_column_via_devtools — LLM matches the field key/description
-          against a column header or row label and returns the orthogonal axis.
-        - ROW (non-browser): per-item accumulation fallback.
-        - TABLE (browser): whole-table extraction via _extract_table_via_devtools.
-        - TABLE (non-browser): error (OCR not implemented).
-        - aggregate present (browser): same column extraction path as ROW;
-          values append across calls so multiple read_field invocations accumulate.
-        - aggregate present (non-browser): error (OCR not implemented).
+        - ROW or aggregate: orientation-agnostic column extraction via
+          ``_extract_column`` — LLM matches the field key/description against
+          a column header or row label and returns the orthogonal axis.
+        - TABLE: whole-table extraction via ``_extract_table``.
+
+        ``_capture_tables_html`` provides the HTML for both extractors,
+        sourced from DevTools on browser systems and PaddleOCR-VL otherwise.
 
         Returns (tool_result_str, read_values, events) where events is a list of
         dicts to yield upstream (e.g. table_read events).
@@ -444,10 +445,9 @@ class BaseAgent(ABC):
         results = []
         read_values: Dict[str, List[str]] = {}
         events: List[dict] = []
-        is_browser = bool(self.system_config and self.system_config.is_browser)
-        # Track fields already extracted via DevTools in this call to avoid duplicate
-        # round-trips when the LLM batches multiple items for the same table field.
-        extracted_fields: set = set()
+        # Track fields already extracted in this call to avoid duplicate
+        # round-trips when the LLM batches multiple items for the same field.
+        extracted_fields: set[str] = set()
 
         for item in items:
             field_name = item.get("field_name", "")
@@ -469,8 +469,9 @@ class BaseAgent(ABC):
             kind = out.kind if out else FieldKind.SCALAR
             use_correction = out.clipboard_correction if out else True
             has_aggregate = out is not None and out.aggregate is not None
+            needs_extraction = kind in (FieldKind.ROW, FieldKind.TABLE) or has_aggregate
 
-            if (kind in (FieldKind.ROW, FieldKind.TABLE) or has_aggregate) and is_browser:
+            if needs_extraction:
                 if field_name in extracted_fields:
                     logger.info(
                         "READ_FIELD — skipping duplicate extraction for '%s' (already extracted in this call)",
@@ -480,9 +481,9 @@ class BaseAgent(ABC):
                     continue
                 try:
                     if kind == FieldKind.TABLE:
-                        rows = self._extract_table_via_devtools(hint)
+                        rows = self._extract_table(hint)
                     else:
-                        rows = self._extract_column_via_devtools(
+                        rows = self._extract_column(
                             field_name, out.description if out else "", hint
                         )
                     extracted_fields.add(field_name)
@@ -502,12 +503,8 @@ class BaseAgent(ABC):
                 except Exception:
                     logger.exception("Unexpected error in extraction for '%s'", field_name)
                     raise
-            elif (kind == FieldKind.TABLE or has_aggregate) and not is_browser:
-                results.append(
-                    f"OCR not yet supported on this system; cannot extract '{field_name}'"
-                )
             else:
-                # SCALAR, or ROW on non-browser (per-item accumulation fallback)
+                # SCALAR — clipboard correction path or direct value
                 corrected = value
                 if value and use_correction and self.gta1_client and target:
                     try:
@@ -737,23 +734,48 @@ class BaseAgent(ABC):
         return "\n\n".join(f"--- Table {j+1} ---\n{t}" for j, t in enumerate(tables))
 
     def _capture_tables_html(self) -> str:
-        """Capture page HTML via DevTools and strip to <table> elements.
+        """Capture screen tables as HTML, dispatching by environment.
 
-        Raises RuntimeError when the clipboard capture fails or no tables are present.
+        Browser systems use DevTools clipboard capture of
+        ``document.documentElement.outerHTML``; non-browser systems call
+        PaddleOCR-VL's ``infer/vl/html`` endpoint on the most recent
+        captured screenshot (``working_memory.parsed_screen``) — which may
+        lag the live screen by one or more steps.
+
+        Raises RuntimeError when the source is unavailable, the capture
+        fails, or no ``<table>`` elements are present.
         """
-        self.tools_collection.run("computer", "key", text="ctrl+shift+j")
-        self.tools_collection.run("computer", "type",
-                                   text="copy(document.documentElement.outerHTML)")
-        self.tools_collection.run("computer", "key", text="return")
-        self.tools_collection.run("computer", "key", text="ctrl+shift+j")
+        is_browser = bool(self.system_config and self.system_config.is_browser)
+        if is_browser:
+            self.tools_collection.run("computer", "key", text="ctrl+shift+j")
+            self.tools_collection.run(
+                "computer", "type",
+                text="copy(document.documentElement.outerHTML)",
+            )
+            self.tools_collection.run("computer", "key", text="return")
+            self.tools_collection.run("computer", "key", text="ctrl+shift+j")
+            clip_result = self.tools_collection.run("computer", "read_clipboard")
+            if clip_result.error:
+                raise RuntimeError(f"could not capture HTML ({clip_result.error})")
+            html = clip_result.output or ""
+        else:
+            if self.paddleocr_client is None:
+                raise RuntimeError("paddleocr_client not configured")
+            parsed = self.working_memory.parsed_screen or {}
+            raw_b64 = parsed.get("raw_image_base64", "")
+            if not raw_b64:
+                raise RuntimeError("no screenshot available for OCR")
+            try:
+                resp = self.paddleocr_client.recognize_vl(base64.b64decode(raw_b64))
+            except Exception as exc:
+                raise RuntimeError(f"PaddleOCR-VL call failed: {exc}") from exc
+            html = (resp or {}).get("html", "")
+            if not html:
+                raise RuntimeError("PaddleOCR-VL returned no HTML")
 
-        clip_result = self.tools_collection.run("computer", "read_clipboard")
-        if clip_result.error:
-            raise RuntimeError(f"could not capture HTML ({clip_result.error})")
-
-        tables_html = self._extract_tables_from_html(clip_result.output or "")
+        tables_html = self._extract_tables_from_html(html)
         if not tables_html:
-            raise RuntimeError("no tables found on this page")
+            raise RuntimeError("no tables found on this screen")
         return tables_html
 
     def _llm_extract_lines(self, prompt: str, tables_html: str) -> List[str]:
@@ -769,7 +791,7 @@ class BaseAgent(ABC):
             raise RuntimeError("LLM returned empty extraction")
         return [stripped for row in text.split("\n") if (stripped := row.strip())]
 
-    def _extract_table_via_devtools(self, hint: Optional[str]) -> List[str]:
+    def _extract_table(self, hint: Optional[str]) -> List[str]:
         """LLM-extract the whole table as pipe-separated rows (header first)."""
         tables_html = self._capture_tables_html()
         prompt = TABLE_EXTRACTION_PROMPT
@@ -777,7 +799,7 @@ class BaseAgent(ABC):
             prompt += f"\n\nHint: {hint}"
         return self._llm_extract_lines(prompt, tables_html)
 
-    def _extract_column_via_devtools(
+    def _extract_column(
         self, field_name: str, description: str, hint: Optional[str]
     ) -> List[str]:
         """LLM-extract one logical column (orientation-agnostic) for *field_name*.

@@ -75,7 +75,7 @@ def setup_logging(
     """
     
     # Get logger
-    root = logging.getLogger(name)
+    root = logging.getLogger()
     
     # Reset handlers to avoid duplicates
     root.handlers.clear()

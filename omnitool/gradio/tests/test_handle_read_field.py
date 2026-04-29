@@ -8,7 +8,7 @@ from omnitool.gradio.config.enums import FieldKind
 from omnitool.gradio.config.systems import SystemConfig
 from omnitool.gradio.config.task_template import TaskExecution, TaskOutput, TaskProcedure
 from omnitool.gradio.core.tools.schemas import AUXILIARY_TOOLS
-from omnitool.gradio.tests._helpers import make_react_agent
+from omnitool.gradio.tests._helpers import make_1px_png_b64, make_react_agent
 
 
 def _proc_with_output(output: TaskOutput) -> TaskProcedure:
@@ -73,11 +73,11 @@ class TestScalarKind:
 class TestRowKindBrowser:
     def test_routes_to_column_extractor_and_stages_values(self, tmp_path):
         agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=True)
-        agent._extract_column_via_devtools = Mock(return_value=["10.00", "20.00", "30.00"])
+        agent._extract_column = Mock(return_value=["10.00", "20.00", "30.00"])
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": "", "hint": "line items"}]
         })
-        agent._extract_column_via_devtools.assert_called_once_with("field1", "", "line items")
+        agent._extract_column.assert_called_once_with("field1", "", "line items")
         assert agent.working_memory.staged_reads["field1"] == ["10.00", "20.00", "30.00"]
         assert read_values == {"field1": ["10.00", "20.00", "30.00"]}
         assert len(events) == 1
@@ -86,7 +86,7 @@ class TestRowKindBrowser:
 
     def test_deduplicates_extraction_for_same_field_in_one_call(self, tmp_path):
         agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=True)
-        agent._extract_column_via_devtools = Mock(return_value=["v1", "v2"])
+        agent._extract_column = Mock(return_value=["v1", "v2"])
         # Two items for the same field — should extract only once
         agent._handle_read_field({
             "fields": [
@@ -94,12 +94,12 @@ class TestRowKindBrowser:
                 {"field_name": "field1", "value": ""},
             ]
         })
-        agent._extract_column_via_devtools.assert_called_once()
+        agent._extract_column.assert_called_once()
         assert agent.working_memory.staged_reads["field1"] == ["v1", "v2"]
 
     def test_devtools_failure_returns_error_string(self, tmp_path):
         agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=True)
-        agent._extract_column_via_devtools = Mock(side_effect=RuntimeError("no tables found"))
+        agent._extract_column = Mock(side_effect=RuntimeError("no tables found"))
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": ""}]
         })
@@ -111,44 +111,13 @@ class TestRowKindBrowser:
 
 
 # ---------------------------------------------------------------------------
-# ROW — non-browser (per-item fallback)
-# ---------------------------------------------------------------------------
-
-class TestRowKindNonBrowser:
-    def test_accumulates_per_item(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=False)
-        agent._handle_read_field({
-            "fields": [{"field_name": "field1", "value": "first"}]
-        })
-        agent._handle_read_field({
-            "fields": [{"field_name": "field1", "value": "second"}]
-        })
-        assert agent.working_memory.staged_reads["field1"] == ["first", "second"]
-
-    def test_devtools_not_called(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=False)
-        agent._extract_table_via_devtools = Mock()
-        agent._handle_read_field({
-            "fields": [{"field_name": "field1", "value": "v1"}]
-        })
-        agent._extract_table_via_devtools.assert_not_called()
-
-    def test_no_table_events(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=False)
-        _, _, events = agent._handle_read_field({
-            "fields": [{"field_name": "field1", "value": "v1"}]
-        })
-        assert events == []
-
-
-# ---------------------------------------------------------------------------
 # TABLE — browser (DevTools path)
 # ---------------------------------------------------------------------------
 
 class TestTableKindBrowser:
     def test_stages_rows_and_emits_event(self, tmp_path):
         agent = _agent_with(tmp_path, kind=FieldKind.TABLE, is_browser=True)
-        agent._extract_table_via_devtools = Mock(return_value=["a | b", "c | d"])
+        agent._extract_table = Mock(return_value=["a | b", "c | d"])
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": "", "hint": "orders"}]
         })
@@ -159,25 +128,72 @@ class TestTableKindBrowser:
 
 
 # ---------------------------------------------------------------------------
-# TABLE — non-browser (OCR not supported)
+# Non-browser OCR — exercised end-to-end through _capture_tables_html
 # ---------------------------------------------------------------------------
 
-class TestTableKindNonBrowser:
-    def test_returns_ocr_error_string(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=FieldKind.TABLE, is_browser=False)
+def _ocr_agent(tmp_path, *, kind: FieldKind, paddleocr_client):
+    """Build an agent whose non-browser OCR path is wired to the given client."""
+    agent = _agent_with(tmp_path, kind=kind, is_browser=False)
+    agent.paddleocr_client = paddleocr_client
+    agent.working_memory.parsed_screen = {"raw_image_base64": make_1px_png_b64()}
+    return agent
+
+
+def _llm_returning(text: str) -> Mock:
+    return Mock(return_value=(text, {
+        "tokens": 10, "input_tokens": 5, "output_tokens": 5,
+    }))
+
+
+_TABLE_HTML = (
+    "<html><body><table>"
+    "<tr><th>name</th></tr><tr><td>Alice</td></tr><tr><td>Bob</td></tr>"
+    "</table></body></html>"
+)
+
+
+class TestNonBrowserOCR:
+    def test_table_kind_extracts_rows_and_emits_event(self, tmp_path):
+        client = Mock()
+        client.recognize_vl.return_value = {"html": _TABLE_HTML}
+        agent = _ocr_agent(tmp_path, kind=FieldKind.TABLE, paddleocr_client=client)
+        agent.llm_client.generate = _llm_returning("name\nAlice\nBob")
+
+        msg, read_values, events = agent._handle_read_field({
+            "fields": [{"field_name": "field1", "value": "", "hint": "users"}]
+        })
+
+        client.recognize_vl.assert_called_once()
+        assert agent.working_memory.staged_reads["field1"] == ["name", "Alice", "Bob"]
+        assert read_values == {"field1": ["name", "Alice", "Bob"]}
+        assert len(events) == 1 and events[0]["type"] == "table_read"
+
+    def test_row_kind_uses_column_extraction_prompt(self, tmp_path):
+        client = Mock()
+        client.recognize_vl.return_value = {"html": _TABLE_HTML}
+        agent = _ocr_agent(tmp_path, kind=FieldKind.ROW, paddleocr_client=client)
+        agent.llm_client.generate = _llm_returning("Alice\nBob")
+
+        agent._handle_read_field({
+            "fields": [{"field_name": "field1", "value": "", "hint": "name col"}]
+        })
+
+        # Verify routing went through OCR + column-extraction prompt
+        client.recognize_vl.assert_called_once()
+        prompt_text = agent.llm_client.generate.call_args.kwargs["messages"][0]["content"]
+        assert "Field key: field1" in prompt_text
+        assert agent.working_memory.staged_reads["field1"] == ["Alice", "Bob"]
+
+    def test_unconfigured_client_returns_extraction_error(self, tmp_path):
+        agent = _ocr_agent(tmp_path, kind=FieldKind.TABLE, paddleocr_client=None)
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": ""}]
         })
-        assert "OCR not yet supported" in msg
-        assert "field1" in msg
+        assert "Extraction failed" in msg
+        assert "paddleocr_client not configured" in msg
         assert read_values == {}
         assert "field1" not in agent.working_memory.staged_reads
         assert events == []
-
-    def test_no_exception_escapes(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=FieldKind.TABLE, is_browser=False)
-        # Should not raise even though OCR is unimplemented
-        agent._handle_read_field({"fields": [{"field_name": "field1", "value": ""}]})
 
 
 # ---------------------------------------------------------------------------

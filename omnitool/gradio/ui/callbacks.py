@@ -177,6 +177,7 @@ class GradioCallbacks:
                 "platform": platform,
                 "azure_endpoint": self.settings.azure_endpoint,
                 "gta1_client": self.gta1_client,
+                "paddleocr_client": self.paddleocr_client,
                 "grounding": grounding,
                 "preprocessing_mode": preprocessing_mode,
                 "task_procedure": yaml_procedure,

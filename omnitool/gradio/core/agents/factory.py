@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 from omnitool.gradio.clients import BaseLLMClient, get_llm_client
 from omnitool.gradio.clients.external.gta1 import GTA1Client
 from omnitool.gradio.clients.external.omniparser import OmniParserClient
+from omnitool.gradio.clients.external.paddleocr import PaddleOCRClient
 from omnitool.gradio.config import AgentMode, TaskProcedure, get_llm_config, get_provider_config
 from omnitool.gradio.services import AppState, get_api_key, AuthProvider
 
@@ -33,6 +34,7 @@ def create_agent(
     provider: Optional[str] = None,
     azure_endpoint: Optional[str] = None,
     gta1_client: Optional[GTA1Client] = None,
+    paddleocr_client: Optional[PaddleOCRClient] = None,
     grounding: str = "gta1",
     preprocessing_mode: str = "raw",
     task_procedure: Optional[TaskProcedure] = None,
@@ -120,6 +122,7 @@ def create_agent(
         max_steps=max_steps,
         action_delay=action_delay,
         gta1_client=gta1_client,
+        paddleocr_client=paddleocr_client,
         preprocessing_mode=_resolve_preprocessing(preprocessing_mode),
         grounding_strategy=strategy,
         task_procedure=task_procedure,

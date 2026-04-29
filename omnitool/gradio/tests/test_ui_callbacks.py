@@ -35,6 +35,7 @@ class _StubApp(GradioCallbacks):
         self.tools = tools or Mock()
         self.omniparser_client = Mock()
         self.gta1_client = Mock()
+        self.paddleocr_client = Mock()
         self.orchestrator = None
 
 

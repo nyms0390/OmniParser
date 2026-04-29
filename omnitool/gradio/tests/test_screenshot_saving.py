@@ -248,7 +248,8 @@ class TestSaveField:
         proc = TaskProcedure(id=1, description="test", outputs=outputs)
         agent = self._make_minimal_agent(tmp_path)
         agent.task_procedure = proc
-        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
+        agent._extract_column = Mock(return_value=["10.00"])
+        agent._handle_read_field({"fields": [{"field_name": "line_amount"}]})
         agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
         result_text, captured = agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
         assert "Error" in result_text
@@ -271,7 +272,8 @@ class TestSaveField:
         proc = TaskProcedure(id=1, description="test", outputs=outputs)
         agent = self._make_minimal_agent(tmp_path)
         agent.task_procedure = proc
-        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
+        agent._extract_column = Mock(return_value=["10.00"])
+        agent._handle_read_field({"fields": [{"field_name": "line_amount"}]})
         result_text, captured = agent._handle_save_field({
             "fields": [{"field_name": "line_amount", "transformed_value": "9.99"}]
         })
@@ -478,9 +480,10 @@ class TestAggregateTransience:
     def test_dynamic_field_accumulates_across_calls(self, tmp_path):
         outputs = [TaskOutput(key="line_amount", kind=FieldKind.ROW)]
         agent = self._make_agent_with_outputs(tmp_path, outputs)
-        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "10.00"}]})
+        agent._extract_column = Mock(side_effect=[["10.00"], ["5.00"]])
+        agent._handle_read_field({"fields": [{"field_name": "line_amount"}]})
         agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
-        agent._handle_read_field({"fields": [{"field_name": "line_amount", "value": "5.00"}]})
+        agent._handle_read_field({"fields": [{"field_name": "line_amount"}]})
         agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
         assert agent.working_memory.facts["line_amount"] == ["10.00", "5.00"]
 
