@@ -333,7 +333,7 @@ FOCUS_TOOL: dict = {
         "description": (
             "Crop the current screenshot to a region for a zoomed-in view. "
             "Use whenever text, numbers, or labels are small, dense, or ambiguous "
-            "in the full screenshot — especially before read_field."
+            "in the full screenshot — especially before read_field on table or row fields."
         ),
         "parameters": {
             "type": "object",

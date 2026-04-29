@@ -135,7 +135,8 @@ def _ocr_agent(tmp_path, *, kind: FieldKind, paddleocr_client):
     """Build an agent whose non-browser OCR path is wired to the given client."""
     agent = _agent_with(tmp_path, kind=kind, is_browser=False)
     agent.paddleocr_client = paddleocr_client
-    agent.working_memory.parsed_screen = {"raw_image_base64": make_1px_png_b64()}
+    agent.working_memory.parsed_screen = {"resized_image_base64": make_1px_png_b64()}
+    agent.working_memory.focus_image_b64 = make_1px_png_b64()
     return agent
 
 
@@ -183,6 +184,24 @@ class TestNonBrowserOCR:
         prompt_text = agent.llm_client.generate.call_args.kwargs["messages"][0]["content"]
         assert "Field key: field1" in prompt_text
         assert agent.working_memory.staged_reads["field1"] == ["Alice", "Bob"]
+
+    def test_missing_focus_returns_extraction_error(self, tmp_path):
+        client = Mock()
+        agent = _agent_with(tmp_path, kind=FieldKind.TABLE, is_browser=False)
+        agent.paddleocr_client = client
+        agent.working_memory.parsed_screen = {"resized_image_base64": make_1px_png_b64()}
+        # Intentionally do not set focus_image_b64
+
+        msg, read_values, events = agent._handle_read_field({
+            "fields": [{"field_name": "field1", "value": ""}]
+        })
+
+        assert "Extraction failed" in msg
+        assert "focus_region" in msg
+        assert read_values == {}
+        assert "field1" not in agent.working_memory.staged_reads
+        assert events == []
+        client.recognize_vl.assert_not_called()
 
     def test_unconfigured_client_returns_extraction_error(self, tmp_path):
         agent = _ocr_agent(tmp_path, kind=FieldKind.TABLE, paddleocr_client=None)

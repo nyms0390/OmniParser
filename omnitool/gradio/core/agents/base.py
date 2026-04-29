@@ -10,6 +10,7 @@ Subclasses implement ``run()`` with their own loop:
 """
 
 import base64
+import binascii
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -54,6 +55,9 @@ class WorkingMemory:
             pending commit via ``save_field``.
         trajectory: Ordered list of step data dicts (action history).
         parsed_screen: Most recent captured screen state.
+        focus_image_b64: Base64-encoded PNG of the most recent successful
+            focus_region crop. Consumed by non-browser ``read_field`` for
+            row/table OCR. ``None`` when no crop is currently staged.
     """
 
     task: Optional[str] = None
@@ -61,6 +65,7 @@ class WorkingMemory:
     staged_reads: Dict[str, List[str]] = field(default_factory=dict)
     trajectory: List[Dict[str, Any]] = field(default_factory=list)
     parsed_screen: Optional[Dict[str, Any]] = None
+    focus_image_b64: Optional[str] = None
 
 
 class BaseAgent(ABC):
@@ -669,13 +674,16 @@ class BaseAgent(ABC):
             logger.warning(
                 "_handle_focus_region: missing screenshot or invalid bbox %r", bbox
             )
+            self.working_memory.focus_image_b64 = None
             return None
         try:
             x1, y1, x2, y2 = (int(v) for v in bbox)
             crop_b64 = _crop_b64(resized_b64, x1, y1, x2, y2)
         except Exception as exc:
             logger.warning("_handle_focus_region crop failed: %s", exc)
+            self.working_memory.focus_image_b64 = None
             return None
+        self.working_memory.focus_image_b64 = crop_b64
         crop_file = f"step_{self.step_count:03d}_focus_{self._focus_crop_count:02d}.png"
         self._focus_crop_count += 1
         try:
@@ -738,9 +746,8 @@ class BaseAgent(ABC):
 
         Browser systems use DevTools clipboard capture of
         ``document.documentElement.outerHTML``; non-browser systems call
-        PaddleOCR-VL's ``infer/vl/html`` endpoint on the most recent
-        captured screenshot (``working_memory.parsed_screen``) — which may
-        lag the live screen by one or more steps.
+        PaddleOCR-VL's ``infer/vl/html`` endpoint on the focus crop staged
+        in ``working_memory.focus_image_b64`` by a prior ``focus_region`` call.
 
         Raises RuntimeError when the source is unavailable, the capture
         fails, or no ``<table>`` elements are present.
@@ -761,12 +768,19 @@ class BaseAgent(ABC):
         else:
             if self.paddleocr_client is None:
                 raise RuntimeError("paddleocr_client not configured")
-            parsed = self.working_memory.parsed_screen or {}
-            raw_b64 = parsed.get("raw_image_base64", "")
-            if not raw_b64:
-                raise RuntimeError("no screenshot available for OCR")
+            img_b64 = self.working_memory.focus_image_b64
+            if not img_b64:
+                raise RuntimeError(
+                    "No focus region set — call focus_region on the table area first, "
+                    "then retry read_field."
+                )
+            self.working_memory.focus_image_b64 = None
             try:
-                resp = self.paddleocr_client.recognize_vl(base64.b64decode(raw_b64))
+                img_bytes = base64.b64decode(img_b64)
+            except (binascii.Error, ValueError) as exc:
+                raise RuntimeError(f"Focus crop is not valid base64: {exc}") from exc
+            try:
+                resp = self.paddleocr_client.recognize_vl(img_bytes)
             except Exception as exc:
                 raise RuntimeError(f"PaddleOCR-VL call failed: {exc}") from exc
             html = (resp or {}).get("html", "")
