@@ -215,12 +215,9 @@ READ_FIELD_TOOL: dict = {
     "function": {
         "name": "read_field",
         "description": (
-            "Stage screen values into working memory; call save_field to commit. "
-            "Dispatch follows the field's declared kind:\n"
-            "- scalar: pass value verbatim (optional target for clipboard verification).\n"
-            "- row: pass value=\"\" — system auto-extracts all values at once by matching "
-            "the field key/description against a column header or row label.\n"
-            "- table: pass value=\"\" — system extracts the entire table verbatim."
+            "Stage one or more screen values into working memory; "
+            "call save_field to commit. Batch related reads by passing "
+            "multiple items in a single call."
         ),
         "parameters": {
             "type": "object",
@@ -241,7 +238,9 @@ READ_FIELD_TOOL: dict = {
                                 "type": "string",
                                 "description": (
                                     "Exact value as it appears on screen (raw, unprocessed). "
-                                    "Pass \"\" for blank cells or row/table fields (agent reads automatically)."
+                                    "Pass \"\" when no single value is visible — e.g. a blank cell, "
+                                    "or to have the system auto-extract a tabular region matched "
+                                    "by the field's key/description."
                                 ),
                             },
                             "target": {
@@ -249,18 +248,16 @@ READ_FIELD_TOOL: dict = {
                                 "description": (
                                     "Natural-language description of the on-screen element "
                                     "(with visual location, not just content) for clipboard "
-                                    "verification of scalar fields. Omit to skip. "
-                                    "Ignored for row/table fields."
+                                    "verification. Omit to skip; ignored when value is empty."
                                 ),
                             },
                             "hint": {
                                 "type": "string",
                                 "description": (
-                                    "Optional disambiguation for row/table fields. "
-                                    "Picks which on-screen table to read when multiple are present; "
-                                    "for row fields, also narrows which header/label or axis to match "
-                                    "(e.g. 'invoice line items', 'the rightmost Amount column'). "
-                                    "Ignored for scalar fields."
+                                    "Optional disambiguation when multiple candidate regions are "
+                                    "on-screen — picks which one to read, or narrows which "
+                                    "header/label/axis to match "
+                                    "(e.g. 'invoice line items', 'the rightmost Amount column')."
                                 ),
                             },
                         },
@@ -283,8 +280,7 @@ SAVE_FIELD_TOOL: dict = {
         "name": "save_field",
         "description": (
             "Commit staged values from preceding read_field calls into working memory. "
-            "Drains the staging buffer per field_name: dynamic fields append each entry, "
-            "scalar fields keep the last."
+            "Drains the staging buffer per field_name."
         ),
         "parameters": {
             "type": "object",
@@ -306,10 +302,10 @@ SAVE_FIELD_TOOL: dict = {
                             "transformed_value": {
                                 "type": "string",
                                 "description": (
-                                    "Optional, scalar fields only. Omit unless a transformation is "
-                                    "needed. When set, committed instead of the raw staged value. "
-                                    "Use only for transformations like stripping currency symbols "
-                                    "or truncating trailing characters."
+                                    "Optional. When set, committed instead of the raw staged "
+                                    "value — for transformations like stripping currency symbols "
+                                    "or truncating trailing characters. Omit unless a transformation "
+                                    "is needed."
                                 ),
                             },
                         },
@@ -333,7 +329,7 @@ FOCUS_TOOL: dict = {
         "description": (
             "Crop the current screenshot to a region for a zoomed-in view. "
             "Use whenever text, numbers, or labels are small, dense, or ambiguous "
-            "in the full screenshot — especially before read_field on table or row fields."
+            "in the full screenshot — especially before read_field on dense tabular data."
         ),
         "parameters": {
             "type": "object",

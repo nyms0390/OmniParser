@@ -780,10 +780,9 @@ class BaseAgent(ABC):
             except (binascii.Error, ValueError) as exc:
                 raise RuntimeError(f"Focus crop is not valid base64: {exc}") from exc
             try:
-                resp = self.paddleocr_client.recognize_vl(img_bytes)
+                html = self.paddleocr_client.recognize_vl(img_bytes)
             except Exception as exc:
                 raise RuntimeError(f"PaddleOCR-VL call failed: {exc}") from exc
-            html = (resp or {}).get("html", "")
             if not html:
                 raise RuntimeError("PaddleOCR-VL returned no HTML")
 

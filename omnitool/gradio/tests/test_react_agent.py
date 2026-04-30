@@ -268,23 +268,40 @@ class TestReActAgentCompaction:
         )
 
     def test_compaction_failure_keeps_history(self, tmp_path):
-        """If the compaction LLM call raises, history is preserved and loop continues."""
+        """If the compaction LLM call raises, history is preserved (not replaced
+        by a 2-message summary stub) and the loop continues to completion."""
         agent = _make_agent(tmp_path, max_steps=5, compaction_token_threshold=self._THRESHOLD)
 
+        pre_compaction_len = []
+        post_compaction_step_lens = []
         step_count = [0]
 
         def generate_side_effect(messages, system_prompt, tools=None):
             if tools is None:
+                # Capture history length at the moment compaction is attempted.
+                pre_compaction_len.append(len(messages))
                 raise RuntimeError("LLM timeout")
             step_count[0] += 1
+            # Track history length on step calls that follow the failed compaction.
+            if pre_compaction_len:
+                post_compaction_step_lens.append(len(messages))
             if step_count[0] > 1:
                 return _finish_response()
             return _tool_response()
 
         agent.llm_client.generate.side_effect = generate_side_effect
         events = list(agent.run())
-        final_types = {e["type"] for e in events}
-        assert "complete" in final_types or "error" in final_types
+
+        assert "complete" in {e["type"] for e in events}, "loop must reach completion"
+        assert pre_compaction_len, "compaction was not attempted"
+        assert post_compaction_step_lens, "no step calls after failed compaction"
+        # Successful compaction would replace the turn log with 2 stub messages
+        # (summary + 'Understood'). A preserved history must be at least as long
+        # as it was at the compaction attempt.
+        assert post_compaction_step_lens[0] >= pre_compaction_len[0], (
+            f"history shrank after failed compaction: "
+            f"pre={pre_compaction_len[0]} post={post_compaction_step_lens[0]}"
+        )
 
     def test_compaction_suppressed_with_pending_staged_reads(self, tmp_path):
         """Compaction is not scheduled while a read_field → save_field sequence

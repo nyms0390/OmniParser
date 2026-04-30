@@ -24,7 +24,12 @@ from omnitool.gradio.tests._helpers import (
 
 
 def _make_react_agent(tmp_path, side_effects):
-    """Thin wrapper that uses 100×100 screen dims for these tests."""
+    """File-local wrapper around make_react_agent.
+
+    These tests exercise the real _save_trajectory_step path (so we can read
+    trajectory.json / step_*.png from disk), and use a small 100×100 screen
+    so the saved PNGs stay tiny.
+    """
     return make_react_agent(
         tmp_path,
         side_effects=list(side_effects),
@@ -68,9 +73,9 @@ class TestTrajectoryScreenshotSave:
         list(agent.run())
         traj_file = tmp_path / "trajectory.json"
         assert traj_file.exists()
-        with open(traj_file) as f:
-            records = [json.loads(line) for line in f if line.strip() and not json.loads(line).get("type")]
-        assert all("screenshot_file" in r for r in records), "Not all step records have screenshot_file"
+        records = [json.loads(line) for line in traj_file.read_text().splitlines() if line.strip()]
+        step_records = [r for r in records if not r.get("type")]
+        assert all("screenshot_file" in r for r in step_records), "Not all step records have screenshot_file"
 
     def test_no_screenshot_saved_when_parsed_screen_missing(self, tmp_path):
         """If working_memory.parsed_screen is None, no crash and no PNG written."""

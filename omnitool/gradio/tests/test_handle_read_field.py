@@ -156,7 +156,7 @@ _TABLE_HTML = (
 class TestNonBrowserOCR:
     def test_table_kind_extracts_rows_and_emits_event(self, tmp_path):
         client = Mock()
-        client.recognize_vl.return_value = {"html": _TABLE_HTML}
+        client.recognize_vl.return_value = _TABLE_HTML
         agent = _ocr_agent(tmp_path, kind=FieldKind.TABLE, paddleocr_client=client)
         agent.llm_client.generate = _llm_returning("name\nAlice\nBob")
 
@@ -171,7 +171,7 @@ class TestNonBrowserOCR:
 
     def test_row_kind_uses_column_extraction_prompt(self, tmp_path):
         client = Mock()
-        client.recognize_vl.return_value = {"html": _TABLE_HTML}
+        client.recognize_vl.return_value = _TABLE_HTML
         agent = _ocr_agent(tmp_path, kind=FieldKind.ROW, paddleocr_client=client)
         agent.llm_client.generate = _llm_returning("Alice\nBob")
 

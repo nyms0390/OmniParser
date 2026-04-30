@@ -2,8 +2,10 @@
 PaddleOCR GPU API client for remote text recognition.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 import logging
+
+import requests
 
 from .base import BaseServiceClient
 
@@ -35,32 +37,34 @@ class PaddleOCRClient(BaseServiceClient):
     @property
     def probe_endpoint(self) -> str:
         """Endpoint for health check."""
-        return "health"
+        return "probe"
 
-    def _post_image(self, endpoint: str, image: bytes) -> Dict[str, Any]:
-        """POST a PNG image to the given endpoint and return the parsed JSON."""
+    def _post_image(self, endpoint: str, image: bytes) -> requests.Response:
+        """POST a PNG image to the given endpoint and return the raw response."""
         files = {'file': ('image.png', image, 'image/png')}
         return self._make_request("POST", endpoint, json_data=None, files=files)
 
-    def recognize(self, image: bytes) -> Dict[str, Any]:
+    def recognize(self, image: bytes) -> List[Dict[str, Any]]:
         """Recognize text in image via PP-OCRv5 endpoint.
+
+        Returns one entry per page (a single image yields a one-element list,
+        a multi-page PDF yields one entry per page). Each entry is the
+        ``OCRResult.json`` dict produced by ``PaddleOCR.predict()``: the
+        recognized text, polygons, and scores live under the ``res`` key
+        (``rec_texts``, ``rec_polys``, ``rec_scores``, ...).
 
         Args:
             image: Image as PNG bytes
 
         Returns:
-            {
-                "coordinates": [[x1, y1], [x2, y2], ...],  # Bounding boxes per region
-                "text":        ["text1", "text2", ...],    # Recognized strings
-                "confidence":  [0.95, 0.87, ...]           # Optional confidence scores
-            }
+            ``[{"res": {"rec_texts": [...], "rec_polys": [...], ...}, ...}, ...]``
 
         Raises:
             Exception: If API call fails
         """
-        return self._post_image(self.V5_ENDPOINT, image)
+        return self._post_image(self.V5_ENDPOINT, image).json()
 
-    def recognize_vl(self, image: bytes) -> Dict[str, Any]:
+    def recognize_vl(self, image: bytes) -> str:
         """Parse document via PaddleOCR-VL and return server-rendered HTML.
 
         Backed by ``PaddleOCRVL.save_to_html()`` on the server. Used by the
@@ -71,9 +75,9 @@ class PaddleOCRClient(BaseServiceClient):
             image: Image as PNG bytes
 
         Returns:
-            {"html": "<full document html>"}
+            The full HTML document as a string.
 
         Raises:
             Exception: If API call fails
         """
-        return self._post_image(self.VL_ENDPOINT, image)
+        return self._post_image(self.VL_ENDPOINT, image).text

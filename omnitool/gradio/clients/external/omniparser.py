@@ -64,13 +64,13 @@ class OmniParserClient(BaseServiceClient):
             result = self._make_request(
                 "POST",
                 self.parse_endpoint,
-                json_data=data
-            )
-            
+                json_data=data,
+            ).json()
+
             # Add screen_info if not present
             if "screen_info" not in result:
                 result["screen_info"] = ""
-            
+
             return result
         
         except Exception as e:

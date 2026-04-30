@@ -146,9 +146,9 @@ class WindowsHostClient(BaseServiceClient):
             response = self._make_request(
                 "POST",
                 self.execute_endpoint,
-                json_data=payload
-            )
-            
+                json_data=payload,
+            ).json()
+
             # Check for execution errors
             if response.get("status") == "error":
                 error_msg = response.get("message", "Unknown error")

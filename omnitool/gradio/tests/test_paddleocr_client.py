@@ -2,10 +2,11 @@
 Tests for PaddleOCRClient — verifies endpoint routing and payload shape
 for the PP-OCRv5 and PaddleOCR-VL paths.
 
-The HTTP layer (BaseServiceClient._make_request) is patched on the instance.
+The HTTP layer (BaseServiceClient._make_request) is patched on the instance
+and returns a Mock standing in for ``requests.Response``.
 """
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -17,20 +18,40 @@ def client():
     return PaddleOCRClient(base_url="http://test:8001", timeout=5)
 
 
+def _response(*, json=None, text=None):
+    """Build a Mock Response whose .json()/.text matches the given payload."""
+    resp = Mock()
+    if json is not None:
+        resp.json.return_value = json
+    if text is not None:
+        resp.text = text
+    return resp
+
+
 class TestEndpointConstants:
     def test_v5_and_vl_endpoints_differ(self):
         assert PaddleOCRClient.V5_ENDPOINT == "infer/v5/raw"
         assert PaddleOCRClient.VL_ENDPOINT == "infer/vl/html"
         assert PaddleOCRClient.V5_ENDPOINT != PaddleOCRClient.VL_ENDPOINT
 
-    def test_probe_endpoint_is_health(self, client):
-        assert client.probe_endpoint == "health"
+    def test_probe_endpoint_is_probe(self, client):
+        assert client.probe_endpoint == "probe"
 
 
 class TestRecognizeV5:
     def test_posts_to_v5_endpoint_with_multipart_image(self, client):
-        expected = {"coordinates": [[0, 0], [10, 10]], "text": ["hi"], "confidence": [0.9]}
-        with patch.object(client, "_make_request", return_value=expected) as mock_req:
+        expected = [
+            {
+                "res": {
+                    "rec_texts": ["hi"],
+                    "rec_polys": [[[0, 0], [10, 0], [10, 10], [0, 10]]],
+                    "rec_scores": [0.9],
+                },
+                "input_path": "input.png",
+                "page_index": 0,
+            }
+        ]
+        with patch.object(client, "_make_request", return_value=_response(json=expected)) as mock_req:
             result = client.recognize(b"\x89PNG\r\n\x1a\nfake")
 
         assert result == expected
@@ -48,8 +69,8 @@ class TestRecognizeV5:
 
 class TestRecognizeVL:
     def test_posts_to_vl_endpoint_with_multipart_image(self, client):
-        expected = {"html": "<html><body><table><tr><td>a</td></tr></table></body></html>"}
-        with patch.object(client, "_make_request", return_value=expected) as mock_req:
+        expected = "<html><body><table><tr><td>a</td></tr></table></body></html>"
+        with patch.object(client, "_make_request", return_value=_response(text=expected)) as mock_req:
             result = client.recognize_vl(b"\x89PNG\r\n\x1a\nfake")
 
         assert result == expected

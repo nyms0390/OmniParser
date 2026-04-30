@@ -74,7 +74,7 @@ class GTA1Client(BaseServiceClient):
                 "image_base64": image_base64,
                 "instruction": instruction,
             },
-        )
+        ).json()
         return {
             "x": int(result["x"]),
             "y": int(result["y"]),

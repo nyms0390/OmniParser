@@ -63,27 +63,31 @@ class BaseServiceClient(ABC):
         json_data: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None,
         **kwargs
-    ) -> Dict[str, Any]:
+    ) -> requests.Response:
         """Make HTTP request with error handling.
-        
+
+        Returns the raw ``requests.Response`` so each client method can decode
+        the body in whatever shape its endpoint produces (``.json()``,
+        ``.text``, ``.content``, etc.).
+
         Args:
             method: HTTP method ('GET', 'POST', 'PUT', 'DELETE', etc)
             endpoint: API endpoint (relative path)
             json_data: JSON payload for request body
             params: Query parameters
             **kwargs: Additional arguments passed to requests
-            
+
         Returns:
-            Parsed JSON response
-            
+            The ``requests.Response`` after a successful ``raise_for_status``.
+
         Raises:
             Exception: If request fails
         """
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
-        
+
         try:
             logger.debug(f"Making {method} request to {url}")
-            
+
             response = requests.request(
                 method,
                 url,
@@ -93,10 +97,7 @@ class BaseServiceClient(ABC):
                 **kwargs
             )
             response.raise_for_status()
-            
-            result = response.json()
-            logger.debug(f"Response received: {list(result.keys()) if isinstance(result, dict) else 'list'}")
-            return result
+            return response
         
         except requests.exceptions.Timeout:
             logger.error(f"Request to {url} timed out after {self.timeout}s")

@@ -226,8 +226,8 @@ class TestTaskProcedureAggregateRouting:
         """Outputs section must annotate the aggregate operation, not call it auto-computed."""
         task_str = self._make_proc().to_task_string()
         assert "auto-computed" not in task_str
-        assert "all rows at once" in task_str
-        assert "reduced via sum" in task_str
+        assert 'call read_field once with value=""' in task_str
+        assert "sum applied at finish" in task_str
 
     def test_outputs_section_lists_aggregate_key(self):
         """Outputs section must list grand_total as the capture key."""
