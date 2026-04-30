@@ -144,6 +144,15 @@ LLM_MODELS: Dict[str, Dict[str, Any]] = {
         "max_tokens": 4096,
         "temperature": 0.0,
     },
+    "kimi-k2.5": {
+        "internal_name": "Kimi-K2.5",
+        "supported_providers": [APIProvider.AZURE],
+        "pricing": {
+            "_default": {"input": 0.60, "output": 2.50},
+        },
+        "max_tokens": 4096,
+        "temperature": 0.0,
+    },
     "claude-3-5-sonnet": {
         "internal_name": "claude-3-5-sonnet-20241022",
         "supported_providers": [
