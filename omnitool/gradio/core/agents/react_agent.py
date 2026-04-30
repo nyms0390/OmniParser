@@ -272,20 +272,16 @@ class ReActAgent(BaseAgent):
                     if stored:
                         yield {"type": "field_saved", "text": result_text, "fields": stored}
 
-                # 5c. focus_region → crop screenshot and return image
+                # 5c. focus_region → crop screenshot; image rides on the next user message
                 elif tool_name == "focus_region":
                     crop_b64 = self._handle_focus_region(arguments)
                     if crop_b64:
-                        history.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "content": [
-                                {"type": "text", "text": "Focused region:"},
-                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{crop_b64}"}},
-                            ],
-                        })
+                        history.append(_tool_msg(
+                            tool_call_id,
+                            f"Focused region captured: bbox {arguments.get('bbox')}.",
+                        ))
                         yield {"type": "focus_region", "image_base64": crop_b64}
-                        logger.info("FOCUS_REGION — crop returned for bbox %s", arguments.get("bbox"))
+                        logger.info("FOCUS_REGION — crop captured for bbox %s", arguments.get("bbox"))
                     else:
                         history.append(_tool_msg(tool_call_id, "focus_region failed: invalid bbox or no screenshot available."))
                         logger.warning("FOCUS_REGION — failed for bbox %s", arguments.get("bbox"))
@@ -315,6 +311,9 @@ class ReActAgent(BaseAgent):
                             yield {"type": "grounding", "events": evts}
 
                         tool_results = self.execute_tool_calls([dispatch])
+                        # An OS action was attempted — the focus crop is now stale
+                        # regardless of success/error outcome.
+                        self.working_memory.focus_image_b64 = None
                         res = tool_results[0] if tool_results else {}
                         if res.get("status") == "error":
                             err_text = res.get("error", "unknown error")
@@ -387,6 +386,15 @@ class ReActAgent(BaseAgent):
             content.append({
                 "type": "image_url",
                 "image_url": {"url": f"data:image/png;base64,{display_b64}"},
+            })
+
+        # Last focus_region crop, attached until a screen-changing action invalidates it.
+        focus_b64 = self.working_memory.focus_image_b64
+        if focus_b64:
+            content.append({"type": "text", "text": "Last focused region:"})
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{focus_b64}"},
             })
 
         # Element list (OmniParser only; empty for GTA1)

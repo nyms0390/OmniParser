@@ -168,6 +168,22 @@ class TestNonBrowserOCR:
         assert agent.working_memory.staged_reads["field1"] == ["name", "Alice", "Bob"]
         assert read_values == {"field1": ["name", "Alice", "Bob"]}
         assert len(events) == 1 and events[0]["type"] == "table_read"
+        # The OCR path consumes the focus crop; subsequent reads must re-focus.
+        assert agent.working_memory.focus_image_b64 is None
+
+    def test_scalar_kind_preserves_focus_crop(self, tmp_path):
+        # Scalar reads do not consume the crop — it stays available for follow-up
+        # reads in the same focused area until a screen-changing action invalidates it.
+        agent = _ocr_agent(tmp_path, kind=FieldKind.TABLE, paddleocr_client=Mock())
+        # Override the procedure to a SCALAR field (no extraction, no consume).
+        agent.task_procedure = _proc_with_output(
+            TaskOutput(key="field1", kind=FieldKind.SCALAR, clipboard_correction=False)
+        )
+        crop_before = agent.working_memory.focus_image_b64
+        agent._handle_read_field({
+            "fields": [{"field_name": "field1", "value": "42"}]
+        })
+        assert agent.working_memory.focus_image_b64 == crop_before
 
     def test_row_kind_uses_column_extraction_prompt(self, tmp_path):
         client = Mock()

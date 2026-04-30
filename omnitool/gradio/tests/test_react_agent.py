@@ -190,6 +190,158 @@ class TestEvictOldImages:
 
 
 # ===========================================================================
+# ReActAgent — focus crop lifecycle (user-msg attachment + invalidation)
+# ===========================================================================
+
+class TestFocusCropLifecycle:
+    """Focus crop rides on the next user message until consumed or invalidated."""
+
+    # --- _build_user_message ---------------------------------------------------
+
+    def test_build_user_message_attaches_focus_crop(self, tmp_path):
+        from omnitool.gradio.tests._helpers import make_png_b64, make_screen_data
+        agent = _make_agent(tmp_path)
+        # Distinct colors so the two image blocks are not byte-identical and
+        # the assertion truly verifies which slot holds which image.
+        display = make_png_b64(2, 2, color=(0, 0, 0))
+        crop = make_png_b64(2, 2, color=(255, 0, 0))
+        agent.working_memory.focus_image_b64 = crop
+        msg = agent._build_user_message(make_screen_data(display))
+
+        image_blocks = [b for b in msg["content"] if b.get("type") == "image_url"]
+        text_blocks = [b for b in msg["content"] if b.get("type") == "text"]
+        assert len(image_blocks) == 2, "expected display image + focus crop"
+        assert image_blocks[0]["image_url"]["url"].endswith(display)
+        assert image_blocks[1]["image_url"]["url"].endswith(crop)
+        assert any("Last focused region" in b["text"] for b in text_blocks)
+
+    def test_build_user_message_no_focus_crop(self, tmp_path):
+        from omnitool.gradio.tests._helpers import make_screen_data
+        agent = _make_agent(tmp_path)
+        agent.working_memory.focus_image_b64 = None
+        msg = agent._build_user_message(make_screen_data())
+
+        image_blocks = [b for b in msg["content"] if b.get("type") == "image_url"]
+        text_blocks = [b for b in msg["content"] if b.get("type") == "text"]
+        assert len(image_blocks) == 1
+        assert not any("Last focused region" in b["text"] for b in text_blocks)
+
+    # --- focus_region tool message ---------------------------------------------
+
+    def test_focus_region_dispatch_returns_text_only_tool_message(self, tmp_path):
+        # Mock.call_args stores the messages list by reference, so a snapshot
+        # taken inside the side_effect is the only way to inspect history at
+        # the moment the second generate() runs (before finish mutates it).
+        import copy as _copy
+        snapshots: list = []
+        responses = iter([
+            _tool_response(tool_name="focus_region", args={"bbox": [0, 0, 1, 1]}),
+            _finish_response(),
+        ])
+
+        def generate(messages, system_prompt, tools=None):
+            snapshots.append(_copy.deepcopy(messages))
+            return next(responses)
+
+        agent = _make_agent(tmp_path)
+        agent.llm_client.generate = Mock(side_effect=generate)
+        list(agent.run())
+
+        assert len(snapshots) >= 2, "second generate() call was never made"
+        history = snapshots[1]
+        focus_tool_msgs = [
+            m for m in history
+            if m.get("role") == "tool"
+            and isinstance(m.get("content"), str)
+            and "Focused region captured" in m["content"]
+        ]
+        assert focus_tool_msgs, "focus_region tool message not found or not text-only"
+        # Negative: no tool message in history carries an image_url block.
+        for m in history:
+            if m.get("role") == "tool" and isinstance(m.get("content"), list):
+                types = [b.get("type") for b in m["content"] if isinstance(b, dict)]
+                assert "image_url" not in types, (
+                    f"tool message must not carry an image: {types}"
+                )
+
+    # --- screen-action invalidation -------------------------------------------
+
+    def test_screen_action_invalidates_focus_crop(self, tmp_path):
+        agent = _make_agent(tmp_path)
+        agent.working_memory.focus_image_b64 = "preset_crop_b64"
+        agent.llm_client.generate.side_effect = [
+            _tool_response(),  # default = left_click → generic dispatch branch
+            _finish_response(),
+        ]
+        list(agent.run())
+        assert agent.working_memory.focus_image_b64 is None
+
+    def test_grounding_error_preserves_focus_crop(self, tmp_path):
+        agent = _make_agent(tmp_path)
+        agent.working_memory.focus_image_b64 = "preset_crop_b64"
+        agent.grounding_strategy.resolve.side_effect = ValueError("could not ground")
+        agent.llm_client.generate.side_effect = [
+            _tool_response(),
+            _finish_response(),
+        ]
+        list(agent.run())
+        # No OS action ran → screen unchanged → crop still valid.
+        assert agent.working_memory.focus_image_b64 == "preset_crop_b64"
+
+    def test_action_execute_error_invalidates_focus_crop(self, tmp_path):
+        agent = _make_agent(tmp_path)
+        agent.working_memory.focus_image_b64 = "preset_crop_b64"
+        # Action was dispatched to the OS but the tool reported an error
+        # (e.g. click executed at an unresponsive coordinate). The screen may
+        # still have moved (focus change, hover side-effect), so invalidate.
+        agent.execute_tool_calls = Mock(return_value=[{
+            "tool": "computer",
+            "status": "error",
+            "error": "click failed",
+        }])
+        agent.llm_client.generate.side_effect = [
+            _tool_response(),
+            _finish_response(),
+        ]
+        list(agent.run())
+        assert agent.working_memory.focus_image_b64 is None
+
+    # --- aux tools preserve the crop ------------------------------------------
+
+    def test_finish_preserves_focus_crop(self, tmp_path):
+        agent = _make_agent(tmp_path)
+        agent.working_memory.focus_image_b64 = "preset_crop_b64"
+        agent.llm_client.generate.side_effect = [_finish_response()]
+        list(agent.run())
+        assert agent.working_memory.focus_image_b64 == "preset_crop_b64"
+
+    def test_mark_screenshot_preserves_focus_crop(self, tmp_path):
+        agent = _make_agent(tmp_path)
+        agent.working_memory.focus_image_b64 = "preset_crop_b64"
+        agent.llm_client.generate.side_effect = [
+            _tool_response(tool_name="mark_screenshot", args={"reason": "checkpoint"}),
+            _finish_response(),
+        ]
+        list(agent.run())
+        assert agent.working_memory.focus_image_b64 == "preset_crop_b64"
+
+    # --- failed focus_region path ---------------------------------------------
+
+    def test_focus_region_failure_clears_crop_and_emits_no_event(self, tmp_path):
+        # Invalid bbox → _handle_focus_region returns None and clears focus_image_b64
+        # internally. No focus_region event should be yielded.
+        agent = _make_agent(tmp_path)
+        agent.working_memory.focus_image_b64 = "preset_crop_b64"
+        agent.llm_client.generate.side_effect = [
+            _tool_response(tool_name="focus_region", args={"bbox": []}),  # invalid
+            _finish_response(),
+        ]
+        events = list(agent.run())
+        assert agent.working_memory.focus_image_b64 is None
+        assert not any(e["type"] == "focus_region" for e in events)
+
+
+# ===========================================================================
 # ReActAgent — history compaction
 # ===========================================================================
 

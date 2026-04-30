@@ -56,8 +56,10 @@ class WorkingMemory:
         trajectory: Ordered list of step data dicts (action history).
         parsed_screen: Most recent captured screen state.
         focus_image_b64: Base64-encoded PNG of the most recent successful
-            focus_region crop. Consumed by non-browser ``read_field`` for
-            row/table OCR. ``None`` when no crop is currently staged.
+            focus_region crop. Re-attached to every user message until either
+            consumed by non-browser row/table OCR (``_capture_tables_html``)
+            or invalidated by a screen-changing computer action.
+            ``None`` when no crop is currently staged.
     """
 
     task: Optional[str] = None
