@@ -550,7 +550,7 @@ class BaseAgent(ABC):
 
         The returned ``captured`` dict mirrors what was committed: for accumulating
         fields this is the full staged list; for scalar fields it is a single-element
-        list containing the committed value (which may be ``transformed_value`` when supplied).
+        list containing the committed value.
         """
         items = tc_args.get("fields", [])
         if not items:
@@ -585,15 +585,8 @@ class BaseAgent(ABC):
                 out.aggregate is not None
                 or out.kind in (FieldKind.ROW, FieldKind.TABLE)
             )
-            transformed_value: str | None = item.get("transformed_value") or None
 
             if accumulates:
-                if transformed_value is not None:
-                    results.append(
-                        f"Error: transformed_value is not supported for accumulating field '{field_name}'."
-                    )
-                    self.working_memory.staged_reads[field_name] = staged_values
-                    continue
                 for value in staged_values:
                     self._set_fact(field_name, value, overwrite=False)
                 results.append(f"Saved {len(staged_values)} values to accumulating field '{field_name}'")
@@ -605,13 +598,7 @@ class BaseAgent(ABC):
                         "using last: %r (dropped: %r)",
                         field_name, len(staged_values), staged_values[-1], staged_values[:-1],
                     )
-                raw_value = staged_values[-1]
-                committed = transformed_value if transformed_value is not None else raw_value
-                if transformed_value is not None:
-                    logger.info(
-                        "SAVE_FIELD '%s': applying transformed_value %r (raw was %r)",
-                        field_name, transformed_value, raw_value,
-                    )
+                committed = staged_values[-1]
                 self._set_fact(field_name, committed, overwrite=True)
                 results.append(f"Saved: {field_name} = {committed}")
                 captured[field_name] = [committed]

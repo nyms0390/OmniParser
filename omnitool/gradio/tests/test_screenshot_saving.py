@@ -261,40 +261,6 @@ class TestSaveField:
         assert captured == {}
         assert agent.working_memory.facts["line_amount"] == ["10.00"]
 
-    def test_transformed_value_commits_transformed_string_for_scalar(self, tmp_path):
-        agent = self._make_minimal_agent(tmp_path)
-        agent._handle_read_field({"fields": [{"field_name": "account_number", "value": "1234567890"}]})
-        result_text, captured = agent._handle_save_field({
-            "fields": [{"field_name": "account_number", "transformed_value": "1234567"}]
-        })
-        assert agent.working_memory.facts["account_number"] == ["1234567"]
-        assert captured == {"account_number": ["1234567"]}
-        assert "1234567" in result_text
-        assert "1234567890" not in result_text
-
-    def test_transformed_value_on_dynamic_field_returns_error_and_restores_staged(self, tmp_path):
-        outputs = [TaskOutput(key="line_amount", kind=FieldKind.ROW)]
-        proc = TaskProcedure(id=1, description="test", outputs=outputs)
-        agent = self._make_minimal_agent(tmp_path)
-        agent.task_procedure = proc
-        agent._extract_column = Mock(return_value=["10.00"])
-        agent._handle_read_field({"fields": [{"field_name": "line_amount"}]})
-        result_text, captured = agent._handle_save_field({
-            "fields": [{"field_name": "line_amount", "transformed_value": "9.99"}]
-        })
-        assert "Error" in result_text
-        assert captured == {}
-        assert "line_amount" not in agent.working_memory.facts
-        assert agent.working_memory.staged_reads.get("line_amount") == ["10.00"]
-
-    def test_no_transformed_value_preserves_existing_behavior(self, tmp_path):
-        agent = self._make_minimal_agent(tmp_path)
-        agent._handle_read_field({"fields": [{"field_name": "order_id", "value": "ABC"}]})
-        result_text, captured = agent._handle_save_field({"fields": [{"field_name": "order_id"}]})
-        assert agent.working_memory.facts["order_id"] == ["ABC"]
-        assert captured == {"order_id": ["ABC"]}
-
-
 # ===========================================================================
 # _handle_mark_screenshot
 # ===========================================================================

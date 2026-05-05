@@ -299,15 +299,6 @@ SAVE_FIELD_TOOL: dict = {
                                     "Must match the field_name used in the preceding read_field call."
                                 ),
                             },
-                            "transformed_value": {
-                                "type": "string",
-                                "description": (
-                                    "Optional. When set, committed instead of the raw staged "
-                                    "value — for transformations like stripping currency symbols "
-                                    "or truncating trailing characters. Omit unless a transformation "
-                                    "is needed."
-                                ),
-                            },
                         },
                         "required": ["field_name"],
                     },
