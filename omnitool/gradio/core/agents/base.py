@@ -479,13 +479,6 @@ class BaseAgent(ABC):
             needs_extraction = kind in (FieldKind.ROW, FieldKind.TABLE) or has_aggregate
 
             if needs_extraction:
-                if field_name in extracted_fields:
-                    logger.info(
-                        "READ_FIELD — skipping duplicate extraction for '%s' (already extracted in this call)",
-                        field_name,
-                    )
-                    results.append(f"Skipped duplicate extraction for {field_name}")
-                    continue
                 try:
                     if kind == FieldKind.TABLE:
                         rows = self._extract_table(hint)
