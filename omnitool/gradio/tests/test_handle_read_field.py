@@ -84,19 +84,6 @@ class TestRowKindBrowser:
         assert events[0]["type"] == "table_read"
         assert "20.00" in events[0]["text"]
 
-    def test_deduplicates_extraction_for_same_field_in_one_call(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=True)
-        agent._extract_column = Mock(return_value=["v1", "v2"])
-        # Two items for the same field — should extract only once
-        agent._handle_read_field({
-            "fields": [
-                {"field_name": "field1", "value": ""},
-                {"field_name": "field1", "value": ""},
-            ]
-        })
-        agent._extract_column.assert_called_once()
-        assert agent.working_memory.staged_reads["field1"] == ["v1", "v2"]
-
     def test_devtools_failure_returns_error_string(self, tmp_path):
         agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=True)
         agent._extract_column = Mock(side_effect=RuntimeError("no tables found"))

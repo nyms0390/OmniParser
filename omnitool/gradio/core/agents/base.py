@@ -450,9 +450,6 @@ class BaseAgent(ABC):
         results = []
         read_values: Dict[str, List[str]] = {}
         events: List[dict] = []
-        # Track fields already extracted in this call to avoid duplicate
-        # round-trips when the LLM batches multiple items for the same field.
-        extracted_fields: set[str] = set()
 
         for item in items:
             field_name = item.get("field_name", "")
@@ -481,7 +478,6 @@ class BaseAgent(ABC):
                     rows = self._extract_column(
                         field_name, out.description if out else "", hint
                     )
-                    extracted_fields.add(field_name)
                     events.append({"type": "table_read", "text": "\n".join(rows)})
                     self.working_memory.staged_reads.setdefault(field_name, []).extend(rows)
                     read_values.setdefault(field_name, []).extend(rows)
