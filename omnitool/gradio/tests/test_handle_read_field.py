@@ -111,23 +111,6 @@ class TestRowKindBrowser:
 
 
 # ---------------------------------------------------------------------------
-# TABLE — browser (DevTools path)
-# ---------------------------------------------------------------------------
-
-class TestTableKindBrowser:
-    def test_stages_rows_and_emits_event(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=FieldKind.TABLE, is_browser=True)
-        agent._extract_table = Mock(return_value=["a | b", "c | d"])
-        msg, read_values, events = agent._handle_read_field({
-            "fields": [{"field_name": "field1", "value": "", "hint": "orders"}]
-        })
-        assert agent.working_memory.staged_reads["field1"] == ["a | b", "c | d"]
-        assert read_values == {"field1": ["a | b", "c | d"]}
-        assert len(events) == 1
-        assert events[0]["type"] == "table_read"
-
-
-# ---------------------------------------------------------------------------
 # Non-browser OCR — exercised end-to-end through _capture_tables_html
 # ---------------------------------------------------------------------------
 
@@ -154,27 +137,10 @@ _TABLE_HTML = (
 
 
 class TestNonBrowserOCR:
-    def test_table_kind_extracts_rows_and_emits_event(self, tmp_path):
-        client = Mock()
-        client.recognize_vl.return_value = _TABLE_HTML
-        agent = _ocr_agent(tmp_path, kind=FieldKind.TABLE, paddleocr_client=client)
-        agent.llm_client.generate = _llm_returning("name\nAlice\nBob")
-
-        msg, read_values, events = agent._handle_read_field({
-            "fields": [{"field_name": "field1", "value": "", "hint": "users"}]
-        })
-
-        client.recognize_vl.assert_called_once()
-        assert agent.working_memory.staged_reads["field1"] == ["name", "Alice", "Bob"]
-        assert read_values == {"field1": ["name", "Alice", "Bob"]}
-        assert len(events) == 1 and events[0]["type"] == "table_read"
-        # The OCR path consumes the focus crop; subsequent reads must re-focus.
-        assert agent.working_memory.focus_image_b64 is None
-
     def test_scalar_kind_preserves_focus_crop(self, tmp_path):
         # Scalar reads do not consume the crop — it stays available for follow-up
         # reads in the same focused area until a screen-changing action invalidates it.
-        agent = _ocr_agent(tmp_path, kind=FieldKind.TABLE, paddleocr_client=Mock())
+        agent = _ocr_agent(tmp_path, kind=FieldKind.SCALAR, paddleocr_client=Mock())
         # Override the procedure to a SCALAR field (no extraction, no consume).
         agent.task_procedure = _proc_with_output(
             TaskOutput(key="field1", kind=FieldKind.SCALAR, clipboard_correction=False)
@@ -203,7 +169,7 @@ class TestNonBrowserOCR:
 
     def test_missing_focus_returns_extraction_error(self, tmp_path):
         client = Mock()
-        agent = _agent_with(tmp_path, kind=FieldKind.TABLE, is_browser=False)
+        agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=False)
         agent.paddleocr_client = client
         agent.working_memory.parsed_screen = {"resized_image_base64": make_1px_png_b64()}
         # Intentionally do not set focus_image_b64
@@ -220,7 +186,7 @@ class TestNonBrowserOCR:
         client.recognize_vl.assert_not_called()
 
     def test_unconfigured_client_returns_extraction_error(self, tmp_path):
-        agent = _ocr_agent(tmp_path, kind=FieldKind.TABLE, paddleocr_client=None)
+        agent = _ocr_agent(tmp_path, kind=FieldKind.ROW, paddleocr_client=None)
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": ""}]
         })

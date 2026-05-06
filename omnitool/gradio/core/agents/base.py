@@ -32,7 +32,6 @@ from omnitool.gradio.config import (
     FieldKind,
     SCREENSHOT_MAX_WIDTH,
     SystemConfig,
-    TABLE_EXTRACTION_PROMPT,
     TaskProcedure,
     get_llm_config,
     get_pricing,
@@ -437,9 +436,8 @@ class BaseAgent(ABC):
         - ROW or aggregate: orientation-agnostic column extraction via
           ``_extract_column`` — LLM matches the field key/description against
           a column header or row label and returns the orthogonal axis.
-        - TABLE: whole-table extraction via ``_extract_table``.
 
-        ``_capture_tables_html`` provides the HTML for both extractors,
+        ``_capture_tables_html`` provides the HTML for the extractor,
         sourced from DevTools on browser systems and PaddleOCR-VL otherwise.
 
         Returns (tool_result_str, read_values, events) where events is a list of
@@ -476,16 +474,13 @@ class BaseAgent(ABC):
             kind = out.kind if out else FieldKind.SCALAR
             use_correction = out.clipboard_correction if out else True
             has_aggregate = out is not None and out.aggregate is not None
-            needs_extraction = kind in (FieldKind.ROW, FieldKind.TABLE) or has_aggregate
+            needs_extraction = kind == FieldKind.ROW or has_aggregate
 
             if needs_extraction:
                 try:
-                    if kind == FieldKind.TABLE:
-                        rows = self._extract_table(hint)
-                    else:
-                        rows = self._extract_column(
-                            field_name, out.description if out else "", hint
-                        )
+                    rows = self._extract_column(
+                        field_name, out.description if out else "", hint
+                    )
                     extracted_fields.add(field_name)
                     events.append({"type": "table_read", "text": "\n".join(rows)})
                     self.working_memory.staged_reads.setdefault(field_name, []).extend(rows)
@@ -576,7 +571,7 @@ class BaseAgent(ABC):
                 continue
             accumulates = out is not None and (
                 out.aggregate is not None
-                or out.kind in (FieldKind.ROW, FieldKind.TABLE)
+                or out.kind == FieldKind.ROW
             )
 
             if accumulates:
@@ -785,14 +780,6 @@ class BaseAgent(ABC):
         if not text:
             raise RuntimeError("LLM returned empty extraction")
         return [stripped for row in text.split("\n") if (stripped := row.strip())]
-
-    def _extract_table(self, hint: Optional[str]) -> List[str]:
-        """LLM-extract the whole table as pipe-separated rows (header first)."""
-        tables_html = self._capture_tables_html()
-        prompt = TABLE_EXTRACTION_PROMPT
-        if hint:
-            prompt += f"\n\nHint: {hint}"
-        return self._llm_extract_lines(prompt, tables_html)
 
     def _extract_column(
         self, field_name: str, description: str, hint: Optional[str]
