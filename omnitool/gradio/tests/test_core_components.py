@@ -185,81 +185,6 @@ class TestToolCollection:
         assert not collection.has_tool("temp")
 
 
-# ---------------------------------------------------------------------------
-# TaskProcedure.to_task_string / to_extract_fields — aggregate output routing
-# ---------------------------------------------------------------------------
-
-class TestTaskProcedureAggregateRouting:
-    """Aggregate outputs are captured directly under their own key — no redirect."""
-
-    def _make_proc(self):
-        from omnitool.gradio.config.task_template import (
-            TaskExecution,
-            TaskOutput,
-            TaskOutputAggregate,
-            TaskProcedure,
-        )
-        from omnitool.gradio.config.enums import AggregateOperation
-
-        agg = TaskOutputAggregate(operation=AggregateOperation.SUM)
-        proc = TaskProcedure(
-            id=1,
-            description="Test procedure",
-            outputs=[
-                TaskOutput(key="grand_total", description="Sum of all lines", aggregate=agg),
-            ],
-            executions=[
-                TaskExecution(
-                    type="cua",
-                    steps="1. Record each row as {grand_total}.\n",
-                )
-            ],
-        )
-        return proc
-
-    def test_aggregate_key_captured_directly(self):
-        """Step reference to {grand_total} must produce `capture: grand_total`."""
-        task_str = self._make_proc().to_task_string()
-        assert "capture: grand_total" in task_str
-
-    def test_aggregate_mode_text_present(self):
-        """Outputs section must annotate the aggregate operation, not call it auto-computed."""
-        task_str = self._make_proc().to_task_string()
-        assert "auto-computed" not in task_str
-        assert 'call read_field once with value=""' in task_str
-        assert "sum applied at finish" in task_str
-
-    def test_outputs_section_lists_aggregate_key(self):
-        """Outputs section must list grand_total as the capture key."""
-        task_str = self._make_proc().to_task_string()
-        assert "capture grand_total" in task_str
-
-    def test_to_extract_fields_includes_aggregate_output(self):
-        """to_extract_fields must include aggregate-output keys."""
-        proc = self._make_proc()
-        fields = proc.to_extract_fields()
-        assert "grand_total" in fields
-
-    def test_outputs_section_does_not_duplicate_aggregate_key(self):
-        """grand_total must appear as a capture target exactly once in the Outputs section."""
-        task_str = self._make_proc().to_task_string()
-        outputs_section = task_str.split("\nOutputs:")[-1]
-        count = sum(1 for line in outputs_section.splitlines() if "capture grand_total" in line)
-        assert count == 1, f"grand_total listed {count} times in Outputs section"
-
-    def test_to_extract_fields_scalar_output_included(self):
-        """to_extract_fields must include non-aggregate, non-dynamic outputs."""
-        from omnitool.gradio.config.task_template import TaskOutput, TaskProcedure
-
-        proc = TaskProcedure(
-            id=2,
-            description="Simple proc",
-            outputs=[TaskOutput(key="order_id", description="Order ID")],
-        )
-        fields = proc.to_extract_fields()
-        assert "order_id" in fields
-
-
 class TestSystemConfig:
     """SystemConfig registry lookup and prompt-builder integration."""
 
@@ -314,6 +239,69 @@ class TestSystemConfig:
         )
         assert "## System: EPA" in prompt
         assert "Use the search bar at the top." in prompt
+
+
+class TestTaskTemplateSchema:
+    """Schema validation in TaskProcedure.from_dict."""
+
+    def _proc_data(self, outputs, executions):
+        return {
+            "ID": 1,
+            "description": "test",
+            "outputs": outputs,
+            "executions": executions,
+        }
+
+    def test_two_explode_outputs_in_one_execution_raises(self):
+        from omnitool.gradio.config.task_template import TaskProcedure
+
+        data = self._proc_data(
+            outputs=[
+                {"key": "a", "kind": "row", "explode": True},
+                {"key": "b", "kind": "row", "explode": True},
+            ],
+            executions=[{
+                "id": 1, "type": "cua", "system": "EPA",
+                "outputs": [{"key": "a"}, {"key": "b"}],
+                "steps": "",
+            }],
+        )
+        with pytest.raises(ValueError, match="explode outputs"):
+            TaskProcedure.from_dict(data)
+
+    def test_explode_outputs_across_executions_parses_fine(self):
+        """Chained fan-out (user → accounts → transactions) is valid."""
+        from omnitool.gradio.config.task_template import TaskProcedure
+
+        data = self._proc_data(
+            outputs=[
+                {"key": "accounts", "kind": "row", "explode": True},
+                {"key": "transactions", "kind": "row", "explode": True},
+                {"key": "balance", "kind": "scalar"},
+            ],
+            executions=[
+                {"id": 1, "type": "cua", "system": "EPA",
+                 "outputs": [{"key": "accounts"}], "steps": ""},
+                {"id": 2, "type": "cua", "system": "EPA",
+                 "outputs": [{"key": "transactions"}], "steps": ""},
+                {"id": 3, "type": "cua", "system": "EPA",
+                 "outputs": [{"key": "balance"}], "steps": ""},
+            ],
+        )
+        proc = TaskProcedure.from_dict(data)
+        assert [o.key for o in proc.outputs if o.explode] == ["accounts", "transactions"]
+
+    def test_explode_defaults_to_false(self):
+        from omnitool.gradio.config.task_template import TaskOutput
+
+        out = TaskOutput.from_dict({"key": "x", "kind": "scalar"})
+        assert out.explode is False
+
+    def test_explode_parsed_from_yaml(self):
+        from omnitool.gradio.config.task_template import TaskOutput
+
+        out = TaskOutput.from_dict({"key": "x", "kind": "row", "explode": True})
+        assert out.explode is True
 
 
 if __name__ == "__main__":

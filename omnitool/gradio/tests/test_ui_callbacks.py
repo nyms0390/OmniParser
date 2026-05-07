@@ -50,7 +50,6 @@ def _make_procedure(proc_id=1, description="Do something"):
     return TaskProcedure(
         id=proc_id,
         description=description,
-        inputs=[TaskInput(key="input1", value="hello")],
         outputs=[TaskOutput(key="result", description="the result")],
         executions=[],
     )

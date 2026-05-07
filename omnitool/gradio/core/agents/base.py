@@ -29,9 +29,10 @@ from omnitool.gradio.core.agents.preprocessing import PreprocessingMode, preproc
 from omnitool.gradio.config import (
     AgentMode,
     COLUMN_EXTRACTION_PROMPT,
-    FieldKind,
+    ColumnKind,
     SCREENSHOT_MAX_WIDTH,
     SystemConfig,
+    TaskExecution,
     TaskProcedure,
     get_llm_config,
     get_pricing,
@@ -92,6 +93,7 @@ class BaseAgent(ABC):
         provider: Optional[str] = None,
         preprocessing_mode: PreprocessingMode = PreprocessingMode.RAW,
         task_procedure: Optional[TaskProcedure] = None,
+        task_execution: Optional[TaskExecution] = None,
     ):
         self.model_name = model_name
         self.provider = provider or ""
@@ -127,15 +129,15 @@ class BaseAgent(ABC):
         # Working memory
         self.working_memory = WorkingMemory()
 
-        # Task procedure — provided at construction when running in TASK mode.
+        # Task procedure and execution — provided at construction in TASK mode.
         self.task_procedure: Optional[TaskProcedure] = task_procedure
+        self.task_execution: Optional[TaskExecution] = task_execution
 
-        # Resolve system config from the procedure's first execution block.
-        # Returns None when no procedure is set, no executions are declared,
-        # or the system name is not in the SYSTEMS registry.
+        # Resolve system config from the active execution's system name.
+        # Returns None when no execution is set or the system is not registered.
         self.system_config: Optional[SystemConfig] = None
-        if task_procedure is not None and task_procedure.executions:
-            self.system_config = get_system_config(task_procedure.executions[0].system)
+        if task_execution is not None:
+            self.system_config = get_system_config(task_execution.system)
 
     # ------------------------------------------------------------------
     # Lifecycle & accounting
@@ -468,10 +470,11 @@ class BaseAgent(ABC):
                 )
                 continue
 
-            kind = out.kind if out else FieldKind.SCALAR
+            kind = out.kind if out else ColumnKind.SCALAR
             use_correction = out.clipboard_correction if out else True
-            has_aggregate = out is not None and out.aggregate is not None
-            needs_extraction = kind == FieldKind.ROW or has_aggregate
+            exec_out = self.task_execution.get_output(field_name) if self.task_execution else None
+            has_aggregate = exec_out is not None and exec_out.aggregate is not None
+            needs_extraction = kind == ColumnKind.ROW or has_aggregate
 
             if needs_extraction:
                 try:
@@ -559,15 +562,15 @@ class BaseAgent(ABC):
 
             logger.info("SAVE_FIELD '%s': committing %d value(s)", field_name, len(staged_values))
 
-            out = self.task_procedure.get_output(field_name) if self.task_procedure else None
-            if self.task_procedure is not None and out is None:
+            schema_out = self.task_procedure.get_output(field_name) if self.task_procedure else None
+            if self.task_procedure is not None and schema_out is None:
                 results.append(
                     f"Error: field_name '{field_name}' is not declared in the task procedure."
                 )
                 continue
-            accumulates = out is not None and (
-                out.aggregate is not None
-                or out.kind == FieldKind.ROW
+            exec_out = self.task_execution.get_output(field_name) if self.task_execution else None
+            accumulates = (exec_out is not None and exec_out.aggregate is not None) or (
+                schema_out is not None and schema_out.kind == ColumnKind.ROW
             )
 
             if accumulates:
@@ -590,16 +593,16 @@ class BaseAgent(ABC):
         return "\n".join(results), captured
 
     def _apply_template_aggregates(self) -> None:
-        """Compute template-declared aggregates and write results into facts.
+        """Compute execution-declared aggregates and write results into facts.
 
-        Called once at finish. For each output in ``task_procedure`` that has
+        Called once at finish. For each output in ``task_execution`` that has
         an ``aggregate`` config, reads the accumulated list from
         ``working_memory.facts[output.key]``, applies the operation over the
         values, and overwrites ``output.key`` with the reduced result.
         """
-        if self.task_procedure is None:
+        if self.task_execution is None:
             return
-        for out in self.task_procedure.outputs:
+        for out in self.task_execution.outputs:
             if out.aggregate is None:
                 continue
             accumulated = self.working_memory.facts.get(out.key, [])
@@ -612,11 +615,11 @@ class BaseAgent(ABC):
                 logger.warning("Aggregate for %r: no accumulated values", out.key)
                 continue
             try:
-                result = out.aggregate.operation.apply(accumulated)
+                result = out.aggregate.apply(accumulated)
             except (NotImplementedError, ValueError) as exc:
                 logger.error(
                     "Aggregate operation %r failed for output %r: %s",
-                    out.aggregate.operation, out.key, exc,
+                    out.aggregate, out.key, exc,
                 )
                 continue
             self._set_fact(out.key, result, overwrite=True)

@@ -142,8 +142,7 @@ class GradioCallbacks:
             except (ValueError, TypeError):
                 yaml_procedure = yaml_template.procedures[0]
             if yaml_procedure is not None:
-                yaml_template.resolve_inputs(yaml_procedure)
-                message = yaml_procedure.to_task_string()
+                message = yaml_procedure.description  # TODO Step 6: route to ProcedureRunner
         # Add user message
         state.chat.add_message("user", message)
         history.append({"role": "user", "content": message})

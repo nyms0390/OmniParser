@@ -4,7 +4,7 @@ Tests for kind-aware _handle_read_field and removal of read_table tool.
 
 from unittest.mock import Mock
 
-from omnitool.gradio.config.enums import FieldKind
+from omnitool.gradio.config.enums import ColumnKind
 from omnitool.gradio.config.systems import SystemConfig
 from omnitool.gradio.config.task_template import TaskExecution, TaskOutput, TaskProcedure
 from omnitool.gradio.core.tools.schemas import AUXILIARY_TOOLS
@@ -20,7 +20,7 @@ def _proc_with_output(output: TaskOutput) -> TaskProcedure:
     )
 
 
-def _agent_with(tmp_path, *, kind: FieldKind, clipboard_correction: bool = True,
+def _agent_with(tmp_path, *, kind: ColumnKind, clipboard_correction: bool = True,
                 is_browser: bool = False):
     """Build a minimal agent with a single-output procedure and configured system_config."""
     proc = _proc_with_output(
@@ -37,7 +37,7 @@ def _agent_with(tmp_path, *, kind: FieldKind, clipboard_correction: bool = True,
 
 class TestScalarKind:
     def test_no_correction_value_used_as_is(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=FieldKind.SCALAR, clipboard_correction=False)
+        agent = _agent_with(tmp_path, kind=ColumnKind.SCALAR, clipboard_correction=False)
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": "42.00", "target": "some element"}]
         })
@@ -46,7 +46,7 @@ class TestScalarKind:
         assert events == []
 
     def test_no_gta1_client_skips_correction(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=FieldKind.SCALAR, clipboard_correction=True)
+        agent = _agent_with(tmp_path, kind=ColumnKind.SCALAR, clipboard_correction=True)
         agent.gta1_client = None
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": "99.00", "target": "price field"}]
@@ -55,7 +55,7 @@ class TestScalarKind:
         assert events == []
 
     def test_with_correction_calls_read_field_via_clipboard(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=FieldKind.SCALAR, clipboard_correction=True)
+        agent = _agent_with(tmp_path, kind=ColumnKind.SCALAR, clipboard_correction=True)
         agent.gta1_client = Mock()
         agent._read_field_via_clipboard = Mock(return_value="$42.00")
         msg, read_values, events = agent._handle_read_field({
@@ -72,7 +72,7 @@ class TestScalarKind:
 
 class TestRowKindBrowser:
     def test_routes_to_column_extractor_and_stages_values(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=True)
+        agent = _agent_with(tmp_path, kind=ColumnKind.ROW, is_browser=True)
         agent._extract_column = Mock(return_value=["10.00", "20.00", "30.00"])
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": "", "hint": "line items"}]
@@ -85,7 +85,7 @@ class TestRowKindBrowser:
         assert "20.00" in events[0]["text"]
 
     def test_devtools_failure_returns_error_string(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=True)
+        agent = _agent_with(tmp_path, kind=ColumnKind.ROW, is_browser=True)
         agent._extract_column = Mock(side_effect=RuntimeError("no tables found"))
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": ""}]
@@ -101,7 +101,7 @@ class TestRowKindBrowser:
 # Non-browser OCR — exercised end-to-end through _capture_tables_html
 # ---------------------------------------------------------------------------
 
-def _ocr_agent(tmp_path, *, kind: FieldKind, paddleocr_client):
+def _ocr_agent(tmp_path, *, kind: ColumnKind, paddleocr_client):
     """Build an agent whose non-browser OCR path is wired to the given client."""
     agent = _agent_with(tmp_path, kind=kind, is_browser=False)
     agent.paddleocr_client = paddleocr_client
@@ -127,10 +127,10 @@ class TestNonBrowserOCR:
     def test_scalar_kind_preserves_focus_crop(self, tmp_path):
         # Scalar reads do not consume the crop — it stays available for follow-up
         # reads in the same focused area until a screen-changing action invalidates it.
-        agent = _ocr_agent(tmp_path, kind=FieldKind.SCALAR, paddleocr_client=Mock())
+        agent = _ocr_agent(tmp_path, kind=ColumnKind.SCALAR, paddleocr_client=Mock())
         # Override the procedure to a SCALAR field (no extraction, no consume).
         agent.task_procedure = _proc_with_output(
-            TaskOutput(key="field1", kind=FieldKind.SCALAR, clipboard_correction=False)
+            TaskOutput(key="field1", kind=ColumnKind.SCALAR, clipboard_correction=False)
         )
         crop_before = agent.working_memory.focus_image_b64
         agent._handle_read_field({
@@ -141,7 +141,7 @@ class TestNonBrowserOCR:
     def test_row_kind_uses_column_extraction_prompt(self, tmp_path):
         client = Mock()
         client.recognize_vl.return_value = _TABLE_HTML
-        agent = _ocr_agent(tmp_path, kind=FieldKind.ROW, paddleocr_client=client)
+        agent = _ocr_agent(tmp_path, kind=ColumnKind.ROW, paddleocr_client=client)
         agent.llm_client.generate = _llm_returning("Alice\nBob")
 
         agent._handle_read_field({
@@ -156,7 +156,7 @@ class TestNonBrowserOCR:
 
     def test_missing_focus_returns_extraction_error(self, tmp_path):
         client = Mock()
-        agent = _agent_with(tmp_path, kind=FieldKind.ROW, is_browser=False)
+        agent = _agent_with(tmp_path, kind=ColumnKind.ROW, is_browser=False)
         agent.paddleocr_client = client
         agent.working_memory.parsed_screen = {"resized_image_base64": make_1px_png_b64()}
         # Intentionally do not set focus_image_b64
@@ -173,7 +173,7 @@ class TestNonBrowserOCR:
         client.recognize_vl.assert_not_called()
 
     def test_unconfigured_client_returns_extraction_error(self, tmp_path):
-        agent = _ocr_agent(tmp_path, kind=FieldKind.ROW, paddleocr_client=None)
+        agent = _ocr_agent(tmp_path, kind=ColumnKind.ROW, paddleocr_client=None)
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": ""}]
         })

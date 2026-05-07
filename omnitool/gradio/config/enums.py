@@ -39,7 +39,7 @@ class AgentMode(StrEnum):
     TASK = "task"
 
 
-class FieldKind(StrEnum):
+class ColumnKind(StrEnum):
     """Shape of a TaskOutput value as captured from the screen.
 
     SCALAR — single value, optionally clipboard-corrected.

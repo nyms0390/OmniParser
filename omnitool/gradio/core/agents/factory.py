@@ -12,7 +12,7 @@ from omnitool.gradio.clients import BaseLLMClient, get_llm_client
 from omnitool.gradio.clients.external.gta1 import GTA1Client
 from omnitool.gradio.clients.external.omniparser import OmniParserClient
 from omnitool.gradio.clients.external.paddleocr import PaddleOCRClient
-from omnitool.gradio.config import AgentMode, TaskProcedure, get_llm_config, get_provider_config
+from omnitool.gradio.config import AgentMode, TaskExecution, TaskProcedure, get_llm_config, get_provider_config
 from omnitool.gradio.services import AppState, get_api_key, AuthProvider
 
 from omnitool.gradio.core.agents.preprocessing import PreprocessingMode
@@ -38,6 +38,7 @@ def create_agent(
     grounding: str = "gta1",
     preprocessing_mode: str = "raw",
     task_procedure: Optional[TaskProcedure] = None,
+    task_execution: Optional[TaskExecution] = None,
 ) -> BaseAgent:
     """Factory function — returns a ReActAgent configured for the requested grounding.
 
@@ -62,6 +63,9 @@ def create_agent(
             "edge_overlay", "clahe+edges". Defaults to "raw".
         task_procedure: Parsed procedure from a YAML task template. Required
             for clipboard_correction to work in TASK mode.
+        task_execution: The specific execution within *task_procedure* this agent
+            run is driving. Determines ``system_config`` and per-execution
+            aggregate behaviour. Set by ``ProcedureRunner`` for each execution.
 
     Returns:
         Initialised ReActAgent.
@@ -126,6 +130,7 @@ def create_agent(
         preprocessing_mode=_resolve_preprocessing(preprocessing_mode),
         grounding_strategy=strategy,
         task_procedure=task_procedure,
+        task_execution=task_execution,
     )
 
 
