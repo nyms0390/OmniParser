@@ -196,6 +196,13 @@ class GradioApp(GradioCallbacks):
                         visible=False,
                         interactive=True,
                     )
+                    execution_dropdown = gr.Dropdown(
+                        label="Execution",
+                        choices=[("Whole procedure", None)],
+                        value=None,
+                        visible=False,
+                        interactive=True,
+                    )
 
             # Capture initial screenshot on app load (non-blocking)
             interface.load(
@@ -229,6 +236,7 @@ class GradioApp(GradioCallbacks):
                     max_steps_slider,
                     yaml_template_state,
                     procedure_dropdown,
+                    execution_dropdown,
                 ],
                 outputs=[
                     chatbot,
@@ -247,7 +255,13 @@ class GradioApp(GradioCallbacks):
             yaml_upload.change(
                 fn=self.on_yaml_upload,
                 inputs=[yaml_upload],
-                outputs=[yaml_template_state, procedure_dropdown],
+                outputs=[yaml_template_state, procedure_dropdown, execution_dropdown],
+            )
+
+            procedure_dropdown.change(
+                fn=self.on_procedure_change,
+                inputs=[procedure_dropdown, yaml_template_state],
+                outputs=[execution_dropdown],
             )
 
             file_upload.change(

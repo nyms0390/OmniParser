@@ -6,13 +6,16 @@ Extracted from app.py so that UI layout (build_interface) and event dispatch
 """
 
 import logging
+from html import escape
 from pathlib import Path
-from typing import Generator, Tuple
+from typing import Generator, List, Optional, Tuple
 
 import gradio as gr
 
 from omnitool.gradio.config import AgentMode, TaskTemplate, load_task_template
+from omnitool.gradio.config.task_template import TaskExecution, TaskProcedure
 from omnitool.gradio.core import create_agent
+from omnitool.gradio.core.procedure_runner import ProcedureRunner
 from omnitool.gradio.services import AppState, FileHandler, validate_api_key
 from omnitool.gradio.ui.components import (
     format_action_result,
@@ -32,6 +35,39 @@ from omnitool.gradio.ui.components import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _eligible_executions(
+    procedure: TaskProcedure, template: TaskTemplate,
+) -> List[TaskExecution]:
+    """Executions runnable standalone — every input key resolves to a template scalar.
+
+    Executions whose ``inputs`` reference a row-kind procedure output need a
+    populated dataframe, which only the whole-procedure run produces.
+    """
+    template_keys = {inp.key for inp in template.inputs}
+    return [
+        e for e in procedure.executions
+        if all(k in template_keys for k in e.inputs)
+    ]
+
+
+def _execution_choices(
+    procedure: TaskProcedure, template: TaskTemplate,
+) -> List[Tuple[str, Optional[int]]]:
+    """Gradio (label, value) choices. ``None`` value = whole procedure;
+    ``int`` value = a specific execution id."""
+    return [("Whole procedure", None)] + [
+        (f"Execution {e.id}", e.id)
+        for e in _eligible_executions(procedure, template)
+    ]
+
+
+def _hidden_execution_dropdown():
+    """Reset the execution dropdown to its hidden default (whole-procedure only)."""
+    return gr.update(
+        choices=[("Whole procedure", None)], value=None, visible=False,
+    )
 
 
 class GradioCallbacks:
@@ -105,6 +141,7 @@ class GradioCallbacks:
         max_steps: int,
         yaml_template,
         selected_procedure_id,
+        execution_selection: Optional[int] = None,
     ) -> Generator:
         """Handle submit button click.
 
@@ -142,7 +179,7 @@ class GradioCallbacks:
             except (ValueError, TypeError):
                 yaml_procedure = yaml_template.procedures[0]
             if yaml_procedure is not None:
-                message = yaml_procedure.description  # TODO Step 6: route to ProcedureRunner
+                message = yaml_procedure.description
         # Add user message
         state.chat.add_message("user", message)
         history.append({"role": "user", "content": message})
@@ -182,13 +219,47 @@ class GradioCallbacks:
                 "task_procedure": yaml_procedure,
             }
 
-            self.orchestrator = create_agent(**orchestrator_kwargs)
+            if in_task_mode and yaml_procedure is not None:
+                # TASK + procedure: drive multiple agents via ProcedureRunner.
+                base_kwargs = {
+                    k: v for k, v in orchestrator_kwargs.items()
+                    if k != "task_procedure"
+                }
+
+                def agent_factory(execution: TaskExecution, task_string: str):
+                    agent = create_agent(
+                        **base_kwargs,
+                        task_procedure=yaml_procedure,
+                        task_execution=execution,
+                    )
+                    agent.working_memory.task = task_string
+                    return agent
+
+                runner = ProcedureRunner(
+                    yaml_procedure, yaml_template, agent_factory,
+                    Path(state.session.run_folder),
+                )
+                if execution_selection is None:
+                    event_gen = runner.run()
+                else:
+                    try:
+                        execution = next(
+                            e for e in yaml_procedure.executions
+                            if e.id == execution_selection
+                        )
+                        event_gen = runner.run_execution(execution)
+                    except StopIteration:
+                        event_gen = runner.run()
+                self.orchestrator = None
+            else:
+                self.orchestrator = create_agent(**orchestrator_kwargs)
+                event_gen = self.orchestrator.run()
 
             # Stream sampling loop updates to the chatbot
             status = "Running..."
             is_first_screen = True  # Auto-expand the initial screen capture
             loop_complete = False
-            for update in self.orchestrator.run():
+            for update in event_gen:
                 update_type = update.get("type", "")
 
                 if update_type == "parsed_screen":
@@ -333,9 +404,32 @@ class GradioCallbacks:
                     yield history, "", status, state
                     return
 
+                elif update_type == "execution_complete":
+                    status = f"Execution {update.get('execution_id', '?')} complete"
+                    history.append({"role": "assistant", "content": status})
+                    loop_complete = True
+                    yield history, "", status, state
+
+                elif update_type == "procedure_complete":
+                    summary = self._render_procedure_summary(
+                        update.get("rows", []),
+                        update.get("csv_path"),
+                    )
+                    if summary:
+                        history.append({"role": "assistant", "content": summary})
+                    if update.get("success", True):
+                        status = "[OK] Procedure complete"
+                    else:
+                        status = "[ERROR] Procedure aborted"
+                    history.append({"role": "assistant", "content": status})
+                    loop_complete = True
+                    yield history, "", status, state
+                    return
+
             # Loop ended without explicit complete/error (hit max_steps)
             if not loop_complete:
-                status = f"[WARN] Stopped after {self.orchestrator.step_count} steps (max reached)"
+                step_count = getattr(self.orchestrator, "step_count", "?")
+                status = f"[WARN] Stopped after {step_count} steps (max reached)"
                 history.append({"role": "assistant", "content": status})
                 yield history, "", status, state
 
@@ -364,17 +458,72 @@ class GradioCallbacks:
                 or None if cleared.
 
         Returns:
-            Tuple of (procedures list or None, gr.update for procedure dropdown).
+            Tuple of (template, procedure_dropdown_update, execution_dropdown_update).
         """
         if file is None:
-            return None, gr.update(choices=[], value=None, visible=False)
+            return (
+                None,
+                gr.update(choices=[], value=None, visible=False),
+                _hidden_execution_dropdown(),
+            )
         try:
             template = load_task_template(file.name)
-            choices = [(f"[{p.id}] {p.description}", p.id) for p in template.procedures]
-            return template, gr.update(choices=choices, value=template.procedures[0].id, visible=True)
+            proc_choices = [(f"[{p.id}] {p.description}", p.id) for p in template.procedures]
+            first = template.procedures[0]
+            exec_choices = _execution_choices(first, template)
+            return (
+                template,
+                gr.update(choices=proc_choices, value=first.id, visible=True),
+                gr.update(choices=exec_choices, value=None, visible=True),
+            )
         except Exception as exc:
             logger.warning("Failed to load task template: %s", exc)
-            return None, gr.update(choices=[], value=None, visible=False)
+            return (
+                None,
+                gr.update(choices=[], value=None, visible=False),
+                _hidden_execution_dropdown(),
+            )
+
+    def on_procedure_change(self, procedure_id, template):
+        """Repopulate the execution dropdown when the procedure selection changes."""
+        if not isinstance(template, TaskTemplate) or procedure_id is None:
+            return _hidden_execution_dropdown()
+        try:
+            procedure = template.get_procedure(procedure_id)
+        except (ValueError, TypeError):
+            return _hidden_execution_dropdown()
+        return gr.update(
+            choices=_execution_choices(procedure, template),
+            value=None,
+            visible=True,
+        )
+
+    @staticmethod
+    def _render_procedure_summary(rows, csv_path) -> str:
+        """Render the dataframe rows as an HTML table plus an optional CSV link.
+
+        Cell values originate from agent screen reads — untrusted text — so
+        every interpolated value is HTML-escaped to prevent layout breakage
+        and stored-XSS in the chatbot pane.
+        """
+        if not rows:
+            body = "<p>(no rows)</p>"
+        else:
+            columns = list(rows[0].keys())
+            header = "".join(f"<th>{escape(str(c))}</th>" for c in columns)
+            body_rows = "".join(
+                "<tr>" + "".join(
+                    f"<td>{escape(str(r.get(c, '')))}</td>" for c in columns
+                ) + "</tr>"
+                for r in rows
+            )
+            body = (
+                f"<table border='1'><thead><tr>{header}</tr></thead>"
+                f"<tbody>{body_rows}</tbody></table>"
+            )
+        if csv_path:
+            body += f"<p>CSV: <code>{escape(str(csv_path))}</code></p>"
+        return body
 
     def on_file_upload(self, state, files) -> Tuple:
         """Handle file upload.

@@ -195,30 +195,40 @@ New file. Two classes:
 
 **`ProcedureRunner(procedure, template, agent_factory, save_folder)`**:
 
-`run()` generator:
-1. For each `execution` in `procedure.executions`:
-   - `row_input_key` = first key in `execution.inputs` whose procedure schema `kind == ColumnKind.ROW`, or `None`.
-   - `scalar_inputs = template.resolve_execution_inputs(execution)`.
-   - If `row_input_key is None`: one agent run; pass `scalar_inputs` to `build_execution_task_string`.
-   - Else: for each `(row_idx, row)` in `enumerate(dataframe.rows)`: one agent run with `row[row_input_key]` + `scalar_inputs` substituted.
-   - Each sub-run: forward all agent events except `complete`; on `complete`, write `facts` into dataframe (`add_rows` for `ColumnKind.ROW` keys, `set_cell` for `ColumnKind.SCALAR` keys).
-   - Yield `{"type": "execution_complete", "execution_id": execution.id}`.
-2. Write `procedure_{id}_result.csv` to `save_folder`.
-3. Yield `{"type": "procedure_complete", "csv_path": str, "rows": dataframe.rows}`.
+`run_execution(execution)` generator — building block, no CSV:
+1. `row_input_key` = first key in `execution.inputs` whose procedure schema `kind == ColumnKind.ROW`, or `None`.
+2. `scalar_inputs = template.resolve_execution_inputs(execution)`.
+3. If `row_input_key is None`: one agent run; pass `scalar_inputs` to `build_execution_task_string`.
+4. Else: for each `(row_idx, row)` in `enumerate(self.dataframe.rows)`: one agent run with `row[row_input_key]` + `scalar_inputs` substituted.
+5. Each sub-run: forward all agent events except `complete`; on `complete`, write `facts` into `self.dataframe` (`add_rows` for `ColumnKind.ROW` keys, `set_cell` for `ColumnKind.SCALAR` keys).
+6. Yield `{"type": "execution_complete", "execution_id": execution.id}`.
 
-Verify: unit test with the 2-execution example template; dataframe matches expected table.
+`run()` generator — full procedure:
+1. For each `execution` in `procedure.executions`: `yield from self.run_execution(execution)`.
+2. Write `procedure_{id}_result.csv` to `save_folder`.
+3. Yield `{"type": "procedure_complete", "csv_path": str, "rows": self.dataframe.rows}`.
+
+Verify: unit test `run_execution` with scalar-only and row-iterating cases; integration test `run` with the 2-execution example template; dataframe matches expected table.
 
 ---
 
-### Step 6 — `ui/callbacks.py`: route TASK mode to `ProcedureRunner`
+### Step 6 — `ui/app.py` + `ui/callbacks.py`: route TASK mode
 
-- TASK mode: instantiate `ProcedureRunner`; drive `runner.run()` generator instead of a single agent.
-- Remove `message = yaml_procedure.to_task_string()` in TASK mode (runner handles task strings per execution).
+UI (`ui/app.py`):
+- Add a `gr.Dropdown` near TASK-mode controls; choices populated when a template loads:
+  - `"Whole procedure"` (default)
+  - One entry per execution: `"Execution {id}"`, **filtered**: omit any execution whose `inputs` reference a procedure schema key with `kind: row`. Row inputs require a populated dataframe — only the whole-procedure run produces one. The dropdown is for verifying the template's per-execution steps run; row-driven executions can only be exercised via the whole-procedure path.
+
+Callbacks (`ui/callbacks.py`), TASK branch of `on_submit`:
+- Instantiate `ProcedureRunner(procedure, template, agent_factory, save_folder)`.
+- If selection == `"Whole procedure"`: `gen = runner.run()`.
+- Else: parse execution id from the label, look up the execution, `gen = runner.run_execution(execution)`.
+- Drive `gen` instead of a single agent. Remove `message = yaml_procedure.to_task_string()` in TASK mode (runner builds the task string per execution).
 - Handle `execution_complete`: `yield history, "", f"Execution {id} complete", state`.
-- Handle `procedure_complete`: render `rows` as an HTML table; append CSV path link; yield final state.
+- Handle `procedure_complete` (only fires for whole-procedure runs): render `rows` as an HTML table; append CSV path link; yield final state.
 - Keep the existing `complete` handler for interactive mode.
 
-Verify: `test_ui_callbacks.py` passes.
+Verify: `test_ui_callbacks.py` passes; manual smoke — pick a single execution from the dropdown and observe `execution_complete` without CSV output.
 
 ---
 
@@ -227,6 +237,6 @@ Verify: `test_ui_callbacks.py` passes.
 - `test_core_components.py`: remove procedure `inputs` from fixtures; add `ExecutionOutput` in execution fixtures; test `build_execution_task_string`.
 - `test_handle_read_field.py`: add `task_execution` with `ExecutionOutput`s to agent fixture; verify aggregate comes from execution, kind from procedure schema.
 - `test_base_agent.py`: pass `task_execution` to constructor fixtures.
-- New `tests/test_procedure_runner.py`: test `ProcedureDataframe.add_rows`, `set_cell`, `to_csv`; test `ProcedureRunner.run()` with a mock agent factory producing synthetic `complete` events.
+- New `tests/test_procedure_runner.py`: test `ProcedureDataframe.add_rows`, `set_cell`, `to_csv`; test `ProcedureRunner.run_execution()` for scalar-only and row-iterating cases; test `ProcedureRunner.run()` end-to-end with a mock agent factory producing synthetic `complete` events.
 
 Verify: `conda run -n omni pytest omnitool/gradio/tests/` all green.

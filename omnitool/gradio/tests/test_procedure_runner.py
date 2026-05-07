@@ -450,3 +450,92 @@ class TestProcedureRunnerFailures:
         events = list(runner.run())
         forwarded = [e for e in events if e["type"] in ("step", "thinking")]
         assert len(forwarded) == 3
+
+
+# ---------------------------------------------------------------------------
+# ProcedureRunner.run_execution — single-execution path used by the UI
+# "Test execution" affordance.
+# ---------------------------------------------------------------------------
+
+
+def _drain(gen):
+    """Consume a generator that uses `return <bool>`; return (events, ret_value)."""
+    events = []
+    try:
+        while True:
+            events.append(next(gen))
+    except StopIteration as e:
+        return events, e.value
+
+
+class TestRunExecution:
+    def test_run_execution_scalar_only_runs_once(self, tmp_path):
+        """Execution 1 has scalar input (`user_id`) only — runs against the seed row."""
+        template = _example_template()
+        procedure = template.procedures[0]
+        factory = _scripted_factory([{"account_id": ["A001", "A002"]}])
+
+        runner = ProcedureRunner(procedure, template, factory, tmp_path)
+        events, success = _drain(runner.run_execution(procedure.executions[0]))
+
+        assert success is True
+        assert len(factory.calls) == 1
+        assert factory.calls[0]["execution_id"] == 1
+        assert runner.dataframe.rows == [
+            {"user_id": "12345", "account_id": "A001"},
+            {"user_id": "12345", "account_id": "A002"},
+        ]
+        assert events[-1]["type"] == "execution_complete"
+        assert events[-1]["execution_id"] == 1
+
+    def test_run_execution_iterates_existing_rows(self, tmp_path):
+        """After execution 1 explodes, run_execution(2) iterates each row."""
+        template = _example_template()
+        procedure = template.procedures[0]
+        factory = _scripted_factory([
+            {"account_id": ["A001", "A002", "A003"]},
+            {"balance": ["10"], "status": ["active"]},
+            {"balance": ["20"], "status": ["closed"]},
+            {"balance": ["30"], "status": ["active"]},
+        ])
+
+        runner = ProcedureRunner(procedure, template, factory, tmp_path)
+        # Run execution 1 first to seed the dataframe.
+        _drain(runner.run_execution(procedure.executions[0]))
+        # Now run execution 2 standalone — should iterate the 3 rows.
+        events, success = _drain(runner.run_execution(procedure.executions[1]))
+
+        assert success is True
+        assert [c["execution_id"] for c in factory.calls[1:]] == [2, 2, 2]
+        assert runner.dataframe.rows == [
+            {"user_id": "12345", "account_id": "A001", "balance": "10", "status": "active"},
+            {"user_id": "12345", "account_id": "A002", "balance": "20", "status": "closed"},
+            {"user_id": "12345", "account_id": "A003", "balance": "30", "status": "active"},
+        ]
+        assert events[-1]["type"] == "execution_complete"
+        assert events[-1]["execution_id"] == 2
+
+    def test_run_execution_does_not_write_csv(self, tmp_path):
+        """run_execution is a building block — only run() writes the procedure CSV."""
+        template = _example_template()
+        procedure = template.procedures[0]
+        factory = _scripted_factory([{"account_id": ["A1"]}])
+
+        runner = ProcedureRunner(procedure, template, factory, tmp_path)
+        events, _ = _drain(runner.run_execution(procedure.executions[0]))
+
+        assert not (tmp_path / "procedure_1_result.csv").exists()
+        assert all(e["type"] != "procedure_complete" for e in events)
+
+    def test_run_execution_returns_false_on_error(self, tmp_path):
+        """An agent error event causes run_execution to return False."""
+        template = _example_template()
+        procedure = template.procedures[0]
+        factory = _scripted_factory(["error"])
+
+        runner = ProcedureRunner(procedure, template, factory, tmp_path)
+        events, success = _drain(runner.run_execution(procedure.executions[0]))
+
+        assert success is False
+        assert any(e["type"] == "error" for e in events)
+        assert all(e["type"] != "execution_complete" for e in events)

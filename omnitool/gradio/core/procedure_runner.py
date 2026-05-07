@@ -120,31 +120,45 @@ class ProcedureRunner:
         seed = {ti.key: ti.value for ti in template.inputs if ti.value is not None}
         self.dataframe.rows = [seed]
 
+    def run_execution(
+        self, execution: TaskExecution,
+    ) -> Generator[Dict[str, Any], None, bool]:
+        """Run one execution across the current dataframe rows.
+
+        Iterates the rows that existed before the execution started; ``cursor``
+        advances past the row just processed plus any new rows it produced via
+        explode. An empty-explode (delta=-1) leaves cursor in place: the next
+        original row has shifted into the freed slot.
+
+        Yields agent events (forwarded from ``_run_once``) plus a terminal
+        ``execution_complete`` on success. Returns ``True`` if every sub-run
+        succeeded, ``False`` if any agent run errored. Does not write CSV.
+        """
+        original_count = len(self.dataframe.rows)
+        cursor = 0
+        for _ in range(original_count):
+            before = len(self.dataframe.rows)
+            success = yield from self._run_once(execution, cursor)
+            delta = len(self.dataframe.rows) - before
+            if delta >= 0:
+                cursor += 1 + delta
+            if not success:
+                return False
+        yield {"type": "execution_complete", "execution_id": execution.id}
+        return True
+
     def run(self) -> Generator[Dict[str, Any], None, None]:
         """Run every execution per-row; emit events; write CSV at the end."""
         for execution in self.procedure.executions:
-            # Iterate the rows that existed before this execution started.
-            # ``cursor`` advances past the row just processed plus any new
-            # rows it produced via explode. An empty-explode (delta=-1)
-            # leaves cursor in place: the next original row has shifted
-            # into the freed slot.
-            original_count = len(self.dataframe.rows)
-            cursor = 0
-            for _ in range(original_count):
-                before = len(self.dataframe.rows)
-                success = yield from self._run_once(execution, cursor)
-                delta = len(self.dataframe.rows) - before
-                if delta >= 0:
-                    cursor += 1 + delta
-                if not success:
-                    yield {
-                        "type": "procedure_complete",
-                        "success": False,
-                        "csv_path": None,
-                        "rows": self.dataframe.rows,
-                    }
-                    return
-            yield {"type": "execution_complete", "execution_id": execution.id}
+            success = yield from self.run_execution(execution)
+            if not success:
+                yield {
+                    "type": "procedure_complete",
+                    "success": False,
+                    "csv_path": None,
+                    "rows": self.dataframe.rows,
+                }
+                return
 
         csv_path = self.save_folder / f"procedure_{self.procedure.id}_result.csv"
         csv_written = False
