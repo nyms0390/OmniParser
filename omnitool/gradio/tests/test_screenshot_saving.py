@@ -250,7 +250,7 @@ class TestSaveField:
     def test_double_save_without_second_read_fails_for_dynamic(self, tmp_path):
         """Second save_field without intervening read_field must error and not double-append."""
         outputs = [TaskOutput(key="line_amount", kind=ColumnKind.ROW)]
-        proc = TaskProcedure(id=1, description="test", outputs=outputs)
+        proc = TaskProcedure(description="test", outputs=outputs)
         agent = self._make_minimal_agent(tmp_path)
         agent.task_procedure = proc
         agent._extract_column = Mock(return_value=["10.00"])
@@ -445,7 +445,7 @@ class TestAggregateTransience:
         """Build an agent with a procedure schema and execution outputs."""
         agent = _make_react_agent(tmp_path, [])
         agent.gta1_client = None
-        proc = TaskProcedure(id=1, description="test", outputs=[
+        proc = TaskProcedure(description="test", outputs=[
             TaskOutput(key=eo.key) for eo in exec_outputs
         ])
         agent.task_procedure = proc
@@ -453,7 +453,7 @@ class TestAggregateTransience:
         return agent
 
     def test_dynamic_field_accumulates_across_calls(self, tmp_path):
-        proc = TaskProcedure(id=1, description="test", outputs=[
+        proc = TaskProcedure(description="test", outputs=[
             TaskOutput(key="line_amount", kind=ColumnKind.ROW)
         ])
         agent = _make_react_agent(tmp_path, [])

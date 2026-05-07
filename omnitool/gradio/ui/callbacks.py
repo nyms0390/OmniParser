@@ -140,7 +140,7 @@ class GradioCallbacks:
         platform: str,
         max_steps: int,
         yaml_template,
-        selected_procedure_id,
+        selected_procedure_idx,
         execution_selection: Optional[int] = None,
     ) -> Generator:
         """Handle submit button click.
@@ -174,12 +174,12 @@ class GradioCallbacks:
         # Resolve the selected procedure and override message only in TASK mode.
         yaml_procedure = None
         if in_task_mode and isinstance(yaml_template, TaskTemplate):
-            try:
-                yaml_procedure = yaml_template.get_procedure(selected_procedure_id)
-            except (ValueError, TypeError):
-                yaml_procedure = yaml_template.procedures[0]
-            if yaml_procedure is not None:
-                message = yaml_procedure.description
+            procedures = yaml_template.procedures
+            if isinstance(selected_procedure_idx, int) and 0 <= selected_procedure_idx < len(procedures):
+                yaml_procedure = procedures[selected_procedure_idx]
+            else:
+                yaml_procedure = procedures[0]
+            message = yaml_procedure.description
         # Add user message
         state.chat.add_message("user", message)
         history.append({"role": "user", "content": message})
@@ -468,12 +468,12 @@ class GradioCallbacks:
             )
         try:
             template = load_task_template(file.name)
-            proc_choices = [(f"[{p.id}] {p.description}", p.id) for p in template.procedures]
+            proc_choices = [(p.description, idx) for idx, p in enumerate(template.procedures)]
             first = template.procedures[0]
             exec_choices = _execution_choices(first, template)
             return (
                 template,
-                gr.update(choices=proc_choices, value=first.id, visible=True),
+                gr.update(choices=proc_choices, value=0, visible=True),
                 gr.update(choices=exec_choices, value=None, visible=True),
             )
         except Exception as exc:
@@ -484,14 +484,13 @@ class GradioCallbacks:
                 _hidden_execution_dropdown(),
             )
 
-    def on_procedure_change(self, procedure_id, template):
+    def on_procedure_change(self, procedure_idx, template):
         """Repopulate the execution dropdown when the procedure selection changes."""
-        if not isinstance(template, TaskTemplate) or procedure_id is None:
+        if not isinstance(template, TaskTemplate) or not isinstance(procedure_idx, int):
             return _hidden_execution_dropdown()
-        try:
-            procedure = template.get_procedure(procedure_id)
-        except (ValueError, TypeError):
+        if not 0 <= procedure_idx < len(template.procedures):
             return _hidden_execution_dropdown()
+        procedure = template.procedures[procedure_idx]
         return gr.update(
             choices=_execution_choices(procedure, template),
             value=None,

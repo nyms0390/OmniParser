@@ -54,7 +54,7 @@ Aggregate is an **intra-execution** reduction: multiple `read_field` calls withi
 ### `TaskProcedure` changes
 
 - **Remove**: `inputs`, `_substitute_inputs`, `_cua_steps`, `_referenced_outputs`, `to_task_string`, `to_extract_fields`
-- **Keep**: `id`, `description`, `outputs` (schema), `executions`, `get_output(key) -> Optional[TaskOutput]`
+- **Keep**: `description`, `outputs` (schema), `executions`, `get_output(key) -> Optional[TaskOutput]`
 
 ### `TaskTemplate` changes
 
@@ -71,8 +71,7 @@ inputs:
     value: 12345
 
 procedures:
-  - ID: 1
-    description: Pull all accounts for a user and enrich each with balance + status.
+  - description: Pull all accounts for a user and enrich each with balance + status.
 
     outputs:                              # procedure-level schema — all dataframe columns
       - key: account_id
@@ -205,7 +204,7 @@ New file. Two classes:
 
 `run()` generator — full procedure:
 1. For each `execution` in `procedure.executions`: `yield from self.run_execution(execution)`.
-2. Write `procedure_{id}_result.csv` to `save_folder`.
+2. Write `procedure_result.csv` to `save_folder`.
 3. Yield `{"type": "procedure_complete", "csv_path": str, "rows": self.dataframe.rows}`.
 
 Verify: unit test `run_execution` with scalar-only and row-iterating cases; integration test `run` with the 2-execution example template; dataframe matches expected table.

@@ -160,7 +160,7 @@ class ProcedureRunner:
                 }
                 return
 
-        csv_path = self.save_folder / f"procedure_{self.procedure.id}_result.csv"
+        csv_path = self.save_folder / "procedure_result.csv"
         csv_written = False
         try:
             csv_path.write_text(self.dataframe.to_csv(), encoding="utf-8")

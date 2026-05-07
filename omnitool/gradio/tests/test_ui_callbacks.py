@@ -49,9 +49,8 @@ def _make_settings(tmp_path=None):
     return s
 
 
-def _make_procedure(proc_id=1, description="Do something"):
+def _make_procedure(description="Do something"):
     return TaskProcedure(
-        id=proc_id,
         description=description,
         outputs=[TaskOutput(key="result", description="the result")],
         executions=[],
@@ -177,8 +176,7 @@ inputs:
   - key: input1
     value: val1
 procedures:
-  - ID: 1
-    description: "Test procedure"
+  - description: "Test procedure"
     outputs:
       - key: out1
         description: "Output one"
@@ -202,12 +200,12 @@ procedures:
 
         assert template is not None
         assert len(template.procedures) == 1
-        assert template.procedures[0].id == 1
+        assert template.procedures[0].description == "Test procedure"
         assert mock_gr.update.call_count == 2
-        # Procedure dropdown call: visible + value=1
+        # Procedure dropdown call: visible + value=0 (first procedure index)
         proc_call_kwargs = mock_gr.update.call_args_list[0].kwargs
         assert proc_call_kwargs["visible"] is True
-        assert proc_call_kwargs["value"] == 1
+        assert proc_call_kwargs["value"] == 0
         # Execution dropdown call: tuple (label, value) choices, value=None default
         exec_call_kwargs = mock_gr.update.call_args_list[1].kwargs
         assert exec_call_kwargs["value"] is None
@@ -447,7 +445,7 @@ def _run_submit(app, tmp_path, message="test task", extra_kwargs=None, mock_orch
         platform="windows",
         max_steps=50,
         yaml_template=None,
-        selected_procedure_id=None,
+        selected_procedure_idx=None,
     )
     if extra_kwargs:
         kwargs.update(extra_kwargs)
@@ -497,7 +495,7 @@ class TestOnSubmitEventRouting:
                 platform="windows",
                 max_steps=50,
                 yaml_template=None,
-                selected_procedure_id=None,
+                selected_procedure_idx=None,
             ))
 
         # create_agent should never be called when key is invalid
@@ -644,7 +642,7 @@ class TestOnSubmitEventRouting:
                 platform="windows",
                 max_steps=50,
                 yaml_template=None,
-                selected_procedure_id=None,
+                selected_procedure_idx=None,
             ))
 
         last_status = updates[-1][2]
@@ -724,7 +722,7 @@ class TestOnSubmitYamlTemplateIntegration:
                 platform="windows",
                 max_steps=50,
                 yaml_template=template,
-                selected_procedure_id=1,
+                selected_procedure_idx=0,
             ))
 
         # Chat history should contain the procedure-derived message, not "original user message"
@@ -759,7 +757,7 @@ class TestOnSubmitYamlTemplateIntegration:
                 platform="windows",
                 max_steps=50,
                 yaml_template=template,
-                selected_procedure_id=1,
+                selected_procedure_idx=0,
             ))
 
         first_history = updates[0][0]
@@ -774,7 +772,6 @@ class TestOnSubmitYamlTemplateIntegration:
 def _two_execution_template() -> TaskTemplate:
     """Worked example: execution 1 takes a template scalar; execution 2 takes a row."""
     proc = TaskProcedure(
-        id=1,
         description="Pull accounts and enrich each.",
         outputs=[
             TaskOutput(key="account_id", kind=ColumnKind.ROW, explode=True),
@@ -815,7 +812,7 @@ class TestEligibleExecutions:
 
     def test_no_inputs_is_eligible(self):
         proc = TaskProcedure(
-            id=1, description="",
+            description="",
             outputs=[TaskOutput(key="x", kind=ColumnKind.SCALAR)],
             executions=[TaskExecution(
                 id=1, type="cua", system="EPA",
@@ -838,7 +835,7 @@ class TestOnProcedureChange:
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = object()
-            app.on_procedure_change(1, template)
+            app.on_procedure_change(0, template)
         kwargs = mock_gr.update.call_args.kwargs
         assert kwargs["visible"] is True
         assert kwargs["value"] is None
@@ -848,11 +845,11 @@ class TestOnProcedureChange:
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = object()
-            app.on_procedure_change(1, None)
+            app.on_procedure_change(0, None)
         kwargs = mock_gr.update.call_args.kwargs
         assert kwargs["visible"] is False
 
-    def test_invalid_procedure_id_returns_hidden_dropdown(self, tmp_path):
+    def test_out_of_range_procedure_idx_returns_hidden_dropdown(self, tmp_path):
         template = _two_execution_template()
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
@@ -916,7 +913,7 @@ def _run_task_submit(app, tmp_path, template, execution_selection, events):
             platform="windows",
             max_steps=50,
             yaml_template=template,
-            selected_procedure_id=1,
+            selected_procedure_idx=0,
             execution_selection=execution_selection,
         )
         updates = list(gen)
@@ -932,7 +929,7 @@ class TestOnSubmitProcedureRunnerRouting:
             {
                 "type": "procedure_complete",
                 "success": True,
-                "csv_path": str(tmp_path / "procedure_1_result.csv"),
+                "csv_path": str(tmp_path / "procedure_result.csv"),
                 "rows": [{"account_id": "A1", "balance": "10"}],
             },
         ]

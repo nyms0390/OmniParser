@@ -246,7 +246,6 @@ class TestTaskTemplateSchema:
 
     def _proc_data(self, outputs, executions):
         return {
-            "ID": 1,
             "description": "test",
             "outputs": outputs,
             "executions": executions,

@@ -12,8 +12,7 @@ YAML schema::
         required: true
 
     procedures:
-      - ID: 1
-        description: "Procedure description"
+      - description: "Procedure description"
         outputs:                      # procedure-level schema — all dataframe columns
           - key: account_id
             kind: row                 # multi-value at read time (column extraction)
@@ -179,7 +178,6 @@ class TaskExecution:
 class TaskProcedure:
     """A single procedure parsed from a YAML task template."""
 
-    id: int
     description: str
     outputs: List[TaskOutput] = field(default_factory=list)
     executions: List[TaskExecution] = field(default_factory=list)
@@ -193,9 +191,6 @@ class TaskProcedure:
 
     @classmethod
     def from_dict(cls, data: dict) -> "TaskProcedure":
-        if "ID" not in data and "id" not in data:
-            raise ValueError("Procedure dict missing 'ID' field.")
-        proc_id = data.get("ID", data.get("id"))
         outputs = [TaskOutput.from_dict(o) for o in data.get("outputs", [])]
         executions = [TaskExecution.from_dict(e) for e in data.get("executions", [])]
 
@@ -207,13 +202,12 @@ class TaskProcedure:
             colliding = [eo.key for eo in execution.outputs if eo.key in explode_keys]
             if len(colliding) > 1:
                 raise ValueError(
-                    f"Procedure {proc_id} execution {execution.id}: "
+                    f"Execution {execution.id}: "
                     f"{len(colliding)} explode outputs declared ({colliding}). "
                     f"At most one explode output per execution."
                 )
 
         return cls(
-            id=int(proc_id),
             description=data.get("description", ""),
             outputs=outputs,
             executions=executions,
@@ -266,13 +260,6 @@ class TaskTemplate:
     inputs: List[TaskInput]
     procedures: List[TaskProcedure]
 
-    def get_procedure(self, proc_id: int) -> TaskProcedure:
-        """Return the procedure with the given ID, or raise :class:`ValueError`."""
-        for p in self.procedures:
-            if p.id == proc_id:
-                return p
-        raise ValueError(f"Procedure ID {proc_id} not found in template.")
-
 
 def load_task_template(path: str) -> TaskTemplate:
     """Load a YAML task template and return a :class:`TaskTemplate`.
@@ -284,8 +271,7 @@ def load_task_template(path: str) -> TaskTemplate:
             value: ...
             description: ...
         procedures:
-          - ID: 1
-            description: ...
+          - description: ...
             ...
 
     Args:

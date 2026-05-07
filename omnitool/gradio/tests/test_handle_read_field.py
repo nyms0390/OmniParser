@@ -13,7 +13,6 @@ from omnitool.gradio.tests._helpers import make_1px_png_b64, make_react_agent
 
 def _proc_with_output(output: TaskOutput) -> TaskProcedure:
     return TaskProcedure(
-        id=1,
         description="test",
         outputs=[output],
         executions=[TaskExecution(type="cua", system="")],

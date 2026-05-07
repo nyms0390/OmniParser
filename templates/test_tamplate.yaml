@@ -10,8 +10,7 @@ inputs:
     required: false
 
 procedures:
-  - ID: 1
-    description: This procedure processes the first input and generates an output based on it.
+  - description: This procedure processes the first input and generates an output based on it.
     inputs: [input1, input2]
     outputs:
       - key: output1

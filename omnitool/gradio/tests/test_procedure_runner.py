@@ -73,7 +73,6 @@ class TestProcedureDataframe:
 def _example_template() -> TaskTemplate:
     """The 2-execution worked example: user_id → account_id (explode) → balance/status."""
     proc = TaskProcedure(
-        id=1,
         description="Pull accounts and enrich each.",
         outputs=[
             TaskOutput(key="account_id", kind=ColumnKind.ROW, explode=True),
@@ -170,7 +169,7 @@ class TestProcedureRunnerHappyPath:
             {"user_id": "12345", "account_id": "A003", "balance": "30.00", "status": "active"},
         ]
 
-        csv_path = tmp_path / "procedure_1_result.csv"
+        csv_path = tmp_path / "procedure_result.csv"
         assert csv_path.exists()
         lines = csv_path.read_text(encoding="utf-8").strip().splitlines()
         assert lines[0] == "account_id,balance,status"  # user_id excluded — not in schema
@@ -197,7 +196,6 @@ class TestProcedureRunnerHappyPath:
     def test_chained_explode_user_to_accounts_to_transactions(self, tmp_path):
         """user_id → accounts (explode) → transactions (explode) → balance."""
         proc = TaskProcedure(
-            id=2,
             description="chain",
             outputs=[
                 TaskOutput(key="accounts", kind=ColumnKind.ROW, explode=True),
@@ -247,7 +245,7 @@ class TestMergeFactsSemantics:
     def test_kind_row_explode_false_joins_into_one_cell(self, tmp_path):
         """A non-exploding multi-value output collapses to a comma-joined cell."""
         proc = TaskProcedure(
-            id=1, description="",
+            description="",
             outputs=[TaskOutput(key="tags", kind=ColumnKind.ROW, explode=False)],
             executions=[TaskExecution(id=1, type="cua", system="EPA",
                                       inputs=[], outputs=[ExecutionOutput(key="tags")],
@@ -262,7 +260,7 @@ class TestMergeFactsSemantics:
 
     def test_scalar_with_one_value_writes_that_value(self, tmp_path):
         proc = TaskProcedure(
-            id=1, description="",
+            description="",
             outputs=[TaskOutput(key="name", kind=ColumnKind.SCALAR)],
             executions=[TaskExecution(id=1, type="cua", system="EPA",
                                       inputs=[], outputs=[ExecutionOutput(key="name")],
@@ -278,7 +276,7 @@ class TestMergeFactsSemantics:
     def test_scalar_lands_on_seed_row_before_explode(self, tmp_path):
         """In one execution: scalar set first, then explode — new rows inherit it."""
         proc = TaskProcedure(
-            id=1, description="",
+            description="",
             outputs=[
                 TaskOutput(key="name", kind=ColumnKind.SCALAR),
                 TaskOutput(key="account", kind=ColumnKind.ROW, explode=True),
@@ -302,7 +300,7 @@ class TestMergeFactsSemantics:
 
     def test_unknown_output_key_logged_and_skipped(self, tmp_path, caplog):
         proc = TaskProcedure(
-            id=1, description="",
+            description="",
             outputs=[TaskOutput(key="known", kind=ColumnKind.SCALAR)],
             executions=[TaskExecution(id=1, type="cua", system="EPA",
                                       inputs=[], outputs=[ExecutionOutput(key="known")],
@@ -320,7 +318,7 @@ class TestMergeFactsSemantics:
     def test_empty_scalar_does_not_blank_existing_cell(self, tmp_path):
         """A scalar fact with empty values is skipped, not written as ""."""
         proc = TaskProcedure(
-            id=1, description="",
+            description="",
             outputs=[TaskOutput(key="status", kind=ColumnKind.SCALAR)],
             executions=[
                 TaskExecution(id=1, type="cua", system="EPA",
@@ -347,7 +345,7 @@ class TestMergeFactsSemantics:
         that commits an undeclared explode fact alongside the declared one.
         """
         proc = TaskProcedure(
-            id=1, description="",
+            description="",
             outputs=[
                 TaskOutput(key="primary", kind=ColumnKind.ROW, explode=True),
                 TaskOutput(key="other", kind=ColumnKind.ROW, explode=True),
@@ -407,7 +405,7 @@ class TestProcedureRunnerFailures:
         proc_complete = [e for e in events if e["type"] == "procedure_complete"][0]
         assert proc_complete["success"] is False
         assert proc_complete["csv_path"] is None
-        assert not (tmp_path / "procedure_1_result.csv").exists()
+        assert not (tmp_path / "procedure_result.csv").exists()
 
     def test_agent_returns_without_complete_treated_as_failure(self, tmp_path):
         template = _example_template()
@@ -421,7 +419,7 @@ class TestProcedureRunnerFailures:
         events = list(runner.run())
         proc_complete = [e for e in events if e["type"] == "procedure_complete"][0]
         assert proc_complete["success"] is False
-        assert not (tmp_path / "procedure_1_result.csv").exists()
+        assert not (tmp_path / "procedure_result.csv").exists()
 
     def test_runner_drops_complete_events_from_agent(self, tmp_path):
         template = _example_template()
@@ -524,7 +522,7 @@ class TestRunExecution:
         runner = ProcedureRunner(procedure, template, factory, tmp_path)
         events, _ = _drain(runner.run_execution(procedure.executions[0]))
 
-        assert not (tmp_path / "procedure_1_result.csv").exists()
+        assert not (tmp_path / "procedure_result.csv").exists()
         assert all(e["type"] != "procedure_complete" for e in events)
 
     def test_run_execution_returns_false_on_error(self, tmp_path):
