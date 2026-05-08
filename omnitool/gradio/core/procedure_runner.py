@@ -120,38 +120,29 @@ class ProcedureRunner:
         seed = {ti.key: ti.value for ti in template.inputs if ti.value is not None}
         self.dataframe.rows = [seed]
 
-    def run_execution(
-        self, execution: TaskExecution,
-    ) -> Generator[Dict[str, Any], None, bool]:
-        """Run one execution across the current dataframe rows.
-
-        Iterates the rows that existed before the execution started; ``cursor``
-        advances past the row just processed plus any new rows it produced via
-        explode. An empty-explode (delta=-1) leaves cursor in place: the next
-        original row has shifted into the freed slot.
-
-        Yields agent events (forwarded from ``_run_once``) plus a terminal
-        ``execution_complete`` on success. Returns ``True`` if every sub-run
-        succeeded, ``False`` if any agent run errored. Does not write CSV.
-        """
-        original_count = len(self.dataframe.rows)
-        cursor = 0
-        for _ in range(original_count):
-            before = len(self.dataframe.rows)
-            success = yield from self._run_once(execution, cursor)
-            delta = len(self.dataframe.rows) - before
-            if delta >= 0:
-                cursor += 1 + delta
-            if not success:
-                return False
-        yield {"type": "execution_complete", "execution_id": execution.id}
-        return True
-
-    def run(self) -> Generator[Dict[str, Any], None, None]:
+    def run_procedure(self) -> Generator[Dict[str, Any], None, None]:
         """Run every execution per-row; emit events; write CSV at the end."""
         for execution in self.procedure.executions:
-            success = yield from self.run_execution(execution)
-            if not success:
+            # Iterate only the rows that existed before this execution started.
+            # cursor tracks the absolute position as explodes insert new rows.
+            original_count = len(self.dataframe.rows)
+            cursor = 0
+            all_ok = True
+            for _ in range(original_count):
+                before = len(self.dataframe.rows)
+                success = yield from self._run_once(execution, cursor)
+                delta = len(self.dataframe.rows) - before
+                if delta >= 0:
+                    # Row stayed (delta=0) or was replaced by 1+delta exploded rows.
+                    cursor += 1 + delta
+                else:
+                    # Row was removed (empty explode, delta=-1); next original row
+                    # has shifted into cursor's slot — leave cursor in place.
+                    pass
+                if not success:
+                    all_ok = False
+                    break
+            if not all_ok:
                 yield {
                     "type": "procedure_complete",
                     "success": False,
@@ -159,6 +150,7 @@ class ProcedureRunner:
                     "rows": self.dataframe.rows,
                 }
                 return
+            yield {"type": "execution_complete", "execution_id": execution.id}
 
         csv_path = self.save_folder / "procedure_result.csv"
         csv_written = False
@@ -174,6 +166,28 @@ class ProcedureRunner:
             "csv_path": str(csv_path) if csv_written else None,
             "rows": self.dataframe.rows,
         }
+
+    def run_once(
+        self, execution: TaskExecution, row_idx: int = 0,
+    ) -> Generator[Dict[str, Any], None, None]:
+        """Run one agent against a single row.
+
+        All events including ``complete`` surface to the caller. Facts are not
+        merged into the dataframe — this is a preview/test entry point.
+        """
+        if not 0 <= row_idx < len(self.dataframe.rows):
+            yield {
+                "type": "error",
+                "message": (
+                    f"run_once: row_idx={row_idx} out of range "
+                    f"(have {len(self.dataframe.rows)} rows)"
+                ),
+            }
+            return
+        row = self.dataframe.rows[row_idx]
+        task_string = build_execution_task_string(execution, self.procedure, row)
+        agent = self.agent_factory(execution, task_string)
+        yield from agent.run()
 
     def _run_once(
         self, execution: TaskExecution, row_idx: int,
@@ -218,7 +232,7 @@ class ProcedureRunner:
         committed values is skipped, not blanked, so it cannot overwrite
         a value written by an earlier execution.
         """
-        declared = {eo.key for eo in execution.outputs}
+        declared = set(execution.outputs)
         scalar_items: List[tuple[str, List[str]]] = []
         explode_items: List[tuple[str, List[str]]] = []
         for key, values in facts.items():

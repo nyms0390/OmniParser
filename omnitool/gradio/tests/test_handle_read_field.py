@@ -6,26 +6,17 @@ from unittest.mock import Mock
 
 from omnitool.gradio.config.enums import ColumnKind
 from omnitool.gradio.config.systems import SystemConfig
-from omnitool.gradio.config.task_template import TaskExecution, TaskOutput, TaskProcedure
+from omnitool.gradio.config.task_template import TaskExecution, TaskOutput
 from omnitool.gradio.core.tools.schemas import AUXILIARY_TOOLS
 from omnitool.gradio.tests._helpers import make_1px_png_b64, make_react_agent
 
 
-def _proc_with_output(output: TaskOutput) -> TaskProcedure:
-    return TaskProcedure(
-        description="test",
-        outputs=[output],
-        executions=[TaskExecution(type="cua", system="")],
-    )
-
-
 def _agent_with(tmp_path, *, kind: ColumnKind, clipboard_correction: bool = True,
                 is_browser: bool = False):
-    """Build a minimal agent with a single-output procedure and configured system_config."""
-    proc = _proc_with_output(
-        TaskOutput(key="field1", kind=kind, clipboard_correction=clipboard_correction)
-    )
-    agent = make_react_agent(tmp_path, task_procedure=proc)
+    """Build a minimal agent with a single resolved output and configured system_config."""
+    resolved = TaskOutput(key="field1", kind=kind, clipboard_correction=clipboard_correction)
+    execution = TaskExecution(type="cua", system="", resolved_outputs=[resolved])
+    agent = make_react_agent(tmp_path, task_execution=execution)
     agent.system_config = SystemConfig(name="T", is_browser=is_browser, prompt_fragment="")
     return agent
 
@@ -127,9 +118,11 @@ class TestNonBrowserOCR:
         # Scalar reads do not consume the crop — it stays available for follow-up
         # reads in the same focused area until a screen-changing action invalidates it.
         agent = _ocr_agent(tmp_path, kind=ColumnKind.SCALAR, paddleocr_client=Mock())
-        # Override the procedure to a SCALAR field (no extraction, no consume).
-        agent.task_procedure = _proc_with_output(
-            TaskOutput(key="field1", kind=ColumnKind.SCALAR, clipboard_correction=False)
+        # Override to a SCALAR field (no extraction, no consume).
+        import dataclasses
+        agent.task_execution = dataclasses.replace(
+            agent.task_execution,
+            resolved_outputs=[TaskOutput(key="field1", kind=ColumnKind.SCALAR, clipboard_correction=False)],
         )
         crop_before = agent.working_memory.focus_image_b64
         agent._handle_read_field({

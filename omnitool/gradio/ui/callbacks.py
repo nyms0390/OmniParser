@@ -140,7 +140,6 @@ class GradioCallbacks:
         platform: str,
         max_steps: int,
         yaml_template,
-        selected_procedure_idx,
         execution_selection: Optional[int] = None,
     ) -> Generator:
         """Handle submit button click.
@@ -174,11 +173,7 @@ class GradioCallbacks:
         # Resolve the selected procedure and override message only in TASK mode.
         yaml_procedure = None
         if in_task_mode and isinstance(yaml_template, TaskTemplate):
-            procedures = yaml_template.procedures
-            if isinstance(selected_procedure_idx, int) and 0 <= selected_procedure_idx < len(procedures):
-                yaml_procedure = procedures[selected_procedure_idx]
-            else:
-                yaml_procedure = procedures[0]
+            yaml_procedure = yaml_template.procedure
             message = yaml_procedure.description
         # Add user message
         state.chat.add_message("user", message)
@@ -216,22 +211,12 @@ class GradioCallbacks:
                 "paddleocr_client": self.paddleocr_client,
                 "grounding": grounding,
                 "preprocessing_mode": preprocessing_mode,
-                "task_procedure": yaml_procedure,
             }
 
             if in_task_mode and yaml_procedure is not None:
                 # TASK + procedure: drive multiple agents via ProcedureRunner.
-                base_kwargs = {
-                    k: v for k, v in orchestrator_kwargs.items()
-                    if k != "task_procedure"
-                }
-
                 def agent_factory(execution: TaskExecution, task_string: str):
-                    agent = create_agent(
-                        **base_kwargs,
-                        task_procedure=yaml_procedure,
-                        task_execution=execution,
-                    )
+                    agent = create_agent(**orchestrator_kwargs, task_execution=execution)
                     agent.working_memory.task = task_string
                     return agent
 
@@ -240,16 +225,17 @@ class GradioCallbacks:
                     Path(state.session.run_folder),
                 )
                 if execution_selection is None:
-                    event_gen = runner.run()
+                    event_gen = runner.run_procedure()
                 else:
-                    try:
-                        execution = next(
-                            e for e in yaml_procedure.executions
-                            if e.id == execution_selection
-                        )
-                        event_gen = runner.run_execution(execution)
-                    except StopIteration:
-                        event_gen = runner.run()
+                    execution = next(
+                        (e for e in yaml_procedure.executions
+                         if e.id == execution_selection),
+                        None,
+                    )
+                    event_gen = (
+                        runner.run_once(execution) if execution
+                        else runner.run_procedure()
+                    )
                 self.orchestrator = None
             else:
                 self.orchestrator = create_agent(**orchestrator_kwargs)
@@ -407,7 +393,6 @@ class GradioCallbacks:
                 elif update_type == "execution_complete":
                     status = f"Execution {update.get('execution_id', '?')} complete"
                     history.append({"role": "assistant", "content": status})
-                    loop_complete = True
                     yield history, "", status, state
 
                 elif update_type == "procedure_complete":
@@ -440,62 +425,40 @@ class GradioCallbacks:
             yield history, "", error_msg, state
 
     def on_mode_change(self, mode: str):
-        """Show/hide the YAML upload widget based on selected mode.
+        """Show/hide the template dropdown based on selected mode.
 
         Args:
             mode: Selected agent mode string.
 
         Returns:
-            Gradio update for the yaml_upload component visibility.
+            Gradio update for the template_dropdown component visibility.
         """
         return gr.update(visible=(mode == AgentMode.TASK.value))
 
-    def on_yaml_upload(self, file):
-        """Parse an uploaded YAML task template file.
+    def on_template_select(self, filepath: Optional[str]):
+        """Load the selected task template and populate execution_dropdown.
 
         Args:
-            file: Gradio file object (has a ``.name`` filepath attribute),
-                or None if cleared.
+            filepath: Path to the selected ``.yaml`` template file, or None if cleared.
 
         Returns:
-            Tuple of (template, procedure_dropdown_update, execution_dropdown_update).
+            Tuple of (template, execution_dropdown_update).
         """
-        if file is None:
-            return (
-                None,
-                gr.update(choices=[], value=None, visible=False),
-                _hidden_execution_dropdown(),
-            )
+        if filepath is None:
+            return (None, _hidden_execution_dropdown())
         try:
-            template = load_task_template(file.name)
-            proc_choices = [(p.description, idx) for idx, p in enumerate(template.procedures)]
-            first = template.procedures[0]
-            exec_choices = _execution_choices(first, template)
+            template = load_task_template(filepath)
             return (
                 template,
-                gr.update(choices=proc_choices, value=0, visible=True),
-                gr.update(choices=exec_choices, value=None, visible=True),
+                gr.update(
+                    choices=_execution_choices(template.procedure, template),
+                    value=None,
+                    visible=True,
+                ),
             )
         except Exception as exc:
             logger.warning("Failed to load task template: %s", exc)
-            return (
-                None,
-                gr.update(choices=[], value=None, visible=False),
-                _hidden_execution_dropdown(),
-            )
-
-    def on_procedure_change(self, procedure_idx, template):
-        """Repopulate the execution dropdown when the procedure selection changes."""
-        if not isinstance(template, TaskTemplate) or not isinstance(procedure_idx, int):
-            return _hidden_execution_dropdown()
-        if not 0 <= procedure_idx < len(template.procedures):
-            return _hidden_execution_dropdown()
-        procedure = template.procedures[procedure_idx]
-        return gr.update(
-            choices=_execution_choices(procedure, template),
-            value=None,
-            visible=True,
-        )
+            return (None, _hidden_execution_dropdown())
 
     @staticmethod
     def _render_procedure_summary(rows, csv_path) -> str:

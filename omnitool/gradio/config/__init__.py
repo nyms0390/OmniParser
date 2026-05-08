@@ -58,9 +58,9 @@ from omnitool.gradio.config.systems import (
 )
 from omnitool.gradio.config.task_template import (
     build_execution_task_string,
-    ExecutionOutput,
     TaskExecution,
     TaskInput,
+    TaskOutput,
     TaskProcedure,
     TaskTemplate,
     load_task_template,
@@ -119,9 +119,9 @@ __all__ = [
     "setup_logging",
     # Task template
     "build_execution_task_string",
-    "ExecutionOutput",
     "TaskExecution",
     "TaskInput",
+    "TaskOutput",
     "TaskProcedure",
     "TaskTemplate",
     "load_task_template",

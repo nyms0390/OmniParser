@@ -191,7 +191,7 @@ def make_react_agent(
     max_steps: int = 10,
     compaction_token_threshold: int = COMPACTION_TOKEN_THRESHOLD,
     preprocessing_mode: PreprocessingMode = PreprocessingMode.RAW,
-    task_procedure: Any = None,
+    task_execution: Any = None,
     user_message: str = "Click the Start button",
     screen_b64: str | None = None,
     screen_width: int = 1920,
@@ -244,7 +244,7 @@ def make_react_agent(
         compaction_token_threshold=compaction_token_threshold,
         action_delay=0,
         preprocessing_mode=preprocessing_mode,
-        task_procedure=task_procedure,
+        task_execution=task_execution,
     )
 
     if mock_capture:

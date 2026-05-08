@@ -95,10 +95,10 @@ class ReActAgent(BaseAgent):
                 "ReActAgent START model=%s grounding=%s mode=%s",
                 self.model_name, self.grounding_strategy.name, self.mode.value,
             )
-            if self.task_procedure is not None:
+            if self.task_execution is not None and self.task_execution.resolved_outputs:
                 logger.info(
                     "Template outputs: %s",
-                    [o.key for o in self.task_procedure.outputs],
+                    [o.key for o in self.task_execution.resolved_outputs],
                 )
             yield {
                 "type": "status",

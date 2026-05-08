@@ -12,7 +12,6 @@ from unittest.mock import Mock, patch
 from omnitool.gradio.config import AgentMode
 from omnitool.gradio.config.enums import ColumnKind
 from omnitool.gradio.config.task_template import (
-    ExecutionOutput,
     TaskExecution,
     TaskInput,
     TaskOutput,
@@ -62,7 +61,7 @@ def _make_template(procedure=None):
         procedure = _make_procedure()
     return TaskTemplate(
         inputs=[TaskInput(key="input1", value="hello")],
-        procedures=[procedure],
+        procedure=procedure,
     )
 
 
@@ -134,21 +133,21 @@ class TestOnModelChange:
 # ---------------------------------------------------------------------------
 
 class TestOnModeChange:
-    def test_task_mode_shows_yaml_upload(self, tmp_path):
+    def test_task_mode_shows_template_dropdown(self, tmp_path):
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": True}
             app.on_mode_change(AgentMode.TASK.value)
         mock_gr.update.assert_called_once_with(visible=True)
 
-    def test_interactive_mode_hides_yaml_upload(self, tmp_path):
+    def test_interactive_mode_hides_template_dropdown(self, tmp_path):
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": False}
             app.on_mode_change(AgentMode.INTERACTIVE.value)
         mock_gr.update.assert_called_once_with(visible=False)
 
-    def test_orchestrated_mode_hides_yaml_upload(self, tmp_path):
+    def test_orchestrated_mode_hides_template_dropdown(self, tmp_path):
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": False}
@@ -157,20 +156,19 @@ class TestOnModeChange:
 
 
 # ---------------------------------------------------------------------------
-# on_yaml_upload
+# on_template_select
 # ---------------------------------------------------------------------------
 
-class TestOnYamlUpload:
-    def test_none_file_returns_none_and_hidden_dropdowns(self, tmp_path):
+class TestOnTemplateSelect:
+    def test_none_filepath_returns_none_and_hidden_dropdown(self, tmp_path):
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": False}
-            template, _proc, _exec = app.on_yaml_upload(None)
+            template, _exec = app.on_template_select(None)
         assert template is None
-        # Both procedure_dropdown and execution_dropdown updates issued.
-        assert mock_gr.update.call_count == 2
+        assert mock_gr.update.call_count == 1
 
-    def test_valid_yaml_returns_template_and_populated_dropdowns(self, tmp_path):
+    def test_valid_yaml_returns_template_and_execution_dropdown(self, tmp_path):
         yaml_content = """
 inputs:
   - key: input1
@@ -190,56 +188,104 @@ procedures:
         yaml_file = tmp_path / "template.yaml"
         yaml_file.write_text(yaml_content)
 
-        fake_file = Mock()
-        fake_file.name = str(yaml_file)
-
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": True}
-            template, _proc, _exec = app.on_yaml_upload(fake_file)
+            template, _exec = app.on_template_select(str(yaml_file))
 
         assert template is not None
-        assert len(template.procedures) == 1
-        assert template.procedures[0].description == "Test procedure"
-        assert mock_gr.update.call_count == 2
-        # Procedure dropdown call: visible + value=0 (first procedure index)
-        proc_call_kwargs = mock_gr.update.call_args_list[0].kwargs
-        assert proc_call_kwargs["visible"] is True
-        assert proc_call_kwargs["value"] == 0
-        # Execution dropdown call: tuple (label, value) choices, value=None default
-        exec_call_kwargs = mock_gr.update.call_args_list[1].kwargs
+        assert template.procedure.description == "Test procedure"
+        assert mock_gr.update.call_count == 1
+        exec_call_kwargs = mock_gr.update.call_args_list[0].kwargs
         assert exec_call_kwargs["value"] is None
         assert ("Whole procedure", None) in exec_call_kwargs["choices"]
         assert ("Execution 1", 1) in exec_call_kwargs["choices"]
 
-    def test_invalid_yaml_returns_none_and_hidden_dropdowns(self, tmp_path):
+    def test_invalid_yaml_returns_none(self, tmp_path):
         bad_file = tmp_path / "bad.yaml"
         bad_file.write_text("not: valid: yaml: [[[")
-
-        fake_file = Mock()
-        fake_file.name = str(bad_file)
 
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": False}
-            template, _proc, _exec = app.on_yaml_upload(fake_file)
+            template, _exec = app.on_template_select(str(bad_file))
 
         assert template is None
-        assert mock_gr.update.call_count == 2
+
+    def test_nonexistent_filepath_returns_none(self, tmp_path):
+        app = _StubApp(tmp_path=tmp_path)
+        with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
+            mock_gr.update.return_value = {"visible": False}
+            template, _exec = app.on_template_select(str(tmp_path / "ghost.yaml"))
+
+        assert template is None
 
     def test_yaml_missing_procedures_key_returns_none(self, tmp_path):
         yaml_file = tmp_path / "noprocs.yaml"
         yaml_file.write_text("inputs:\n  - key: x\n")
 
-        fake_file = Mock()
-        fake_file.name = str(yaml_file)
-
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": False}
-            template, _proc, _exec = app.on_yaml_upload(fake_file)
+            template, _exec = app.on_template_select(str(yaml_file))
 
         assert template is None
+
+
+# ---------------------------------------------------------------------------
+# scan_templates
+# ---------------------------------------------------------------------------
+
+class TestScanTemplates:
+    def test_empty_directory_returns_empty_list(self, tmp_path):
+        from omnitool.gradio.config.task_template import scan_templates
+        assert scan_templates(tmp_path) == []
+
+    def test_valid_yaml_returns_label_and_filepath_tuple(self, tmp_path):
+        from omnitool.gradio.config.task_template import scan_templates
+        yaml_file = tmp_path / "mytemplate.yaml"
+        yaml_file.write_text(
+            "procedures:\n"
+            "  - description: My Procedure\n"
+            "    executions: []\n"
+        )
+        choices = scan_templates(tmp_path)
+        assert len(choices) == 1
+        label, filepath = choices[0]
+        assert label == "My Procedure"
+        assert filepath == str(yaml_file)
+
+    def test_invalid_yaml_is_skipped(self, tmp_path):
+        from omnitool.gradio.config.task_template import scan_templates
+        (tmp_path / "good.yaml").write_text(
+            "procedures:\n  - description: Good\n    executions: []\n"
+        )
+        (tmp_path / "bad.yaml").write_text("not: valid: yaml: [[[")
+        choices = scan_templates(tmp_path)
+        assert len(choices) == 1
+        assert choices[0][0] == "Good"
+
+    def test_yml_extension_is_included(self, tmp_path):
+        from omnitool.gradio.config.task_template import scan_templates
+        (tmp_path / "tmpl.yml").write_text(
+            "procedures:\n  - description: YML Proc\n    executions: []\n"
+        )
+        choices = scan_templates(tmp_path)
+        assert len(choices) == 1
+        assert choices[0][0] == "YML Proc"
+
+    def test_missing_directory_returns_empty_list(self, tmp_path):
+        from omnitool.gradio.config.task_template import scan_templates
+        assert scan_templates(tmp_path / "nonexistent") == []
+
+    def test_empty_description_falls_back_to_stem(self, tmp_path):
+        from omnitool.gradio.config.task_template import scan_templates
+        (tmp_path / "myfile.yaml").write_text(
+            'procedures:\n  - description: ""\n    executions: []\n'
+        )
+        choices = scan_templates(tmp_path)
+        assert len(choices) == 1
+        assert choices[0][0] == "myfile"
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +491,6 @@ def _run_submit(app, tmp_path, message="test task", extra_kwargs=None, mock_orch
         platform="windows",
         max_steps=50,
         yaml_template=None,
-        selected_procedure_idx=None,
     )
     if extra_kwargs:
         kwargs.update(extra_kwargs)
@@ -495,7 +540,6 @@ class TestOnSubmitEventRouting:
                 platform="windows",
                 max_steps=50,
                 yaml_template=None,
-                selected_procedure_idx=None,
             ))
 
         # create_agent should never be called when key is invalid
@@ -642,7 +686,6 @@ class TestOnSubmitEventRouting:
                 platform="windows",
                 max_steps=50,
                 yaml_template=None,
-                selected_procedure_idx=None,
             ))
 
         last_status = updates[-1][2]
@@ -722,7 +765,6 @@ class TestOnSubmitYamlTemplateIntegration:
                 platform="windows",
                 max_steps=50,
                 yaml_template=template,
-                selected_procedure_idx=0,
             ))
 
         # Chat history should contain the procedure-derived message, not "original user message"
@@ -757,7 +799,6 @@ class TestOnSubmitYamlTemplateIntegration:
                 platform="windows",
                 max_steps=50,
                 yaml_template=template,
-                selected_procedure_idx=0,
             ))
 
         first_history = updates[0][0]
@@ -781,33 +822,33 @@ def _two_execution_template() -> TaskTemplate:
             TaskExecution(
                 id=1, type="cua", system="EPA",
                 inputs=["user_id"],
-                outputs=[ExecutionOutput(key="account_id")],
+                resolved_outputs=[TaskOutput(key="account_id")],
                 steps="Open <user_id> account list.",
             ),
             TaskExecution(
                 id=2, type="cua", system="EPA",
                 inputs=["account_id"],
-                outputs=[ExecutionOutput(key="balance")],
+                resolved_outputs=[TaskOutput(key="balance")],
                 steps="Open profile for <account_id>.",
             ),
         ],
     )
     return TaskTemplate(
         inputs=[TaskInput(key="user_id", value="12345")],
-        procedures=[proc],
+        procedure=proc,
     )
 
 
 class TestEligibleExecutions:
     def test_template_scalar_input_is_eligible(self):
         template = _two_execution_template()
-        eligible = _eligible_executions(template.procedures[0], template)
+        eligible = _eligible_executions(template.procedure, template)
         assert [e.id for e in eligible] == [1]
 
     def test_row_kind_input_is_filtered_out(self):
         """Execution 2's input `account_id` is a row-kind procedure output — not standalone."""
         template = _two_execution_template()
-        eligible = _eligible_executions(template.procedures[0], template)
+        eligible = _eligible_executions(template.procedure, template)
         assert all(e.id != 2 for e in eligible)
 
     def test_no_inputs_is_eligible(self):
@@ -816,47 +857,12 @@ class TestEligibleExecutions:
             outputs=[TaskOutput(key="x", kind=ColumnKind.SCALAR)],
             executions=[TaskExecution(
                 id=1, type="cua", system="EPA",
-                inputs=[], outputs=[ExecutionOutput(key="x")], steps="",
+                inputs=[], resolved_outputs=[TaskOutput(key="x")], steps="",
             )],
         )
-        template = TaskTemplate(inputs=[], procedures=[proc])
+        template = TaskTemplate(inputs=[], procedure=proc)
         eligible = _eligible_executions(proc, template)
         assert [e.id for e in eligible] == [1]
-
-
-# ---------------------------------------------------------------------------
-# on_procedure_change — execution-dropdown repopulation
-# ---------------------------------------------------------------------------
-
-
-class TestOnProcedureChange:
-    def test_known_procedure_returns_filtered_choices(self, tmp_path):
-        template = _two_execution_template()
-        app = _StubApp(tmp_path=tmp_path)
-        with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
-            mock_gr.update.return_value = object()
-            app.on_procedure_change(0, template)
-        kwargs = mock_gr.update.call_args.kwargs
-        assert kwargs["visible"] is True
-        assert kwargs["value"] is None
-        assert kwargs["choices"] == [("Whole procedure", None), ("Execution 1", 1)]
-
-    def test_unknown_template_returns_hidden_dropdown(self, tmp_path):
-        app = _StubApp(tmp_path=tmp_path)
-        with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
-            mock_gr.update.return_value = object()
-            app.on_procedure_change(0, None)
-        kwargs = mock_gr.update.call_args.kwargs
-        assert kwargs["visible"] is False
-
-    def test_out_of_range_procedure_idx_returns_hidden_dropdown(self, tmp_path):
-        template = _two_execution_template()
-        app = _StubApp(tmp_path=tmp_path)
-        with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
-            mock_gr.update.return_value = object()
-            app.on_procedure_change(999, template)
-        kwargs = mock_gr.update.call_args.kwargs
-        assert kwargs["visible"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -866,24 +872,24 @@ class TestOnProcedureChange:
 
 class _RunnerCalls:
     def __init__(self):
-        self.run_called = False
-        self.run_execution_calls = []
+        self.run_procedure_called = False
+        self.run_once_calls = []
 
 
 def _patch_runner(runner_calls: _RunnerCalls, events):
-    """Patch ProcedureRunner so its `run`/`run_execution` yield scripted events."""
+    """Patch ProcedureRunner so its `run_procedure`/`run_once` yield scripted events."""
 
     class _StubRunner:
         def __init__(self, *args, **kwargs):
             pass
 
-        def run(self):
-            runner_calls.run_called = True
+        def run_procedure(self):
+            runner_calls.run_procedure_called = True
             for evt in events:
                 yield evt
 
-        def run_execution(self, execution):
-            runner_calls.run_execution_calls.append(execution.id)
+        def run_once(self, execution):
+            runner_calls.run_once_calls.append(execution.id)
             for evt in events:
                 yield evt
 
@@ -913,7 +919,6 @@ def _run_task_submit(app, tmp_path, template, execution_selection, events):
             platform="windows",
             max_steps=50,
             yaml_template=template,
-            selected_procedure_idx=0,
             execution_selection=execution_selection,
         )
         updates = list(gen)
@@ -921,7 +926,7 @@ def _run_task_submit(app, tmp_path, template, execution_selection, events):
 
 
 class TestOnSubmitProcedureRunnerRouting:
-    def test_whole_procedure_calls_run_and_emits_procedure_complete(self, tmp_path):
+    def test_whole_procedure_calls_run_procedure_and_emits_procedure_complete(self, tmp_path):
         template = _two_execution_template()
         events = [
             {"type": "execution_complete", "execution_id": 1},
@@ -938,26 +943,26 @@ class TestOnSubmitProcedureRunnerRouting:
             app, tmp_path, template, None, events,
         )
 
-        assert runner_calls.run_called is True
-        assert runner_calls.run_execution_calls == []
+        assert runner_calls.run_procedure_called is True
+        assert runner_calls.run_once_calls == []
         all_statuses = [u[2] for u in updates]
         assert any("Execution 1" in s for s in all_statuses)
         assert any("Procedure complete" in s for s in all_statuses)
 
-    def test_single_execution_selection_calls_run_execution(self, tmp_path):
+    def test_single_execution_selection_calls_run_once(self, tmp_path):
         template = _two_execution_template()
         events = [
-            {"type": "execution_complete", "execution_id": 1},
+            {"type": "complete", "facts": {}, "total_steps": 1, "total_tokens": 10, "total_cost": 0},
         ]
         app = _StubApp(tmp_path=tmp_path)
         updates, runner_calls = _run_task_submit(
             app, tmp_path, template, 1, events,
         )
 
-        assert runner_calls.run_called is False
-        assert runner_calls.run_execution_calls == [1]
-        all_statuses = [u[2] for u in updates]
-        assert any("Execution 1 complete" in s for s in all_statuses)
+        assert runner_calls.run_procedure_called is False
+        assert runner_calls.run_once_calls == [1]
+        last_status = updates[-1][2]
+        assert "[OK] Complete" in last_status
 
     def test_procedure_complete_failure_status_is_error(self, tmp_path):
         template = _two_execution_template()
@@ -976,7 +981,7 @@ class TestOnSubmitProcedureRunnerRouting:
         last_status = updates[-1][2]
         assert "Procedure aborted" in last_status
 
-    def test_unknown_execution_id_falls_back_to_run(self, tmp_path):
+    def test_unknown_execution_id_falls_back_to_run_procedure(self, tmp_path):
         """An execution id that no execution claims falls back to whole-procedure."""
         template = _two_execution_template()
         events = [
@@ -991,8 +996,8 @@ class TestOnSubmitProcedureRunnerRouting:
         _, runner_calls = _run_task_submit(
             app, tmp_path, template, 999, events,
         )
-        assert runner_calls.run_called is True
-        assert runner_calls.run_execution_calls == []
+        assert runner_calls.run_procedure_called is True
+        assert runner_calls.run_once_calls == []
 
 
 # ---------------------------------------------------------------------------

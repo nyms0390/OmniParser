@@ -17,6 +17,7 @@ YAML schema::
           - key: account_id
             kind: row                 # multi-value at read time (column extraction)
             explode: true             # one row per value at write time
+            aggregate: dedup          # optional aggregate applied at finish for every execution that captures this key
             description: "account number for this user"
           - key: balance
             kind: scalar
@@ -26,9 +27,7 @@ YAML schema::
             type: cua
             system: EPA
             inputs: [user_id]         # template scalar key references
-            outputs:
-              - key: account_id
-                aggregate: dedup      # optional intra-execution aggregate
+            outputs: [account_id]     # key references into procedure outputs
             steps: |
               1. Open <user_id>'s account list.
               2. For each visible row, read_field("account_id").
@@ -36,8 +35,7 @@ YAML schema::
             type: cua
             system: EPA
             inputs: [account_id]      # runner iterates the dataframe rows
-            outputs:
-              - key: balance
+            outputs: [balance]
             steps: |
               1. Open profile for <account_id>.
               2. Read balance — capture {balance}.
@@ -47,7 +45,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional
 
 import yaml
 
@@ -95,6 +94,7 @@ class TaskOutput:
     clipboard_correction: bool = True
     kind: ColumnKind = ColumnKind.SCALAR
     explode: bool = False
+    aggregate: Optional[AggregateOperation] = None
 
     @classmethod
     def from_dict(cls, data) -> "TaskOutput":
@@ -109,27 +109,6 @@ class TaskOutput:
                 f"Invalid kind {raw_kind!r} for output {data.get('key')!r}. "
                 f"Valid values: {valid}"
             ) from None
-        return cls(
-            key=data["key"],
-            description=data.get("description", ""),
-            format=data.get("format", ""),
-            clipboard_correction=bool(data.get("clipboard_correction", True)),
-            kind=kind,
-            explode=bool(data.get("explode", False)),
-        )
-
-
-@dataclass
-class ExecutionOutput:
-    """An output key reference within a TaskExecution, with an optional intra-execution aggregate."""
-
-    key: str
-    aggregate: Optional[AggregateOperation] = None
-
-    @classmethod
-    def from_dict(cls, data) -> "ExecutionOutput":
-        if isinstance(data, str):
-            return cls(key=data)
         raw_agg = data.get("aggregate")
         if raw_agg is not None:
             try:
@@ -141,7 +120,15 @@ class ExecutionOutput:
                 ) from None
         else:
             aggregate = None
-        return cls(key=data["key"], aggregate=aggregate)
+        return cls(
+            key=data["key"],
+            description=data.get("description", ""),
+            format=data.get("format", ""),
+            clipboard_correction=bool(data.get("clipboard_correction", True)),
+            kind=kind,
+            explode=bool(data.get("explode", False)),
+            aggregate=aggregate,
+        )
 
 
 @dataclass
@@ -153,24 +140,47 @@ class TaskExecution:
     system: str = ""
     steps: str = ""
     inputs: List[str] = field(default_factory=list)
-    outputs: List[ExecutionOutput] = field(default_factory=list)
+    resolved_outputs: List[TaskOutput] = field(default_factory=list)
 
-    def get_output(self, key: str) -> Optional[ExecutionOutput]:
-        """Return the ExecutionOutput matching *key*, or None."""
-        for out in self.outputs:
+    @property
+    def outputs(self) -> List[str]:
+        return [o.key for o in self.resolved_outputs]
+
+    def get_resolved_output(self, key: str) -> Optional[TaskOutput]:
+        """Return the TaskOutput matching *key*, or None."""
+        for out in self.resolved_outputs:
             if out.key == key:
                 return out
         return None
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TaskExecution":
+    def from_dict(cls, data: dict, procedure_outputs: Iterable[TaskOutput]) -> "TaskExecution":
+        raw_outputs = data.get("outputs", [])
+        keys: List[str] = []
+        for o in raw_outputs:
+            if isinstance(o, str):
+                keys.append(o)
+            elif isinstance(o, dict):
+                if "aggregate" in o:
+                    raise ValueError(
+                        f"execution {data.get('id')}: 'aggregate' must be declared on the "
+                        f"procedure-level output, not in the execution outputs list."
+                    )
+                keys.append(o["key"])
+        schema_by_key = {o.key: o for o in procedure_outputs}
+        unknown = [k for k in keys if k not in schema_by_key]
+        if unknown:
+            raise ValueError(
+                f"execution {data.get('id')}: outputs {unknown!r} not declared in "
+                f"procedure outputs (have {list(schema_by_key)})."
+            )
         return cls(
             id=int(data.get("id", 0)),
             type=data.get("type", "cua"),
             system=data.get("system", ""),
             steps=data.get("steps", ""),
             inputs=list(data.get("inputs", [])),
-            outputs=[ExecutionOutput.from_dict(o) for o in data.get("outputs", [])],
+            resolved_outputs=[schema_by_key[k] for k in keys],
         )
 
 
@@ -192,14 +202,14 @@ class TaskProcedure:
     @classmethod
     def from_dict(cls, data: dict) -> "TaskProcedure":
         outputs = [TaskOutput.from_dict(o) for o in data.get("outputs", [])]
-        executions = [TaskExecution.from_dict(e) for e in data.get("executions", [])]
+        executions = [TaskExecution.from_dict(e, outputs) for e in data.get("executions", [])]
 
         # An agent run produces one fact list per output key; two explode
         # outputs in the same execution would require an ambiguous combination
         # rule (zip vs. cartesian product). Forbid at parse time.
         explode_keys = {o.key for o in outputs if o.explode}
         for execution in executions:
-            colliding = [eo.key for eo in execution.outputs if eo.key in explode_keys]
+            colliding = [key for key in execution.outputs if key in explode_keys]
             if len(colliding) > 1:
                 raise ValueError(
                     f"Execution {execution.id}: "
@@ -240,25 +250,25 @@ def build_execution_task_string(
 
     if execution.outputs:
         lines.append("\nOutputs:")
-        for exec_out in execution.outputs:
-            schema_out = procedure.get_output(exec_out.key)
+        for key in execution.outputs:
+            schema_out = procedure.get_output(key)
             desc = schema_out.description if schema_out else ""
             agg_note = (
-                f" [{exec_out.aggregate.value} applied at finish]"
-                if exec_out.aggregate
+                f" [{schema_out.aggregate.value} applied at finish]"
+                if schema_out and schema_out.aggregate
                 else ""
             )
-            lines.append(f"  - capture {exec_out.key}{agg_note}: {desc}")
+            lines.append(f"  - capture {key}{agg_note}: {desc}")
 
     return "\n".join(lines)
 
 
 @dataclass
 class TaskTemplate:
-    """A fully parsed task template with shared inputs and procedures."""
+    """A fully parsed task template with shared inputs and a single procedure."""
 
     inputs: List[TaskInput]
-    procedures: List[TaskProcedure]
+    procedure: TaskProcedure
 
 
 def load_task_template(path: str) -> TaskTemplate:
@@ -303,5 +313,23 @@ def load_task_template(path: str) -> TaskTemplate:
 
     return TaskTemplate(
         inputs=[TaskInput.from_dict(i) for i in raw_inputs],
-        procedures=[TaskProcedure.from_dict(p) for p in raw_procs],
+        procedure=TaskProcedure.from_dict(raw_procs[0]),
     )
+
+
+def scan_templates(directory: str | Path) -> list[tuple[str, str]]:
+    """Return (label, filepath) Gradio choices for all valid templates in directory."""
+    dir_path = Path(directory)
+    if not dir_path.is_dir():
+        logger.warning("Templates directory not found: %s", dir_path)
+        return []
+    paths = sorted(p for p in dir_path.iterdir() if p.suffix.lower() in (".yaml", ".yml"))
+    choices: list[tuple[str, str]] = []
+    for path in paths:
+        try:
+            template = load_task_template(str(path))
+            label = template.procedure.description or path.stem
+            choices.append((label, str(path)))
+        except (yaml.YAMLError, ValueError, OSError) as exc:
+            logger.warning("Skipping invalid template %s: %s", path, exc)
+    return choices

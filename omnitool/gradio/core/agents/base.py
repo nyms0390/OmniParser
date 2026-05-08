@@ -33,7 +33,6 @@ from omnitool.gradio.config import (
     SCREENSHOT_MAX_WIDTH,
     SystemConfig,
     TaskExecution,
-    TaskProcedure,
     get_llm_config,
     get_pricing,
     get_system_config,
@@ -92,7 +91,6 @@ class BaseAgent(ABC):
         paddleocr_client: Optional[PaddleOCRClient] = None,
         provider: Optional[str] = None,
         preprocessing_mode: PreprocessingMode = PreprocessingMode.RAW,
-        task_procedure: Optional[TaskProcedure] = None,
         task_execution: Optional[TaskExecution] = None,
     ):
         self.model_name = model_name
@@ -129,8 +127,7 @@ class BaseAgent(ABC):
         # Working memory
         self.working_memory = WorkingMemory()
 
-        # Task procedure and execution — provided at construction in TASK mode.
-        self.task_procedure: Optional[TaskProcedure] = task_procedure
+        # Task execution — provided at construction in TASK mode.
         self.task_execution: Optional[TaskExecution] = task_execution
 
         # Resolve system config from the active execution's system name.
@@ -463,23 +460,22 @@ class BaseAgent(ABC):
                 results.append("Error: field_name is required.")
                 continue
 
-            out = self.task_procedure.get_output(field_name) if self.task_procedure else None
-            if self.task_procedure is not None and out is None:
+            resolved = self.task_execution.get_resolved_output(field_name) if self.task_execution else None
+            if self.task_execution is not None and resolved is None:
                 results.append(
                     f"Error: field_name '{field_name}' is not declared in the task procedure."
                 )
                 continue
 
-            kind = out.kind if out else ColumnKind.SCALAR
-            use_correction = out.clipboard_correction if out else True
-            exec_out = self.task_execution.get_output(field_name) if self.task_execution else None
-            has_aggregate = exec_out is not None and exec_out.aggregate is not None
+            kind = resolved.kind if resolved else ColumnKind.SCALAR
+            use_correction = resolved.clipboard_correction if resolved else True
+            has_aggregate = resolved is not None and resolved.aggregate is not None
             needs_extraction = kind == ColumnKind.ROW or has_aggregate
 
             if needs_extraction:
                 try:
                     rows = self._extract_column(
-                        field_name, out.description if out else "", hint
+                        field_name, resolved.description if resolved else "", hint
                     )
                     events.append({"type": "table_read", "text": "\n".join(rows)})
                     self.working_memory.staged_reads.setdefault(field_name, []).extend(rows)
@@ -552,7 +548,14 @@ class BaseAgent(ABC):
                 results.append("Error: field_name is required.")
                 continue
 
-            # Pop the entire accumulated list
+            resolved = self.task_execution.get_resolved_output(field_name) if self.task_execution else None
+            if self.task_execution is not None and resolved is None:
+                results.append(
+                    f"Error: field_name '{field_name}' is not declared in the task procedure."
+                )
+                continue
+
+            # Pop the entire accumulated list only after declaration is confirmed.
             staged_values = self.working_memory.staged_reads.pop(field_name, [])
             if not staged_values:
                 results.append(
@@ -562,15 +565,8 @@ class BaseAgent(ABC):
 
             logger.info("SAVE_FIELD '%s': committing %d value(s)", field_name, len(staged_values))
 
-            schema_out = self.task_procedure.get_output(field_name) if self.task_procedure else None
-            if self.task_procedure is not None and schema_out is None:
-                results.append(
-                    f"Error: field_name '{field_name}' is not declared in the task procedure."
-                )
-                continue
-            exec_out = self.task_execution.get_output(field_name) if self.task_execution else None
-            accumulates = (exec_out is not None and exec_out.aggregate is not None) or (
-                schema_out is not None and schema_out.kind == ColumnKind.ROW
+            accumulates = resolved is not None and (
+                resolved.aggregate is not None or resolved.kind == ColumnKind.ROW
             )
 
             if accumulates:
@@ -602,7 +598,7 @@ class BaseAgent(ABC):
         """
         if self.task_execution is None:
             return
-        for out in self.task_execution.outputs:
+        for out in self.task_execution.resolved_outputs:
             if out.aggregate is None:
                 continue
             accumulated = self.working_memory.facts.get(out.key, [])

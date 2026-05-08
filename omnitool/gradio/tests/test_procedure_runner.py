@@ -6,7 +6,6 @@ from typing import Any, Dict, Iterable, List
 
 from omnitool.gradio.config.enums import ColumnKind
 from omnitool.gradio.config.task_template import (
-    ExecutionOutput,
     TaskExecution,
     TaskInput,
     TaskOutput,
@@ -83,20 +82,20 @@ def _example_template() -> TaskTemplate:
             TaskExecution(
                 id=1, type="cua", system="EPA",
                 inputs=["user_id"],
-                outputs=[ExecutionOutput(key="account_id")],
+                resolved_outputs=[TaskOutput(key="account_id")],
                 steps="Open <user_id> account list.",
             ),
             TaskExecution(
                 id=2, type="cua", system="EPA",
                 inputs=["account_id"],
-                outputs=[ExecutionOutput(key="balance"), ExecutionOutput(key="status")],
+                resolved_outputs=[TaskOutput(key="balance"), TaskOutput(key="status")],
                 steps="Open profile for <account_id>.",
             ),
         ],
     )
     return TaskTemplate(
         inputs=[TaskInput(key="user_id", value="12345")],
-        procedures=[proc],
+        procedure=proc,
     )
 
 
@@ -152,7 +151,7 @@ def _scripted_factory(
 class TestProcedureRunnerHappyPath:
     def test_two_execution_example_builds_expected_dataframe(self, tmp_path):
         template = _example_template()
-        procedure = template.procedures[0]
+        procedure = template.procedure
         factory = _scripted_factory([
             {"account_id": ["A001", "A002", "A003"]},
             {"balance": ["10.00"], "status": ["active"]},
@@ -161,7 +160,7 @@ class TestProcedureRunnerHappyPath:
         ])
 
         runner = ProcedureRunner(procedure, template, factory, tmp_path)
-        events = list(runner.run())
+        events = list(runner.run_procedure())
 
         assert runner.dataframe.rows == [
             {"user_id": "12345", "account_id": "A001", "balance": "10.00", "status": "active"},
@@ -182,14 +181,14 @@ class TestProcedureRunnerHappyPath:
 
     def test_seed_row_carries_template_scalars_into_substitution(self, tmp_path):
         template = _example_template()
-        procedure = template.procedures[0]
+        procedure = template.procedure
         factory = _scripted_factory([
             {"account_id": ["A001"]},
             {"balance": ["1"], "status": ["x"]},
         ])
 
         runner = ProcedureRunner(procedure, template, factory, tmp_path)
-        list(runner.run())
+        list(runner.run_procedure())
         assert "12345" in factory.calls[0]["task_string"]
         assert "A001" in factory.calls[1]["task_string"]
 
@@ -205,21 +204,21 @@ class TestProcedureRunnerHappyPath:
             executions=[
                 TaskExecution(id=1, type="cua", system="EPA",
                               inputs=["user_id"],
-                              outputs=[ExecutionOutput(key="accounts")],
+                              resolved_outputs=[TaskOutput(key="accounts")],
                               steps="<user_id>"),
                 TaskExecution(id=2, type="cua", system="EPA",
                               inputs=["accounts"],
-                              outputs=[ExecutionOutput(key="transactions")],
+                              resolved_outputs=[TaskOutput(key="transactions")],
                               steps="<accounts>"),
                 TaskExecution(id=3, type="cua", system="EPA",
                               inputs=["transactions"],
-                              outputs=[ExecutionOutput(key="balance")],
+                              resolved_outputs=[TaskOutput(key="balance")],
                               steps="<transactions>"),
             ],
         )
         template = TaskTemplate(
             inputs=[TaskInput(key="user_id", value="U1")],
-            procedures=[proc],
+            procedure=proc,
         )
         factory = _scripted_factory([
             {"accounts": ["A1", "A2"]},
@@ -230,7 +229,7 @@ class TestProcedureRunnerHappyPath:
             {"balance": ["30"]},
         ])
         runner = ProcedureRunner(proc, template, factory, tmp_path)
-        list(runner.run())
+        list(runner.run_procedure())
 
         assert len(runner.dataframe.rows) == 3
         observed = [(r["accounts"], r["transactions"], r["balance"]) for r in runner.dataframe.rows]
@@ -248,14 +247,14 @@ class TestMergeFactsSemantics:
             description="",
             outputs=[TaskOutput(key="tags", kind=ColumnKind.ROW, explode=False)],
             executions=[TaskExecution(id=1, type="cua", system="EPA",
-                                      inputs=[], outputs=[ExecutionOutput(key="tags")],
+                                      inputs=[], resolved_outputs=[TaskOutput(key="tags")],
                                       steps="")],
         )
-        template = TaskTemplate(inputs=[], procedures=[proc])
+        template = TaskTemplate(inputs=[], procedure=proc)
         factory = _scripted_factory([{"tags": ["red", "green", "blue"]}])
 
         runner = ProcedureRunner(proc, template, factory, tmp_path)
-        list(runner.run())
+        list(runner.run_procedure())
         assert runner.dataframe.rows == [{"tags": "red, green, blue"}]
 
     def test_scalar_with_one_value_writes_that_value(self, tmp_path):
@@ -263,14 +262,14 @@ class TestMergeFactsSemantics:
             description="",
             outputs=[TaskOutput(key="name", kind=ColumnKind.SCALAR)],
             executions=[TaskExecution(id=1, type="cua", system="EPA",
-                                      inputs=[], outputs=[ExecutionOutput(key="name")],
+                                      inputs=[], resolved_outputs=[TaskOutput(key="name")],
                                       steps="")],
         )
-        template = TaskTemplate(inputs=[], procedures=[proc])
+        template = TaskTemplate(inputs=[], procedure=proc)
         factory = _scripted_factory([{"name": ["Alice"]}])
 
         runner = ProcedureRunner(proc, template, factory, tmp_path)
-        list(runner.run())
+        list(runner.run_procedure())
         assert runner.dataframe.rows == [{"name": "Alice"}]
 
     def test_scalar_lands_on_seed_row_before_explode(self, tmp_path):
@@ -284,15 +283,15 @@ class TestMergeFactsSemantics:
             executions=[TaskExecution(
                 id=1, type="cua", system="EPA",
                 inputs=[],
-                outputs=[ExecutionOutput(key="name"), ExecutionOutput(key="account")],
+                resolved_outputs=[TaskOutput(key="name"), TaskOutput(key="account")],
                 steps="",
             )],
         )
-        template = TaskTemplate(inputs=[], procedures=[proc])
+        template = TaskTemplate(inputs=[], procedure=proc)
         factory = _scripted_factory([{"name": ["Alice"], "account": ["A1", "A2"]}])
 
         runner = ProcedureRunner(proc, template, factory, tmp_path)
-        list(runner.run())
+        list(runner.run_procedure())
         assert runner.dataframe.rows == [
             {"name": "Alice", "account": "A1"},
             {"name": "Alice", "account": "A2"},
@@ -303,15 +302,15 @@ class TestMergeFactsSemantics:
             description="",
             outputs=[TaskOutput(key="known", kind=ColumnKind.SCALAR)],
             executions=[TaskExecution(id=1, type="cua", system="EPA",
-                                      inputs=[], outputs=[ExecutionOutput(key="known")],
+                                      inputs=[], resolved_outputs=[TaskOutput(key="known")],
                                       steps="")],
         )
-        template = TaskTemplate(inputs=[], procedures=[proc])
+        template = TaskTemplate(inputs=[], procedure=proc)
         factory = _scripted_factory([{"known": ["v"], "stray": ["x"]}])
 
         runner = ProcedureRunner(proc, template, factory, tmp_path)
         with caplog.at_level("WARNING"):
-            list(runner.run())
+            list(runner.run_procedure())
         assert runner.dataframe.rows == [{"known": "v"}]
         assert any("stray" in r.message for r in caplog.records)
 
@@ -322,20 +321,20 @@ class TestMergeFactsSemantics:
             outputs=[TaskOutput(key="status", kind=ColumnKind.SCALAR)],
             executions=[
                 TaskExecution(id=1, type="cua", system="EPA",
-                              inputs=[], outputs=[ExecutionOutput(key="status")],
+                              inputs=[], resolved_outputs=[TaskOutput(key="status")],
                               steps=""),
                 TaskExecution(id=2, type="cua", system="EPA",
-                              inputs=[], outputs=[ExecutionOutput(key="status")],
+                              inputs=[], resolved_outputs=[TaskOutput(key="status")],
                               steps=""),
             ],
         )
-        template = TaskTemplate(inputs=[], procedures=[proc])
+        template = TaskTemplate(inputs=[], procedure=proc)
         factory = _scripted_factory([
             {"status": ["active"]},
             {"status": []},  # empty list must NOT blank the prior value
         ])
         runner = ProcedureRunner(proc, template, factory, tmp_path)
-        list(runner.run())
+        list(runner.run_procedure())
         assert runner.dataframe.rows == [{"status": "active"}]
 
     def test_undeclared_fact_is_skipped(self, tmp_path, caplog):
@@ -353,17 +352,17 @@ class TestMergeFactsSemantics:
             executions=[TaskExecution(
                 id=1, type="cua", system="EPA",
                 inputs=[],
-                outputs=[ExecutionOutput(key="primary")],  # only primary
+                resolved_outputs=[TaskOutput(key="primary")],  # only primary
                 steps="",
             )],
         )
-        template = TaskTemplate(inputs=[], procedures=[proc])
+        template = TaskTemplate(inputs=[], procedure=proc)
         factory = _scripted_factory([
             {"primary": ["A", "B"], "other": ["C", "D", "E"]},
         ])
         runner = ProcedureRunner(proc, template, factory, tmp_path)
         with caplog.at_level("WARNING"):
-            list(runner.run())
+            list(runner.run_procedure())
         # Only `primary` exploded → 2 rows. Without the runtime filter, `other`
         # would have produced a cartesian product of 6 rows.
         assert len(runner.dataframe.rows) == 2
@@ -373,11 +372,11 @@ class TestMergeFactsSemantics:
     def test_empty_explode_removes_seed_row(self, tmp_path):
         """Agent returning zero row values ⇒ downstream rows = 0; CSV header only."""
         template = _example_template()
-        procedure = template.procedures[0]
+        procedure = template.procedure
         factory = _scripted_factory([{"account_id": []}])
 
         runner = ProcedureRunner(procedure, template, factory, tmp_path)
-        list(runner.run())
+        list(runner.run_procedure())
         assert runner.dataframe.rows == []
         # Execution 2 ran zero times because no rows
         assert [c["execution_id"] for c in factory.calls] == [1]
@@ -390,7 +389,7 @@ class TestMergeFactsSemantics:
 class TestProcedureRunnerFailures:
     def test_error_event_aborts_procedure(self, tmp_path):
         template = _example_template()
-        procedure = template.procedures[0]
+        procedure = template.procedure
         factory = _scripted_factory([
             {"account_id": ["A1", "A2", "A3"]},
             {"balance": ["10"], "status": ["active"]},
@@ -398,7 +397,7 @@ class TestProcedureRunnerFailures:
         ])
 
         runner = ProcedureRunner(procedure, template, factory, tmp_path)
-        events = list(runner.run())
+        events = list(runner.run_procedure())
 
         # Only first 2 + error agent calls happened — row 3 never run
         assert [c["execution_id"] for c in factory.calls] == [1, 2, 2]
@@ -409,33 +408,33 @@ class TestProcedureRunnerFailures:
 
     def test_agent_returns_without_complete_treated_as_failure(self, tmp_path):
         template = _example_template()
-        procedure = template.procedures[0]
+        procedure = template.procedure
         factory = _scripted_factory([
             {"account_id": ["A1"]},
             "crash",
         ])
 
         runner = ProcedureRunner(procedure, template, factory, tmp_path)
-        events = list(runner.run())
+        events = list(runner.run_procedure())
         proc_complete = [e for e in events if e["type"] == "procedure_complete"][0]
         assert proc_complete["success"] is False
         assert not (tmp_path / "procedure_result.csv").exists()
 
     def test_runner_drops_complete_events_from_agent(self, tmp_path):
         template = _example_template()
-        procedure = template.procedures[0]
+        procedure = template.procedure
         factory = _scripted_factory([
             {"account_id": ["A1"]},
             {"balance": ["1"], "status": ["x"]},
         ])
 
         runner = ProcedureRunner(procedure, template, factory, tmp_path)
-        events = list(runner.run())
+        events = list(runner.run_procedure())
         assert all(e["type"] != "complete" for e in events)
 
     def test_runner_forwards_non_complete_events(self, tmp_path):
         template = _example_template()
-        procedure = template.procedures[0]
+        procedure = template.procedure
         factory = _scripted_factory(
             completes=[{"account_id": ["A1"]}, {"balance": ["1"], "status": ["x"]}],
             extra_events=[
@@ -445,95 +444,72 @@ class TestProcedureRunnerFailures:
         )
 
         runner = ProcedureRunner(procedure, template, factory, tmp_path)
-        events = list(runner.run())
+        events = list(runner.run_procedure())
         forwarded = [e for e in events if e["type"] in ("step", "thinking")]
         assert len(forwarded) == 3
 
 
 # ---------------------------------------------------------------------------
-# ProcedureRunner.run_execution — single-execution path used by the UI
+# ProcedureRunner.run_once — single-agent preview entry point used by the UI
 # "Test execution" affordance.
 # ---------------------------------------------------------------------------
 
 
-def _drain(gen):
-    """Consume a generator that uses `return <bool>`; return (events, ret_value)."""
-    events = []
-    try:
-        while True:
-            events.append(next(gen))
-    except StopIteration as e:
-        return events, e.value
-
-
-class TestRunExecution:
-    def test_run_execution_scalar_only_runs_once(self, tmp_path):
-        """Execution 1 has scalar input (`user_id`) only — runs against the seed row."""
+class TestRunOnce:
+    def test_run_once_yields_complete_with_facts(self, tmp_path):
+        """run_once surfaces the complete event including facts."""
         template = _example_template()
-        procedure = template.procedures[0]
+        procedure = template.procedure
         factory = _scripted_factory([{"account_id": ["A001", "A002"]}])
 
         runner = ProcedureRunner(procedure, template, factory, tmp_path)
-        events, success = _drain(runner.run_execution(procedure.executions[0]))
+        events = list(runner.run_once(procedure.executions[0]))
 
-        assert success is True
-        assert len(factory.calls) == 1
-        assert factory.calls[0]["execution_id"] == 1
-        assert runner.dataframe.rows == [
-            {"user_id": "12345", "account_id": "A001"},
-            {"user_id": "12345", "account_id": "A002"},
-        ]
-        assert events[-1]["type"] == "execution_complete"
-        assert events[-1]["execution_id"] == 1
+        complete_events = [e for e in events if e["type"] == "complete"]
+        assert len(complete_events) == 1
+        assert complete_events[0]["facts"] == {"account_id": ["A001", "A002"]}
 
-    def test_run_execution_iterates_existing_rows(self, tmp_path):
-        """After execution 1 explodes, run_execution(2) iterates each row."""
+    def test_run_once_does_not_merge_facts_into_dataframe(self, tmp_path):
+        """run_once is a preview — dataframe is not mutated."""
         template = _example_template()
-        procedure = template.procedures[0]
-        factory = _scripted_factory([
-            {"account_id": ["A001", "A002", "A003"]},
-            {"balance": ["10"], "status": ["active"]},
-            {"balance": ["20"], "status": ["closed"]},
-            {"balance": ["30"], "status": ["active"]},
-        ])
+        procedure = template.procedure
+        factory = _scripted_factory([{"account_id": ["A001"]}])
 
         runner = ProcedureRunner(procedure, template, factory, tmp_path)
-        # Run execution 1 first to seed the dataframe.
-        _drain(runner.run_execution(procedure.executions[0]))
-        # Now run execution 2 standalone — should iterate the 3 rows.
-        events, success = _drain(runner.run_execution(procedure.executions[1]))
+        list(runner.run_once(procedure.executions[0]))
 
-        assert success is True
-        assert [c["execution_id"] for c in factory.calls[1:]] == [2, 2, 2]
-        assert runner.dataframe.rows == [
-            {"user_id": "12345", "account_id": "A001", "balance": "10", "status": "active"},
-            {"user_id": "12345", "account_id": "A002", "balance": "20", "status": "closed"},
-            {"user_id": "12345", "account_id": "A003", "balance": "30", "status": "active"},
-        ]
-        assert events[-1]["type"] == "execution_complete"
-        assert events[-1]["execution_id"] == 2
+        assert "account_id" not in runner.dataframe.rows[0]
 
-    def test_run_execution_does_not_write_csv(self, tmp_path):
-        """run_execution is a building block — only run() writes the procedure CSV."""
+    def test_run_once_does_not_write_csv(self, tmp_path):
+        """run_once is a preview — no CSV written."""
         template = _example_template()
-        procedure = template.procedures[0]
+        procedure = template.procedure
         factory = _scripted_factory([{"account_id": ["A1"]}])
 
         runner = ProcedureRunner(procedure, template, factory, tmp_path)
-        events, _ = _drain(runner.run_execution(procedure.executions[0]))
+        list(runner.run_once(procedure.executions[0]))
 
         assert not (tmp_path / "procedure_result.csv").exists()
-        assert all(e["type"] != "procedure_complete" for e in events)
 
-    def test_run_execution_returns_false_on_error(self, tmp_path):
-        """An agent error event causes run_execution to return False."""
+    def test_run_once_uses_seed_row_by_default(self, tmp_path):
+        """Without explicit row_idx, runs against row 0 (the seed row)."""
         template = _example_template()
-        procedure = template.procedures[0]
+        procedure = template.procedure
+        factory = _scripted_factory([{"account_id": ["A001"]}])
+
+        runner = ProcedureRunner(procedure, template, factory, tmp_path)
+        list(runner.run_once(procedure.executions[0]))
+
+        assert factory.calls[0]["execution_id"] == 1
+        assert "12345" in factory.calls[0]["task_string"]
+
+    def test_run_once_error_event_surfaces(self, tmp_path):
+        """Error events from the agent are forwarded unchanged."""
+        template = _example_template()
+        procedure = template.procedure
         factory = _scripted_factory(["error"])
 
         runner = ProcedureRunner(procedure, template, factory, tmp_path)
-        events, success = _drain(runner.run_execution(procedure.executions[0]))
+        events = list(runner.run_once(procedure.executions[0]))
 
-        assert success is False
         assert any(e["type"] == "error" for e in events)
-        assert all(e["type"] != "execution_complete" for e in events)

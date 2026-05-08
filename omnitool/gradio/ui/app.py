@@ -17,6 +17,7 @@ Environment variables (or set via --config-file):
 """
 
 import logging
+from pathlib import Path
 
 import gradio as gr
 
@@ -30,6 +31,7 @@ from omnitool.gradio.config import (
     setup_logging,
 )
 from omnitool.gradio.core import ToolCollection
+from omnitool.gradio.config.task_template import scan_templates
 from omnitool.gradio.ui.callbacks import GradioCallbacks
 from omnitool.gradio.ui.components import (
     get_agent_choices,
@@ -44,6 +46,9 @@ from omnitool.gradio.ui.components import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ui/app.py -> ui/ -> gradio/ -> omnitool/ -> <repo-root>
+_TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "templates"
 
 
 class GradioApp(GradioCallbacks):
@@ -180,20 +185,14 @@ class GradioApp(GradioCallbacks):
                     with gr.Column(scale=1):
                         submit_button = gr.Button("Send")
 
-                # YAML task template upload — visible only in TASK mode
+                # Task template selector — visible only in TASK mode
                 yaml_template_state = gr.State(None)
                 with gr.Row():
-                    yaml_upload = gr.File(
-                        label="Task Template (YAML) — TASK mode only",
-                        file_count="single",
-                        file_types=[".yaml", ".yml"],
-                        visible=True,
-                    )
-                    procedure_dropdown = gr.Dropdown(
-                        label="Select Procedure",
-                        choices=[],
+                    template_dropdown = gr.Dropdown(
+                        label="Task Template — TASK mode only",
+                        choices=scan_templates(_TEMPLATES_DIR),
                         value=None,
-                        visible=False,
+                        visible=True,
                         interactive=True,
                     )
                     execution_dropdown = gr.Dropdown(
@@ -235,7 +234,6 @@ class GradioApp(GradioCallbacks):
                     platform_dropdown,
                     max_steps_slider,
                     yaml_template_state,
-                    procedure_dropdown,
                     execution_dropdown,
                 ],
                 outputs=[
@@ -249,19 +247,13 @@ class GradioApp(GradioCallbacks):
             mode_dropdown.change(
                 fn=self.on_mode_change,
                 inputs=[mode_dropdown],
-                outputs=[yaml_upload],
+                outputs=[template_dropdown],
             )
 
-            yaml_upload.change(
-                fn=self.on_yaml_upload,
-                inputs=[yaml_upload],
-                outputs=[yaml_template_state, procedure_dropdown, execution_dropdown],
-            )
-
-            procedure_dropdown.change(
-                fn=self.on_procedure_change,
-                inputs=[procedure_dropdown, yaml_template_state],
-                outputs=[execution_dropdown],
+            template_dropdown.change(
+                fn=self.on_template_select,
+                inputs=[template_dropdown],
+                outputs=[yaml_template_state, execution_dropdown],
             )
 
             file_upload.change(
