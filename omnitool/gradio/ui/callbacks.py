@@ -37,29 +37,12 @@ from omnitool.gradio.ui.components import (
 logger = logging.getLogger(__name__)
 
 
-def _eligible_executions(
-    procedure: TaskProcedure, template: TaskTemplate,
-) -> List[TaskExecution]:
-    """Executions runnable standalone — every input key resolves to a template scalar.
-
-    Executions whose ``inputs`` reference a row-kind procedure output need a
-    populated dataframe, which only the whole-procedure run produces.
-    """
-    template_keys = {inp.key for inp in template.inputs}
-    return [
-        e for e in procedure.executions
-        if all(k in template_keys for k in e.inputs)
-    ]
-
-
-def _execution_choices(
-    procedure: TaskProcedure, template: TaskTemplate,
-) -> List[Tuple[str, Optional[int]]]:
+def _execution_choices(procedure: TaskProcedure) -> List[Tuple[str, Optional[int]]]:
     """Gradio (label, value) choices. ``None`` value = whole procedure;
     ``int`` value = a specific execution id."""
     return [("Whole procedure", None)] + [
         (f"Execution {e.id}", e.id)
-        for e in _eligible_executions(procedure, template)
+        for e in procedure.executions
     ]
 
 
@@ -448,12 +431,13 @@ class GradioCallbacks:
             return (None, _hidden_execution_dropdown())
         try:
             template = load_task_template(filepath)
+            choices = _execution_choices(template.procedure)
             return (
                 template,
                 gr.update(
-                    choices=_execution_choices(template.procedure, template),
+                    choices=choices,
                     value=None,
-                    visible=True,
+                    visible=len(choices) > 1,
                 ),
             )
         except Exception as exc:

@@ -4,6 +4,9 @@ Parses a YAML file with top-level ``inputs`` and ``procedures`` keys.
 
 YAML schema::
 
+    name: "Short display name shown in the template dropdown"
+    description: "Longer free-text description (optional)"
+
     inputs:
       - key: user_id
         value: 12345
@@ -267,6 +270,7 @@ def build_execution_task_string(
 class TaskTemplate:
     """A fully parsed task template with shared inputs and a single procedure."""
 
+    name: str
     inputs: List[TaskInput]
     procedure: TaskProcedure
 
@@ -312,6 +316,7 @@ def load_task_template(path: str) -> TaskTemplate:
         )
 
     return TaskTemplate(
+        name=data.get("name", ""),
         inputs=[TaskInput.from_dict(i) for i in raw_inputs],
         procedure=TaskProcedure.from_dict(raw_procs[0]),
     )
@@ -328,7 +333,7 @@ def scan_templates(directory: str | Path) -> list[tuple[str, str]]:
     for path in paths:
         try:
             template = load_task_template(str(path))
-            label = template.procedure.description or path.stem
+            label = template.name or path.stem
             choices.append((label, str(path)))
         except (yaml.YAMLError, ValueError, OSError) as exc:
             logger.warning("Skipping invalid template %s: %s", path, exc)

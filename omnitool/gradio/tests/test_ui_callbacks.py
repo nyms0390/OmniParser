@@ -19,7 +19,7 @@ from omnitool.gradio.config.task_template import (
     TaskTemplate,
 )
 from omnitool.gradio.services import AppState
-from omnitool.gradio.ui.callbacks import GradioCallbacks, _eligible_executions
+from omnitool.gradio.ui.callbacks import GradioCallbacks
 from omnitool.gradio.ui.components import get_provider_options_for_model
 
 
@@ -60,6 +60,7 @@ def _make_template(procedure=None):
     if procedure is None:
         procedure = _make_procedure()
     return TaskTemplate(
+        name="Test Template",
         inputs=[TaskInput(key="input1", value="hello")],
         procedure=procedure,
     )
@@ -245,6 +246,7 @@ class TestScanTemplates:
         from omnitool.gradio.config.task_template import scan_templates
         yaml_file = tmp_path / "mytemplate.yaml"
         yaml_file.write_text(
+            "name: My Template\n"
             "procedures:\n"
             "  - description: My Procedure\n"
             "    executions: []\n"
@@ -252,13 +254,13 @@ class TestScanTemplates:
         choices = scan_templates(tmp_path)
         assert len(choices) == 1
         label, filepath = choices[0]
-        assert label == "My Procedure"
+        assert label == "My Template"
         assert filepath == str(yaml_file)
 
     def test_invalid_yaml_is_skipped(self, tmp_path):
         from omnitool.gradio.config.task_template import scan_templates
         (tmp_path / "good.yaml").write_text(
-            "procedures:\n  - description: Good\n    executions: []\n"
+            "name: Good\nprocedures:\n  - description: Good\n    executions: []\n"
         )
         (tmp_path / "bad.yaml").write_text("not: valid: yaml: [[[")
         choices = scan_templates(tmp_path)
@@ -268,17 +270,17 @@ class TestScanTemplates:
     def test_yml_extension_is_included(self, tmp_path):
         from omnitool.gradio.config.task_template import scan_templates
         (tmp_path / "tmpl.yml").write_text(
-            "procedures:\n  - description: YML Proc\n    executions: []\n"
+            "name: YML Template\nprocedures:\n  - description: YML Proc\n    executions: []\n"
         )
         choices = scan_templates(tmp_path)
         assert len(choices) == 1
-        assert choices[0][0] == "YML Proc"
+        assert choices[0][0] == "YML Template"
 
     def test_missing_directory_returns_empty_list(self, tmp_path):
         from omnitool.gradio.config.task_template import scan_templates
         assert scan_templates(tmp_path / "nonexistent") == []
 
-    def test_empty_description_falls_back_to_stem(self, tmp_path):
+    def test_empty_name_falls_back_to_stem(self, tmp_path):
         from omnitool.gradio.config.task_template import scan_templates
         (tmp_path / "myfile.yaml").write_text(
             'procedures:\n  - description: ""\n    executions: []\n'
@@ -834,35 +836,10 @@ def _two_execution_template() -> TaskTemplate:
         ],
     )
     return TaskTemplate(
+        name="Two Execution Template",
         inputs=[TaskInput(key="user_id", value="12345")],
         procedure=proc,
     )
-
-
-class TestEligibleExecutions:
-    def test_template_scalar_input_is_eligible(self):
-        template = _two_execution_template()
-        eligible = _eligible_executions(template.procedure, template)
-        assert [e.id for e in eligible] == [1]
-
-    def test_row_kind_input_is_filtered_out(self):
-        """Execution 2's input `account_id` is a row-kind procedure output — not standalone."""
-        template = _two_execution_template()
-        eligible = _eligible_executions(template.procedure, template)
-        assert all(e.id != 2 for e in eligible)
-
-    def test_no_inputs_is_eligible(self):
-        proc = TaskProcedure(
-            description="",
-            outputs=[TaskOutput(key="x", kind=ColumnKind.SCALAR)],
-            executions=[TaskExecution(
-                id=1, type="cua", system="EPA",
-                inputs=[], resolved_outputs=[TaskOutput(key="x")], steps="",
-            )],
-        )
-        template = TaskTemplate(inputs=[], procedure=proc)
-        eligible = _eligible_executions(proc, template)
-        assert [e.id for e in eligible] == [1]
 
 
 # ---------------------------------------------------------------------------
