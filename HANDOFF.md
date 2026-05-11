@@ -2,118 +2,100 @@
 
 ## Goal
 
-Replace the legacy `OmniAgent` and `GTAAgent` with a unified `VLMAgent` that uses OpenAI native function calling and a pluggable `GroundingStrategy` (OmniParser SOM or GTA1 natural-language). Deliver a clean, well-tested agent codebase on the `refactor/enterprise-architecture` branch.
-
-## Current Progress
-
-All planned implementation work is complete:
-
-- **`VLMAgent`** implemented in `omnitool/gradio/core/agents/vlm_agent.py` (~610 lines)
-  - Plan→Reflect loop with native tool calling (`_tc_history`)
-  - Pluggable `GroundingStrategy` (OmniParserGrounding / GTA1Grounding)
-  - `read_field` tool handled inline with optional clipboard correction
-  - Image eviction + history trimming (max 32 messages) to avoid context overflow
-  - Screen-change detection fixed (was always comparing screen to itself)
-  - `complete` event includes `message` and `success` fields
-- **`OmniAgent` and `GTAAgent` deleted** — factory routes both legacy names to `VLMAgent`
-- **`VLM_TOOL_SYSTEM_PROMPT`** added; legacy prompts deleted
-- **`READ_FIELD_TOOL`** schema added to `core/tools/schemas.py`
-- **`WorkingMemory.screen_data`** field added to `base.py`
-- **UI settings** updated: `VLMAgent` is default, all 3 agent names available
-- **Test suite rewritten** — `test_agentic_loop.py` fully updated for `VLMAgent` (59 passing, 0 failing)
-- **`/handoff` skill** installed at `~/.claude/skills/handoff/SKILL.md`
-
-### Bug fixes applied in this session (code review of `core/agents/`)
-
-Four bugs were found and fixed:
-
-1. **`_reflect_done` not initialized in `__init__`** (`base.py`) — added `self._reflect_done = False` to `__init__` alongside `working_memory`. Previously a dynamic attribute only set inside `_run_reflect_step()`; any out-of-order access would raise `AttributeError`.
-
-2. **Zero-coordinate sentinel ambiguous** (`base.py:_read_field_via_clipboard`) — changed `if not rx and not ry:` to `if rx == 0 and ry == 0:`. The old form used Python's falsy check, which would also trip on `float(0)` or other zero-equivalent values; the new form is explicit about the GTA1 sentinel.
-
-3. **Multipart task content silently corrupts task string** (`base.py:_generate_checklist`, `react_agent.py:run`) — both sites that read `messages[0]["content"]` now call `_extract_text_content()`, a new module-level helper in `base.py` that extracts text from a list-of-blocks content (multimodal message) or returns the string as-is. Without this, if the user attached an image to their task message, `working_memory.task` would be set to a Python list, and string interpolation in every subsequent step's task reminder would produce garbage.
-
-4. **`OmniParserClient.parse_screenshot()` docstring wrong** (`clients/external/omniparser.py`) — the docstring documented return keys `som_image_base64` / `original_screenshot_base64` but the server actually returns `labeled_screenshot_base64` / `parsed_content_list`. Updated to match reality.
-
-## What Worked
-
-- Overriding `run()` completely in `VLMAgent` (same pattern as `ReActAgent`) rather than hooking into `BaseAgent`'s text-parsing loop — avoided impedance mismatch entirely
-- Mocking `_do_capture`, `_generate_checklist`, `_reflect`, and `execute_tool_calls` independently in tests — kept each test focused without cascading mock complexity
-- `screen_before` snapshot + temporary swap before `_verify_step` — clean fix for the screen-comparison bug without changing the base class interface
-- LEGACY_ rename-then-delete approach for old prompts — safe transition without breaking anything mid-refactor
-
-## What Didn't Work
-
-- Putting skill files as flat `~/.claude/skills/handoff.md` — Claude Code requires `~/.claude/skills/<name>/SKILL.md` (subdirectory + uppercase filename)
-- `app_state.run_folder` — doesn't exist; correct path is `app_state.session.run_folder`
-- Pre-existing `test_core_components.py` has an unrelated `ImportError` on `get_model_config` — excluded from test runs with `--ignore`
-
-## Next Steps
-
-1. **Manual smoke test** with real OmniParser weights to verify end-to-end VLMAgent execution
-2. **GTA1Grounding path** — verify `GTA1Client` clipboard correction works in a live session (unit tests mock it)
-3. **`test_core_components.py`** — fix the pre-existing `ImportError: cannot import name 'get_model_config'` so all tests can run without `--ignore`
-4. **Consider ReActAgent compaction parity** — VLMAgent trims history to 32 messages (simple slice); ReActAgent uses LLM-summarised compaction; may want to unify
-5. **Open a PR** from `refactor/enterprise-architecture` → `master` when ready (user has decided NOT to push yet — branch is local-only by choice)
-6. **Trajectory replay feature** — see design discussion below
+Clean up the procedure/template runner system on the `refactor/enterprise-architecture` branch.
+All four originally identified issues are now complete.
 
 ---
 
-## Design Discussion: Trajectory Replay
+## Current Progress
 
-### Idea
-After a successful task run, record the tool call trajectory `[{tool, args}, ...]`. On future runs, replay it directly (no LLM calls) for speed/cost savings. Fall back to full LLM if replay diverges.
+### All issues done
 
-### Key findings from analysis
+**Issue 1 — Replace yaml_upload + procedure_dropdown with templates/ auto-scan** (`config/task_template.py`, `ui/app.py`, `ui/callbacks.py`):
 
-**Why raw replay is brittle:**
-- `box_id` is a 0-based index into OmniParser's detected element list for *that specific screenshot* — it has no meaning across runs. Even minor UI state changes shift all indices.
-- Replay fails silently: tool calls (click, type) almost never return errors even when they hit the wrong target.
+- `TaskTemplate.procedures: List[TaskProcedure]` → `TaskTemplate.procedure: TaskProcedure` (singular field). The YAML format still uses a `procedures:` list key, but `load_task_template()` takes `raw_procs[0]`.
+- `scan_templates(directory)` added to `config/task_template.py` — globs `.yaml`/`.yml`, skips invalid files, returns `[(description, filepath)]` for Gradio.
+- `yaml_upload` (gr.File) and `procedure_dropdown` removed from `app.py`. Replaced with `template_dropdown` (gr.Dropdown) populated at startup via `scan_templates(_TEMPLATES_DIR)`.
+- `_TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "templates"` — module-level constant in `app.py`.
+- `on_yaml_upload` → `on_template_select(filepath: Optional[str])` in `callbacks.py`: takes filepath string, returns 2 values `(template, exec_dropdown_update)`.
+- `on_procedure_change` removed entirely.
+- `on_submit`: `selected_procedure_idx` parameter removed; always uses `yaml_template.procedure`.
 
-**Why "trajectory as hint" is worse:**
-- Feeding the recorded trajectory as LLM context causes anchoring/hallucination. The model rationalizes following the old trajectory even when the UI has changed. Fails silently with false confidence — worse than hard failure.
+**Issue 2 — ProcedureRunner terminal event cleanup** (`core/procedure_runner.py`, `ui/callbacks.py`):
 
-**The core unsolved problem: verification**
-Tool call success cannot be detected from return values alone. Verification must be vision-based.
+- `run_execution()` removed entirely.
+- `run()` renamed `run_procedure()`.
+- New public `run_once(execution, row_idx=0)` — pure agent pass-through, yields `complete` with facts/cost, no dataframe merge. UI "test a single execution" entry point.
+- `execution_complete` in callbacks is mid-run progress marker only — `loop_complete = True` removed.
 
-### Recommended design
+**Issue 4 — Strip `task_procedure` from `create_agent`; pass only `task_execution`** (`config/task_template.py`, `core/procedure_runner.py`, `core/agents/base.py`, `core/agents/react_agent.py`, `core/agents/factory.py`, `ui/callbacks.py`, tests):
 
-```
-1. Replay trajectory step by step
-2. After each step (or at milestone checkpoints), verify screen state
-3. If divergence detected → abort replay, hand off to fresh LLM run (no hint)
-```
+- Added `ResolvedOutput` dataclass to `task_template.py`: merges `TaskOutput` fields (`kind`, `clipboard_correction`, `description`) with `ExecutionOutput.aggregate`. Added `resolved_outputs: List[ResolvedOutput]` field and `get_resolved_output()` method to `TaskExecution`.
+- `ProcedureRunner._resolve_execution()` pre-resolves outputs from the procedure schema — called once per execution in `run_procedure()` (not per row), and once in `run_once()`.
+- `run_once()` guards against out-of-range `row_idx` and yields a structured `error` event instead of letting `IndexError` propagate through the Gradio stream.
+- `_run_once()` expects a pre-resolved execution from the caller; no redundant work per row.
+- `BaseAgent.__init__()`: removed `task_procedure` parameter. `_handle_read_field` and `_handle_save_field` now read from `task_execution.get_resolved_output()` — single lookup replaces two separate lookups.
+- `create_agent()` and `factory.py`: `task_procedure` parameter removed.
+- `callbacks.py`: `task_procedure` removed from `orchestrator_kwargs`; `base_kwargs` indirection eliminated; `agent_factory` closure simplified.
+- Tests updated: `_helpers.py`, `test_handle_read_field.py`, `test_screenshot_saving.py`.
 
-**Verification approaches (in order of preference for this codebase):**
+**All 311/311 tests pass.**
 
-| Approach | How | Robustness |
-|----------|-----|-----------|
-| OmniParser element list comparison | Record expected elements after each step; compare at replay time | Best fit — already running |
-| Milestone-only checkpoints | Only verify at semantically meaningful steps (dialog close, page nav) | Practical, low overhead |
-| Perceptual hash / CLIP embedding | Record screenshot embedding; check cosine distance | Good for gross divergence |
-| LLM-as-verifier | Send before+after images with binary prompt — cheap (~50-100 tokens) | Most reliable, some cost |
+---
 
-**Practical recommendation:** OmniParser element comparison at milestone checkpoints (not every step). On divergence, fall back to a fresh LLM run starting from the divergence point — passing only current screen state, not the old trajectory.
+## What Worked
 
-**Natural implementation point:** a `TrajectoryReplayAgent` or a `ReplayGrounding` strategy that wraps `OmniParserGrounding` and short-circuits LLM calls for pre-recorded steps.
+- Collapsing `procedures: List` → `procedure: TaskProcedure` directly (no transition layer) — all 311 tests updated mechanically, no ambiguity left.
+- `scan_templates` using `iterdir()` with suffix filter for a unified sorted pass.
+- Guard for missing `templates/` directory returns `[]` instead of raising.
+- Empty `procedure.description` falls back to `path.stem` as dropdown label.
+- `ResolvedOutput` as a flat merged struct: one lookup in the agent replaces two separate lookups against `task_procedure` and `task_execution`.
+- Hoisting `_resolve_execution` to once-per-execution (not once-per-row) avoids redundant O(M) schema scans in the hot path.
+
+## What Didn't Work
+
+- Nothing failed.
+
+---
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `omnitool/gradio/core/agents/vlm_agent.py` | Main implementation |
-| `omnitool/gradio/core/agents/grounding.py` | GroundingStrategy ABC + OmniParser/GTA1 impls |
-| `omnitool/gradio/core/agents/factory.py` | Agent construction, routes OmniAgent/GTAAgent → VLMAgent |
-| `omnitool/gradio/core/agents/base.py` | BaseAgent, WorkingMemory, _reflect_done, _extract_text_content |
-| `omnitool/gradio/core/tools/schemas.py` | Tool schemas incl. READ_FIELD_TOOL |
-| `omnitool/gradio/config/prompts.py` | VLM_TOOL_SYSTEM_PROMPT, REFLECT_PROMPT |
-| `omnitool/gradio/tests/test_agentic_loop.py` | Full test suite (59 tests) |
-| `omnitool/gradio/clients/external/omniparser.py` | OmniParserClient (docstring corrected) |
-| `CLAUDE.md` | Dev commands, architecture overview |
+| `omnitool/gradio/config/task_template.py` | `TaskTemplate.procedure`, `ResolvedOutput`, `TaskExecution.resolved_outputs`, `scan_templates` |
+| `omnitool/gradio/ui/app.py` | `template_dropdown`, `_TEMPLATES_DIR`, event wiring |
+| `omnitool/gradio/ui/callbacks.py` | `on_template_select`, `on_mode_change`, `on_submit`, `agent_factory` closure |
+| `omnitool/gradio/core/procedure_runner.py` | `run_procedure`, `run_once`, `_run_once`, `_resolve_execution`, `_merge_facts` |
+| `omnitool/gradio/core/agents/factory.py` | `create_agent` — `task_procedure` removed |
+| `omnitool/gradio/core/agents/base.py` | `_handle_read_field`, `_handle_save_field` — reads `task_execution.get_resolved_output()` |
+| `templates/` | Template YAML files (repo root); currently `test_tamplate.yaml` |
+| `omnitool/gradio/tests/test_procedure_runner.py` | 25 tests |
+| `omnitool/gradio/tests/test_ui_callbacks.py` | 72 tests |
+| `omnitool/gradio/tests/test_handle_read_field.py` | Tests for kind-aware read_field behavior |
+| `omnitool/gradio/tests/test_screenshot_saving.py` | Tests for save_field / aggregate behavior |
 
 ## Run Tests
 
 ```bash
-conda run -n omni python -m pytest omnitool/gradio/tests/ --ignore=omnitool/gradio/tests/test_core_components.py -q
-# Expected: 59 passed
+conda run -n omni pytest omnitool/gradio/tests/ -q --ignore=omnitool/gradio/tests/test_core_components.py
 ```
+
+(`test_core_components.py` has a pre-existing `ImportError` on `get_model_config` — always exclude.)
+
+---
+
+## Prior Session Context (VLMAgent refactor — completed)
+
+- `ReActAgent` is the active agent; `VLMAgent`/`OmniAgent`/`GTAAgent` legacy names route to it via factory
+- `GroundingStrategy` is pluggable: `OmniParserGrounding` (SOM box_id) or `GTA1Grounding` (natural-language target)
+- `CLAUDE.md` has architecture overview and dev commands
+
+---
+
+## Open Code Review Findings (not yet addressed)
+
+From the `/improve` review of the Issue 4 changes — three items were noted but not acted on:
+
+1. **`_apply_template_aggregates` reads `task_execution.outputs` not `resolved_outputs`** — functionally correct (`aggregate` lives in both places), but inconsistent with the new pattern. Low risk; document or migrate when convenient.
+2. **Silent fallback in `callbacks.py`** — when `execution_selection` doesn't match any execution id, `run_procedure()` (full multi-agent run) fires silently instead of surfacing an error. Pre-existing behavior; low priority.
+3. **`ResolvedOutput.merge(exec_out, schema_out)` classmethod** — suggested to co-locate merge logic on the dataclass. Purely ergonomic.

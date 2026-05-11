@@ -40,13 +40,29 @@ class AgentMode(StrEnum):
 
 
 class ColumnKind(StrEnum):
-    """Shape of a TaskOutput value as captured from the screen.
+    """Shape of a task field value as captured from the screen.
 
     SCALAR — single value, optionally clipboard-corrected.
     ROW    — accumulating list, one entry per read_field item.
+    FILE   — uploaded or generated file path.
     """
     SCALAR = "scalar"
     ROW = "row"
+    FILE = "file"
+
+
+class TaskFieldSource(StrEnum):
+    """Source category for a TASK template field."""
+    USER = "user"
+    GENERATED = "generated"
+    COMPUTED = "computed"
+
+
+class TaskExecutionTool(StrEnum):
+    """Supported execution backends for a TASK template execution."""
+    CUA = "cua"
+    RPA = "rpa"
+    API = "api"
 
 
 class AggregateOperation(StrEnum):
@@ -77,4 +93,3 @@ class AggregateOperation(StrEnum):
         if self == AggregateOperation.CONCAT:
             return "".join(values)
         raise NotImplementedError(self)
-

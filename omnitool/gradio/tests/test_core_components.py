@@ -242,65 +242,321 @@ class TestSystemConfig:
 
 
 class TestTaskTemplateSchema:
-    """Schema validation in TaskProcedure.from_dict."""
+    """Schema validation for the new fields/executions template format."""
 
-    def _proc_data(self, outputs, executions):
-        return {
-            "description": "test",
-            "outputs": outputs,
-            "executions": executions,
-        }
+    def _write_yaml(self, tmp_path, content: str):
+        path = tmp_path / "t.yaml"
+        path.write_text(content)
+        return str(path)
 
-    def test_two_explode_outputs_in_one_execution_raises(self):
-        from omnitool.gradio.config.task_template import TaskProcedure
+    def test_two_expand_writes_in_one_execution_raises(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
 
-        data = self._proc_data(
-            outputs=[
-                {"key": "a", "kind": "row", "explode": True},
-                {"key": "b", "kind": "row", "explode": True},
-            ],
-            executions=[{
-                "id": 1, "type": "cua", "system": "EPA",
-                "outputs": [{"key": "a"}, {"key": "b"}],
-                "steps": "",
-            }],
-        )
-        with pytest.raises(ValueError, match="explode outputs"):
-            TaskProcedure.from_dict(data)
+        path = self._write_yaml(tmp_path, """
+name: Test
+description: test
+fields:
+  a:
+    label: A
+    source: generated
+    kind: row
+    expand: true
+  b:
+    label: B
+    source: generated
+    kind: row
+    expand: true
+export: [a, b]
+executions:
+  - id: 1
+    title: test
+    tool: cua
+    system: iWeb
+    foreach: a
+    uses: []
+    writes: [a, b]
+    steps: ""
+""")
+        with pytest.raises(ValueError, match="expand"):
+            load_task_template(path)
 
-    def test_explode_outputs_across_executions_parses_fine(self):
+    def test_expand_writes_across_executions_parses_fine(self, tmp_path):
         """Chained fan-out (user → accounts → transactions) is valid."""
-        from omnitool.gradio.config.task_template import TaskProcedure
+        from omnitool.gradio.config.task_template import load_task_template
 
-        data = self._proc_data(
-            outputs=[
-                {"key": "accounts", "kind": "row", "explode": True},
-                {"key": "transactions", "kind": "row", "explode": True},
-                {"key": "balance", "kind": "scalar"},
-            ],
-            executions=[
-                {"id": 1, "type": "cua", "system": "EPA",
-                 "outputs": [{"key": "accounts"}], "steps": ""},
-                {"id": 2, "type": "cua", "system": "EPA",
-                 "outputs": [{"key": "transactions"}], "steps": ""},
-                {"id": 3, "type": "cua", "system": "EPA",
-                 "outputs": [{"key": "balance"}], "steps": ""},
-            ],
-        )
-        proc = TaskProcedure.from_dict(data)
-        assert [o.key for o in proc.outputs if o.explode] == ["accounts", "transactions"]
+        path = self._write_yaml(tmp_path, """
+name: Test
+description: chain
+fields:
+  user_id:
+    label: User ID
+    source: user
+    kind: scalar
+  accounts:
+    label: Accounts
+    source: generated
+    kind: row
+    expand: true
+  transactions:
+    label: Transactions
+    source: generated
+    kind: row
+    expand: true
+  balance:
+    label: Balance
+    source: generated
+    kind: scalar
+export: [accounts, transactions, balance]
+executions:
+  - id: 1
+    title: Get accounts
+    tool: cua
+    system: iWeb
+    foreach: user_id
+    uses: [user_id]
+    writes: [accounts]
+    steps: "list accounts"
+  - id: 2
+    title: Get transactions
+    tool: cua
+    system: iWeb
+    foreach: accounts
+    uses: [accounts]
+    writes: [transactions]
+    steps: "list transactions"
+  - id: 3
+    title: Get balance
+    tool: cua
+    system: iWeb
+    foreach: transactions
+    uses: [transactions]
+    writes: [balance]
+    steps: "read balance"
+""")
+        template = load_task_template(path)
+        expand_keys = [k for k, f in template.fields.items() if f.expand]
+        assert expand_keys == ["accounts", "transactions"]
 
-    def test_explode_defaults_to_false(self):
-        from omnitool.gradio.config.task_template import TaskOutput
+    def test_expand_defaults_to_false(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
 
-        out = TaskOutput.from_dict({"key": "x", "kind": "scalar"})
-        assert out.explode is False
+        path = self._write_yaml(tmp_path, """
+name: Test
+description: ""
+fields:
+  x:
+    label: X
+    description: Field X from the account table
+    source: generated
+    kind: scalar
+export: [x]
+executions: []
+""")
+        template = load_task_template(path)
+        assert template.fields["x"].description == "Field X from the account table"
+        assert template.fields["x"].expand is False
 
-    def test_explode_parsed_from_yaml(self):
-        from omnitool.gradio.config.task_template import TaskOutput
+    def test_expand_parsed_from_yaml(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
 
-        out = TaskOutput.from_dict({"key": "x", "kind": "row", "explode": True})
-        assert out.explode is True
+        path = self._write_yaml(tmp_path, """
+name: Test
+description: ""
+fields:
+  x:
+    label: X
+    source: generated
+    kind: row
+    expand: true
+export: [x]
+executions: []
+""")
+        template = load_task_template(path)
+        assert template.fields["x"].expand is True
+
+    def test_kind_file_is_valid(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        path = self._write_yaml(tmp_path, """
+name: Test
+description: ""
+fields:
+  doc:
+    label: Document
+    source: user
+    kind: file
+    multiple: true
+    expand: true
+export: [doc]
+executions: []
+""")
+        template = load_task_template(path)
+        from omnitool.gradio.config.enums import ColumnKind
+        assert template.fields["doc"].kind == ColumnKind.FILE
+
+    def test_source_and_tool_parse_to_config_enums(self, tmp_path):
+        from omnitool.gradio.config.enums import TaskExecutionTool, TaskFieldSource
+        from omnitool.gradio.config.task_template import load_task_template
+
+        path = self._write_yaml(tmp_path, """
+name: Test
+description: ""
+fields:
+  input:
+    label: Input
+    source: user
+    kind: scalar
+  result:
+    label: Result
+    source: generated
+    kind: scalar
+export: [result]
+executions:
+  - id: 1
+    title: Do it
+    tool: rpa
+    system: iWeb
+    foreach: input
+    uses: [input]
+    writes: [result]
+    steps: ""
+""")
+        template = load_task_template(path)
+        assert template.fields["input"].source == TaskFieldSource.USER
+        assert template.executions[0].tool == TaskExecutionTool.RPA
+
+    def test_unknown_source_raises(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        path = self._write_yaml(tmp_path, """
+name: Test
+description: ""
+fields:
+  x:
+    label: X
+    source: external
+    kind: scalar
+export: [x]
+executions: []
+""")
+        with pytest.raises(ValueError, match="invalid source"):
+            load_task_template(path)
+
+    def test_unknown_tool_raises(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        path = self._write_yaml(tmp_path, """
+name: Test
+description: ""
+fields:
+  x:
+    label: X
+    source: user
+    kind: scalar
+export: [x]
+executions:
+  - id: 1
+    title: Do it
+    tool: browser
+    system: iWeb
+    foreach: x
+    uses: [x]
+    writes: [x]
+    steps: ""
+""")
+        with pytest.raises(ValueError, match="invalid tool"):
+            load_task_template(path)
+
+    def test_unknown_kind_raises(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        path = self._write_yaml(tmp_path, """
+name: Test
+description: ""
+fields:
+  x:
+    label: X
+    source: generated
+    kind: unknown_kind
+export: [x]
+executions: []
+""")
+        with pytest.raises(ValueError):
+            load_task_template(path)
+
+    def test_missing_fields_key_raises(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        path = self._write_yaml(tmp_path, "name: Test\nexecutions: []\n")
+        with pytest.raises(ValueError):
+            load_task_template(path)
+
+    def test_old_procedures_format_is_rejected(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        path = self._write_yaml(tmp_path, """
+name: Old
+inputs: []
+procedures:
+  - description: old
+    outputs: []
+    executions: []
+""")
+        with pytest.raises(ValueError, match="retired"):
+            load_task_template(path)
+
+    def test_references_are_validated(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        path = self._write_yaml(tmp_path, """
+name: Bad refs
+description: ""
+fields:
+  a:
+    label: A
+    source: user
+    kind: scalar
+export: [missing]
+executions:
+  - id: 1
+    title: Bad
+    tool: cua
+    system: iWeb
+    foreach: a
+    uses: [a]
+    writes: [a]
+    steps: ""
+""")
+        with pytest.raises(ValueError, match="unknown field"):
+            load_task_template(path)
+
+    def test_computation_refs_are_validated_and_parsed(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+        from omnitool.gradio.config.enums import AggregateOperation
+
+        path = self._write_yaml(tmp_path, """
+name: Computed
+description: ""
+fields:
+  line_amount:
+    label: Line Amount
+    source: generated
+    kind: row
+  total:
+    label: Total
+    source: computed
+    kind: scalar
+computations:
+  - id: total_sum
+    writes: total
+    operation: sum
+    from_field: line_amount
+export: [total]
+executions: []
+""")
+        template = load_task_template(path)
+        assert template.computations[0].operation == AggregateOperation.SUM
+        assert template.computations[0].writes == "total"
 
 
 if __name__ == "__main__":

@@ -197,7 +197,7 @@ class GradioApp(GradioCallbacks):
                     )
                     execution_dropdown = gr.Dropdown(
                         label="Execution",
-                        choices=[("Whole procedure", None)],
+                        choices=[("Whole task", None)],
                         value=None,
                         visible=False,
                         interactive=True,

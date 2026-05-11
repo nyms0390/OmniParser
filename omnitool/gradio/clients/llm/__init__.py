@@ -5,7 +5,7 @@ LLM clients module initialization and factory.
 from typing import Optional
 
 from omnitool.gradio.clients.llm.base import BaseLLMClient
-from omnitool.gradio.config import APIProvider, get_llm_config, get_supported_providers
+from omnitool.gradio.config import APIProvider, get_llm_config
 
 from .anthropic import AnthropicClient
 from .azure import AzureOpenAIClient

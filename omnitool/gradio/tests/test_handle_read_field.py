@@ -6,16 +6,22 @@ from unittest.mock import Mock
 
 from omnitool.gradio.config.enums import ColumnKind
 from omnitool.gradio.config.systems import SystemConfig
-from omnitool.gradio.config.task_template import TaskExecution, TaskOutput
+from omnitool.gradio.config.task_template import TaskExecution, TemplateField
 from omnitool.gradio.core.tools.schemas import AUXILIARY_TOOLS
 from omnitool.gradio.tests._helpers import make_1px_png_b64, make_react_agent
 
 
 def _agent_with(tmp_path, *, kind: ColumnKind, clipboard_correction: bool = True,
-                is_browser: bool = False):
-    """Build a minimal agent with a single resolved output and configured system_config."""
-    resolved = TaskOutput(key="field1", kind=kind, clipboard_correction=clipboard_correction)
-    execution = TaskExecution(type="cua", system="", resolved_outputs=[resolved])
+                is_browser: bool = False, description: str = ""):
+    """Build a minimal agent with a single resolved write and configured system_config."""
+    resolved = TemplateField(label="field1", source="generated", kind=kind,
+                             description=description,
+                             clipboard_correction=clipboard_correction)
+    execution = TaskExecution(
+        id=0, title="", tool="cua", system="", foreach="field1",
+        uses=[], writes=["field1"], steps="",
+        resolved_writes={"field1": resolved},
+    )
     agent = make_react_agent(tmp_path, task_execution=execution)
     agent.system_config = SystemConfig(name="T", is_browser=is_browser, prompt_fragment="")
     return agent
@@ -62,17 +68,32 @@ class TestScalarKind:
 
 class TestRowKindBrowser:
     def test_routes_to_column_extractor_and_stages_values(self, tmp_path):
-        agent = _agent_with(tmp_path, kind=ColumnKind.ROW, is_browser=True)
+        agent = _agent_with(
+            tmp_path,
+            kind=ColumnKind.ROW,
+            is_browser=True,
+            description="Account number for this customer",
+        )
         agent._extract_column = Mock(return_value=["10.00", "20.00", "30.00"])
         msg, read_values, events = agent._handle_read_field({
             "fields": [{"field_name": "field1", "value": "", "hint": "line items"}]
         })
-        agent._extract_column.assert_called_once_with("field1", "", "line items")
+        agent._extract_column.assert_called_once_with(
+            "field1", "Account number for this customer", "line items"
+        )
         assert agent.working_memory.staged_reads["field1"] == ["10.00", "20.00", "30.00"]
         assert read_values == {"field1": ["10.00", "20.00", "30.00"]}
         assert len(events) == 1
         assert events[0]["type"] == "table_read"
         assert "20.00" in events[0]["text"]
+
+    def test_row_extraction_falls_back_to_label_when_description_missing(self, tmp_path):
+        agent = _agent_with(tmp_path, kind=ColumnKind.ROW, is_browser=True)
+        agent._extract_column = Mock(return_value=["10.00"])
+        agent._handle_read_field({
+            "fields": [{"field_name": "field1", "value": "", "hint": "line items"}]
+        })
+        agent._extract_column.assert_called_once_with("field1", "field1", "line items")
 
     def test_devtools_failure_returns_error_string(self, tmp_path):
         agent = _agent_with(tmp_path, kind=ColumnKind.ROW, is_browser=True)
@@ -122,7 +143,8 @@ class TestNonBrowserOCR:
         import dataclasses
         agent.task_execution = dataclasses.replace(
             agent.task_execution,
-            resolved_outputs=[TaskOutput(key="field1", kind=ColumnKind.SCALAR, clipboard_correction=False)],
+            resolved_writes={"field1": TemplateField(label="field1", source="generated",
+                                                     kind=ColumnKind.SCALAR, clipboard_correction=False)},
         )
         crop_before = agent.working_memory.focus_image_b64
         agent._handle_read_field({

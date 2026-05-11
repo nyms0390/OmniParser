@@ -8,13 +8,12 @@ All filesystem I/O is exercised against tmp_path (no real screen capture).
 import base64
 import json
 import re
-import pytest
 from unittest.mock import Mock
 
 from PIL import Image
 
-from omnitool.gradio.config.enums import AggregateOperation, ColumnKind
-from omnitool.gradio.config.task_template import TaskExecution, TaskOutput
+from omnitool.gradio.config.enums import ColumnKind
+from omnitool.gradio.config.task_template import TaskExecution, TemplateField
 from omnitool.gradio.tests._helpers import (
     finish_response as _finish_response,
     make_1px_png_b64 as _make_1px_png_b64,
@@ -224,7 +223,7 @@ class TestSaveField:
         assert agent.working_memory.facts == {"x": ["v"]}
 
     def test_scalar_fact_default_replaces_prior_value(self, tmp_path):
-        """With no task_procedure, fields are non-dynamic and save_field replaces."""
+        """With no task execution, fields are non-dynamic and save_field replaces."""
         agent = self._make_minimal_agent(tmp_path)
         agent._handle_read_field({"fields": [{"field_name": "x", "value": "old"}]})
         agent._handle_save_field({"fields": [{"field_name": "x"}]})
@@ -250,8 +249,11 @@ class TestSaveField:
     def test_double_save_without_second_read_fails_for_dynamic(self, tmp_path):
         """Second save_field without intervening read_field must error and not double-append."""
         agent = self._make_minimal_agent(tmp_path)
+        field = TemplateField(label="Line Amount", source="generated", kind=ColumnKind.ROW)
         agent.task_execution = TaskExecution(
-            type="cua", resolved_outputs=[TaskOutput(key="line_amount", kind=ColumnKind.ROW)]
+            id=1, title="", tool="cua", system="", foreach="line_amount",
+            uses=[], writes=["line_amount"], steps="",
+            resolved_writes={"line_amount": field},
         )
         agent._extract_column = Mock(return_value=["10.00"])
         agent._handle_read_field({"fields": [{"field_name": "line_amount"}]})
@@ -435,109 +437,26 @@ class TestWriteRunSummary:
 
 
 # ---------------------------------------------------------------------------
-# Template aggregate tests
+# Task execution write metadata tests
 # ---------------------------------------------------------------------------
 
-class TestAggregateTransience:
-    """Execution-declared aggregates fire at finish via _apply_template_aggregates."""
+class TestExecutionWriteMetadata:
+    """Execution-declared writes control read/save behavior."""
 
-    def _make_agent_with_exec_outputs(self, tmp_path, task_outputs):
-        """Build an agent with execution outputs and resolved metadata."""
-        execution = TaskExecution(id=1, type="cua",
-                                  resolved_outputs=list(task_outputs))
-        agent = _make_react_agent(tmp_path, [])
-        agent.gta1_client = None
-        agent.task_execution = execution
-        return agent
+    def _execution_with_writes(self, writes: dict[str, TemplateField]) -> TaskExecution:
+        return TaskExecution(
+            id=1, title="", tool="cua", system="", foreach=next(iter(writes), ""),
+            uses=[], writes=list(writes), steps="", resolved_writes=writes,
+        )
 
     def test_dynamic_field_accumulates_across_calls(self, tmp_path):
         agent = _make_react_agent(tmp_path, [])
         agent.gta1_client = None
-        agent.task_execution = TaskExecution(
-            id=1, type="cua",
-            resolved_outputs=[TaskOutput(key="line_amount", kind=ColumnKind.ROW)],
-        )
+        field = TemplateField(label="Line Amount", source="generated", kind=ColumnKind.ROW)
+        agent.task_execution = self._execution_with_writes({"line_amount": field})
         agent._extract_column = Mock(side_effect=[["10.00"], ["5.00"]])
         agent._handle_read_field({"fields": [{"field_name": "line_amount"}]})
         agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
         agent._handle_read_field({"fields": [{"field_name": "line_amount"}]})
         agent._handle_save_field({"fields": [{"field_name": "line_amount"}]})
         assert agent.working_memory.facts["line_amount"] == ["10.00", "5.00"]
-
-    def test_aggregate_result_written_to_facts_at_finish(self, tmp_path):
-        exec_outputs = [TaskOutput(key="grand_total", aggregate=AggregateOperation.SUM)]
-        agent = self._make_agent_with_exec_outputs(tmp_path, exec_outputs)
-        agent.working_memory.facts["grand_total"] = ["10.00", "5.00"]
-        agent._apply_template_aggregates()
-        result = agent.working_memory.facts["grand_total"]
-        assert len(result) == 1
-        assert float(result[0]) == pytest.approx(15.0)
-
-    def test_all_non_numeric_source_skips_aggregate(self, tmp_path):
-        exec_outputs = [TaskOutput(key="total", aggregate=AggregateOperation.SUM)]
-        agent = self._make_agent_with_exec_outputs(tmp_path, exec_outputs)
-        agent.working_memory.facts["total"] = ["N/A", "—"]
-        agent._apply_template_aggregates()
-        # Non-numeric SUM raises ValueError, which is caught and logged — facts unchanged
-        assert agent.working_memory.facts["total"] == ["N/A", "—"]
-
-    def test_unknown_operation_raises_at_load_time(self, tmp_path):
-        with pytest.raises(ValueError, match="Invalid aggregate operation"):
-            TaskOutput.from_dict({"key": "x", "aggregate": "median"})
-
-    def test_no_task_execution_is_noop(self, tmp_path):
-        agent = _make_react_agent(tmp_path, [])
-        # task_execution is None by default
-        agent.working_memory.facts["x"] = ["1.00"]
-        agent._apply_template_aggregates()  # must not raise
-        assert "x" in agent.working_memory.facts  # unchanged
-
-    def test_multiple_aggregate_outputs_all_computed(self, tmp_path):
-        exec_outputs = [
-            TaskOutput(key="price_total", aggregate=AggregateOperation.SUM),
-            TaskOutput(key="fee_total", aggregate=AggregateOperation.SUM),
-        ]
-        agent = self._make_agent_with_exec_outputs(tmp_path, exec_outputs)
-        agent.working_memory.facts["price_total"] = ["10.00", "20.00"]
-        agent.working_memory.facts["fee_total"] = ["1.00", "2.00"]
-        agent._apply_template_aggregates()
-        assert agent.working_memory.facts["price_total"] == ["30"]
-        assert agent.working_memory.facts["fee_total"] == ["3"]
-
-    def test_empty_source_field_skips_aggregate(self, tmp_path):
-        exec_outputs = [TaskOutput(key="grand_total", aggregate=AggregateOperation.SUM)]
-        agent = self._make_agent_with_exec_outputs(tmp_path, exec_outputs)
-        # grand_total never captured
-        agent._apply_template_aggregates()
-        assert "grand_total" not in agent.working_memory.facts
-
-    def test_aggregate_reduces_in_place(self, tmp_path):
-        exec_outputs = [TaskOutput(key="grand_total", aggregate=AggregateOperation.SUM)]
-        agent = self._make_agent_with_exec_outputs(tmp_path, exec_outputs)
-        agent.working_memory.facts["grand_total"] = ["7.00"]
-        agent._apply_template_aggregates()
-        assert agent.working_memory.facts["grand_total"] == ["7"]
-
-    def test_dedup_aggregate_removes_duplicates_preserving_order(self, tmp_path):
-        """DEDUP operation stores deduplicated list, preserving first-seen order."""
-        exec_outputs = [TaskOutput(key="unique_items", aggregate=AggregateOperation.DEDUP)]
-        agent = self._make_agent_with_exec_outputs(tmp_path, exec_outputs)
-        agent.working_memory.facts["unique_items"] = ["alpha", "beta", "alpha", "gamma", "beta"]
-        agent._apply_template_aggregates()
-        assert agent.working_memory.facts["unique_items"] == ["alpha", "beta", "gamma"]
-
-    def test_dedup_aggregate_all_duplicates_collapses_to_single(self, tmp_path):
-        """DEDUP collapses an all-duplicates input to a single-element list."""
-        exec_outputs = [TaskOutput(key="unique_items", aggregate=AggregateOperation.DEDUP)]
-        agent = self._make_agent_with_exec_outputs(tmp_path, exec_outputs)
-        agent.working_memory.facts["unique_items"] = ["alpha", "alpha", "alpha"]
-        agent._apply_template_aggregates()
-        assert agent.working_memory.facts["unique_items"] == ["alpha"]
-
-    def test_dedup_aggregate_single_element_unchanged(self, tmp_path):
-        """DEDUP with a single element returns that element unchanged."""
-        exec_outputs = [TaskOutput(key="unique_items", aggregate=AggregateOperation.DEDUP)]
-        agent = self._make_agent_with_exec_outputs(tmp_path, exec_outputs)
-        agent.working_memory.facts["unique_items"] = ["only"]
-        agent._apply_template_aggregates()
-        assert agent.working_memory.facts["unique_items"] == ["only"]

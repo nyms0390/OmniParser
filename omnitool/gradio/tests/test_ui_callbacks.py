@@ -13,10 +13,8 @@ from omnitool.gradio.config import AgentMode
 from omnitool.gradio.config.enums import ColumnKind
 from omnitool.gradio.config.task_template import (
     TaskExecution,
-    TaskInput,
-    TaskOutput,
-    TaskProcedure,
     TaskTemplate,
+    TemplateField,
 )
 from omnitool.gradio.services import AppState
 from omnitool.gradio.ui.callbacks import GradioCallbacks
@@ -48,21 +46,16 @@ def _make_settings(tmp_path=None):
     return s
 
 
-def _make_procedure(description="Do something"):
-    return TaskProcedure(
-        description=description,
-        outputs=[TaskOutput(key="result", description="the result")],
-        executions=[],
-    )
-
-
-def _make_template(procedure=None):
-    if procedure is None:
-        procedure = _make_procedure()
+def _make_template(description="Do something"):
     return TaskTemplate(
         name="Test Template",
-        inputs=[TaskInput(key="input1", value="hello")],
-        procedure=procedure,
+        description=description,
+        fields={
+            "input1": TemplateField(label="Input 1", source="user", kind=ColumnKind.SCALAR),
+            "result": TemplateField(label="Result", source="generated", kind=ColumnKind.SCALAR),
+        },
+        export=["result"],
+        executions=[],
     )
 
 
@@ -171,20 +164,28 @@ class TestOnTemplateSelect:
 
     def test_valid_yaml_returns_template_and_execution_dropdown(self, tmp_path):
         yaml_content = """
-inputs:
-  - key: input1
-    value: val1
-procedures:
-  - description: "Test procedure"
-    outputs:
-      - key: out1
-        description: "Output one"
-    executions:
-      - id: 1
-        type: cua
-        inputs: [input1]
-        outputs: [out1]
-        steps: "Step 1: do <input1>"
+name: Test Template
+description: "Test task"
+fields:
+  input1:
+    label: Input 1
+    source: user
+    kind: scalar
+  out1:
+    label: Output One
+    source: generated
+    kind: scalar
+export:
+  - out1
+executions:
+  - id: 1
+    title: Get output
+    tool: cua
+    system: iWeb
+    foreach: input1
+    uses: [input1]
+    writes: [out1]
+    steps: "Step 1: do <input1>（Input 1）"
 """
         yaml_file = tmp_path / "template.yaml"
         yaml_file.write_text(yaml_content)
@@ -195,11 +196,11 @@ procedures:
             template, _exec = app.on_template_select(str(yaml_file))
 
         assert template is not None
-        assert template.procedure.description == "Test procedure"
+        assert template.description == "Test task"
         assert mock_gr.update.call_count == 1
         exec_call_kwargs = mock_gr.update.call_args_list[0].kwargs
         assert exec_call_kwargs["value"] is None
-        assert ("Whole procedure", None) in exec_call_kwargs["choices"]
+        assert ("Whole task", None) in exec_call_kwargs["choices"]
         assert ("Execution 1", 1) in exec_call_kwargs["choices"]
 
     def test_invalid_yaml_returns_none(self, tmp_path):
@@ -221,9 +222,9 @@ procedures:
 
         assert template is None
 
-    def test_yaml_missing_procedures_key_returns_none(self, tmp_path):
-        yaml_file = tmp_path / "noprocs.yaml"
-        yaml_file.write_text("inputs:\n  - key: x\n")
+    def test_yaml_missing_fields_key_returns_none(self, tmp_path):
+        yaml_file = tmp_path / "nofields.yaml"
+        yaml_file.write_text("name: Test\nexecutions: []\n")
 
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
@@ -246,10 +247,7 @@ class TestScanTemplates:
         from omnitool.gradio.config.task_template import scan_templates
         yaml_file = tmp_path / "mytemplate.yaml"
         yaml_file.write_text(
-            "name: My Template\n"
-            "procedures:\n"
-            "  - description: My Procedure\n"
-            "    executions: []\n"
+            "name: My Template\ndescription: My Task\nfields: {}\nexport: []\nexecutions: []\n"
         )
         choices = scan_templates(tmp_path)
         assert len(choices) == 1
@@ -260,7 +258,7 @@ class TestScanTemplates:
     def test_invalid_yaml_is_skipped(self, tmp_path):
         from omnitool.gradio.config.task_template import scan_templates
         (tmp_path / "good.yaml").write_text(
-            "name: Good\nprocedures:\n  - description: Good\n    executions: []\n"
+            "name: Good\ndescription: Good\nfields: {}\nexport: []\nexecutions: []\n"
         )
         (tmp_path / "bad.yaml").write_text("not: valid: yaml: [[[")
         choices = scan_templates(tmp_path)
@@ -270,7 +268,7 @@ class TestScanTemplates:
     def test_yml_extension_is_included(self, tmp_path):
         from omnitool.gradio.config.task_template import scan_templates
         (tmp_path / "tmpl.yml").write_text(
-            "name: YML Template\nprocedures:\n  - description: YML Proc\n    executions: []\n"
+            "name: YML Template\ndescription: \"\"\nfields: {}\nexport: []\nexecutions: []\n"
         )
         choices = scan_templates(tmp_path)
         assert len(choices) == 1
@@ -283,7 +281,7 @@ class TestScanTemplates:
     def test_empty_name_falls_back_to_stem(self, tmp_path):
         from omnitool.gradio.config.task_template import scan_templates
         (tmp_path / "myfile.yaml").write_text(
-            'procedures:\n  - description: ""\n    executions: []\n'
+            "description: \"\"\nfields: {}\nexport: []\nexecutions: []\n"
         )
         choices = scan_templates(tmp_path)
         assert len(choices) == 1
@@ -385,36 +383,36 @@ class TestRenderFileList:
 
 
 # ---------------------------------------------------------------------------
-# _render_procedure_summary — HTML escaping for untrusted agent-extracted text
+# _render_task_summary — HTML escaping for untrusted agent-extracted text
 # ---------------------------------------------------------------------------
 
 
-class TestRenderProcedureSummary:
+class TestRenderTaskSummary:
     def test_empty_rows_renders_placeholder(self):
-        html = GradioCallbacks._render_procedure_summary([], None)
+        html = GradioCallbacks._render_task_summary([], None)
         assert "(no rows)" in html
 
     def test_csv_path_appears_when_provided(self):
-        html = GradioCallbacks._render_procedure_summary(
+        html = GradioCallbacks._render_task_summary(
             [{"k": "v"}], "/tmp/proc_1.csv",
         )
         assert "/tmp/proc_1.csv" in html
 
     def test_row_values_are_html_escaped(self):
         rows = [{"name": "<script>alert(1)</script>", "tag": "a & b"}]
-        html = GradioCallbacks._render_procedure_summary(rows, None)
+        html = GradioCallbacks._render_task_summary(rows, None)
         assert "<script>" not in html
         assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
         assert "a &amp; b" in html
 
     def test_column_names_are_html_escaped(self):
         rows = [{"<bad>": "v"}]
-        html = GradioCallbacks._render_procedure_summary(rows, None)
+        html = GradioCallbacks._render_task_summary(rows, None)
         assert "<th><bad></th>" not in html
         assert "&lt;bad&gt;" in html
 
     def test_csv_path_is_html_escaped(self):
-        html = GradioCallbacks._render_procedure_summary(
+        html = GradioCallbacks._render_task_summary(
             [{"k": "v"}], "/tmp/<evil>.csv",
         )
         assert "<evil>" not in html
@@ -739,9 +737,8 @@ class TestOnSubmitEventRouting:
 class TestOnSubmitYamlTemplateIntegration:
     """Verify YAML template overrides message in TASK mode."""
 
-    def test_yaml_procedure_overrides_message_in_task_mode(self, tmp_path):
-        procedure = _make_procedure(description="Automated procedure")
-        template = _make_template(procedure)
+    def test_yaml_template_overrides_message_in_task_mode(self, tmp_path):
+        template = _make_template(description="Automated task")
 
         events = [{"type": "complete", "total_steps": 0, "total_tokens": 0, "total_cost": 0}]
         app, mock_orch = _make_submit_app(tmp_path, events)
@@ -769,13 +766,12 @@ class TestOnSubmitYamlTemplateIntegration:
                 yaml_template=template,
             ))
 
-        # Chat history should contain the procedure-derived message, not "original user message"
+        # Chat history should contain the template description, not "original user message"
         first_history = updates[0][0]
         assert not any(m.get("content") == "original user message" for m in first_history)
 
     def test_yaml_template_not_applied_in_interactive_mode(self, tmp_path):
-        procedure = _make_procedure(description="Automated procedure")
-        template = _make_template(procedure)
+        template = _make_template(description="Automated task")
 
         events = [{"type": "complete", "total_steps": 0, "total_tokens": 0, "total_cost": 0}]
         app, mock_orch = _make_submit_app(tmp_path, events)
@@ -813,55 +809,54 @@ class TestOnSubmitYamlTemplateIntegration:
 
 
 def _two_execution_template() -> TaskTemplate:
-    """Worked example: execution 1 takes a template scalar; execution 2 takes a row."""
-    proc = TaskProcedure(
-        description="Pull accounts and enrich each.",
-        outputs=[
-            TaskOutput(key="account_id", kind=ColumnKind.ROW, explode=True),
-            TaskOutput(key="balance", kind=ColumnKind.SCALAR),
-        ],
-        executions=[
-            TaskExecution(
-                id=1, type="cua", system="EPA",
-                inputs=["user_id"],
-                resolved_outputs=[TaskOutput(key="account_id")],
-                steps="Open <user_id> account list.",
-            ),
-            TaskExecution(
-                id=2, type="cua", system="EPA",
-                inputs=["account_id"],
-                resolved_outputs=[TaskOutput(key="balance")],
-                steps="Open profile for <account_id>.",
-            ),
-        ],
-    )
+    """Worked example: execution 1 iterates user_id; execution 2 iterates account_id rows."""
+    fields = {
+        "user_id": TemplateField(label="User ID", source="user", kind=ColumnKind.SCALAR),
+        "account_id": TemplateField(label="Account ID", source="generated", kind=ColumnKind.ROW, expand=True),
+        "balance": TemplateField(label="Balance", source="generated", kind=ColumnKind.SCALAR),
+    }
     return TaskTemplate(
         name="Two Execution Template",
-        inputs=[TaskInput(key="user_id", value="12345")],
-        procedure=proc,
+        description="Pull accounts and enrich each.",
+        fields=fields,
+        export=["account_id", "balance"],
+        executions=[
+            TaskExecution(
+                id=1, title="Get accounts", tool="cua", system="iWeb",
+                foreach="user_id", uses=["user_id"], writes=["account_id"],
+                steps="Open <user_id>（User ID） account list.",
+                resolved_writes={"account_id": fields["account_id"]},
+            ),
+            TaskExecution(
+                id=2, title="Get balance", tool="cua", system="iWeb",
+                foreach="account_id", uses=["account_id"], writes=["balance"],
+                steps="Open profile for <account_id>（Account ID）.",
+                resolved_writes={"balance": fields["balance"]},
+            ),
+        ],
     )
 
 
 # ---------------------------------------------------------------------------
-# on_submit — TASK + procedure routes through ProcedureRunner
+# on_submit — TASK routes through TaskRunner
 # ---------------------------------------------------------------------------
 
 
 class _RunnerCalls:
     def __init__(self):
-        self.run_procedure_called = False
+        self.run_task_called = False
         self.run_once_calls = []
 
 
 def _patch_runner(runner_calls: _RunnerCalls, events):
-    """Patch ProcedureRunner so its `run_procedure`/`run_once` yield scripted events."""
+    """Patch TaskRunner so its `run_task`/`run_once` yield scripted events."""
 
     class _StubRunner:
         def __init__(self, *args, **kwargs):
             pass
 
-        def run_procedure(self):
-            runner_calls.run_procedure_called = True
+        def run_task(self):
+            runner_calls.run_task_called = True
             for evt in events:
                 yield evt
 
@@ -870,7 +865,7 @@ def _patch_runner(runner_calls: _RunnerCalls, events):
             for evt in events:
                 yield evt
 
-    return patch("omnitool.gradio.ui.callbacks.ProcedureRunner", _StubRunner)
+    return patch("omnitool.gradio.ui.callbacks.TaskRunner", _StubRunner)
 
 
 def _run_task_submit(app, tmp_path, template, execution_selection, events):
@@ -885,7 +880,7 @@ def _run_task_submit(app, tmp_path, template, execution_selection, events):
     ), _patch_runner(runner_calls, events):
         gen = app.on_submit(
             state=state,
-            message="ignored — overridden by procedure description",
+            message="ignored; overridden by task description",
             agent_type="ReActAgent",
             grounding="omniparser",
             preprocessing_mode="raw",
@@ -902,16 +897,16 @@ def _run_task_submit(app, tmp_path, template, execution_selection, events):
     return updates, runner_calls
 
 
-class TestOnSubmitProcedureRunnerRouting:
-    def test_whole_procedure_calls_run_procedure_and_emits_procedure_complete(self, tmp_path):
+class TestOnSubmitTaskRunnerRouting:
+    def test_whole_task_calls_run_task_and_emits_task_complete(self, tmp_path):
         template = _two_execution_template()
         events = [
             {"type": "execution_complete", "execution_id": 1},
             {"type": "execution_complete", "execution_id": 2},
             {
-                "type": "procedure_complete",
+                "type": "task_complete",
                 "success": True,
-                "csv_path": str(tmp_path / "procedure_result.csv"),
+                "csv_path": str(tmp_path / "task_result.csv"),
                 "rows": [{"account_id": "A1", "balance": "10"}],
             },
         ]
@@ -920,11 +915,11 @@ class TestOnSubmitProcedureRunnerRouting:
             app, tmp_path, template, None, events,
         )
 
-        assert runner_calls.run_procedure_called is True
+        assert runner_calls.run_task_called is True
         assert runner_calls.run_once_calls == []
         all_statuses = [u[2] for u in updates]
         assert any("Execution 1" in s for s in all_statuses)
-        assert any("Procedure complete" in s for s in all_statuses)
+        assert any("Task complete" in s for s in all_statuses)
 
     def test_single_execution_selection_calls_run_once(self, tmp_path):
         template = _two_execution_template()
@@ -936,16 +931,16 @@ class TestOnSubmitProcedureRunnerRouting:
             app, tmp_path, template, 1, events,
         )
 
-        assert runner_calls.run_procedure_called is False
+        assert runner_calls.run_task_called is False
         assert runner_calls.run_once_calls == [1]
         last_status = updates[-1][2]
         assert "[OK] Complete" in last_status
 
-    def test_procedure_complete_failure_status_is_error(self, tmp_path):
+    def test_task_complete_failure_status_is_error(self, tmp_path):
         template = _two_execution_template()
         events = [
             {
-                "type": "procedure_complete",
+                "type": "task_complete",
                 "success": False,
                 "csv_path": None,
                 "rows": [],
@@ -956,14 +951,14 @@ class TestOnSubmitProcedureRunnerRouting:
             app, tmp_path, template, None, events,
         )
         last_status = updates[-1][2]
-        assert "Procedure aborted" in last_status
+        assert "Task aborted" in last_status
 
-    def test_unknown_execution_id_falls_back_to_run_procedure(self, tmp_path):
-        """An execution id that no execution claims falls back to whole-procedure."""
+    def test_unknown_execution_id_falls_back_to_run_task(self, tmp_path):
+        """An execution id that no execution claims falls back to the whole task."""
         template = _two_execution_template()
         events = [
             {
-                "type": "procedure_complete",
+                "type": "task_complete",
                 "success": True,
                 "csv_path": None,
                 "rows": [],
@@ -973,7 +968,7 @@ class TestOnSubmitProcedureRunnerRouting:
         _, runner_calls = _run_task_submit(
             app, tmp_path, template, 999, events,
         )
-        assert runner_calls.run_procedure_called is True
+        assert runner_calls.run_task_called is True
         assert runner_calls.run_once_calls == []
 
 

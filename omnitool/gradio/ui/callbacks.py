@@ -13,9 +13,9 @@ from typing import Generator, List, Optional, Tuple
 import gradio as gr
 
 from omnitool.gradio.config import AgentMode, TaskTemplate, load_task_template
-from omnitool.gradio.config.task_template import TaskExecution, TaskProcedure
+from omnitool.gradio.config.task_template import TaskExecution
 from omnitool.gradio.core import create_agent
-from omnitool.gradio.core.procedure_runner import ProcedureRunner
+from omnitool.gradio.core.task_runner import TaskRunner
 from omnitool.gradio.services import AppState, FileHandler, validate_api_key
 from omnitool.gradio.ui.components import (
     format_action_result,
@@ -37,19 +37,18 @@ from omnitool.gradio.ui.components import (
 logger = logging.getLogger(__name__)
 
 
-def _execution_choices(procedure: TaskProcedure) -> List[Tuple[str, Optional[int]]]:
-    """Gradio (label, value) choices. ``None`` value = whole procedure;
-    ``int`` value = a specific execution id."""
-    return [("Whole procedure", None)] + [
+def _execution_choices(template: TaskTemplate) -> List[Tuple[str, Optional[int]]]:
+    """Gradio (label, value) choices. ``None`` value = whole task."""
+    return [("Whole task", None)] + [
         (f"Execution {e.id}", e.id)
-        for e in procedure.executions
+        for e in template.executions
     ]
 
 
 def _hidden_execution_dropdown():
-    """Reset the execution dropdown to its hidden default (whole-procedure only)."""
+    """Reset the execution dropdown to its hidden default (whole-task only)."""
     return gr.update(
-        choices=[("Whole procedure", None)], value=None, visible=False,
+        choices=[("Whole task", None)], value=None, visible=False,
     )
 
 
@@ -153,11 +152,10 @@ class GradioCallbacks:
             agent_mode = AgentMode.INTERACTIVE
         in_task_mode = agent_mode == AgentMode.TASK
 
-        # Resolve the selected procedure and override message only in TASK mode.
-        yaml_procedure = None
-        if in_task_mode and isinstance(yaml_template, TaskTemplate):
-            yaml_procedure = yaml_template.procedure
-            message = yaml_procedure.description
+        # Resolve the selected template and override message only in TASK mode.
+        task_template = yaml_template if in_task_mode and isinstance(yaml_template, TaskTemplate) else None
+        if task_template is not None:
+            message = task_template.description
         # Add user message
         state.chat.add_message("user", message)
         history.append({"role": "user", "content": message})
@@ -196,28 +194,27 @@ class GradioCallbacks:
                 "preprocessing_mode": preprocessing_mode,
             }
 
-            if in_task_mode and yaml_procedure is not None:
-                # TASK + procedure: drive multiple agents via ProcedureRunner.
+            if task_template is not None:
+                # TASK template: drive multiple agents via TaskRunner.
                 def agent_factory(execution: TaskExecution, task_string: str):
                     agent = create_agent(**orchestrator_kwargs, task_execution=execution)
                     agent.working_memory.task = task_string
                     return agent
 
-                runner = ProcedureRunner(
-                    yaml_procedure, yaml_template, agent_factory,
-                    Path(state.session.run_folder),
+                runner = TaskRunner(
+                    task_template, agent_factory, Path(state.session.run_folder),
                 )
                 if execution_selection is None:
-                    event_gen = runner.run_procedure()
+                    event_gen = runner.run_task()
                 else:
                     execution = next(
-                        (e for e in yaml_procedure.executions
+                        (e for e in task_template.executions
                          if e.id == execution_selection),
                         None,
                     )
                     event_gen = (
                         runner.run_once(execution) if execution
-                        else runner.run_procedure()
+                        else runner.run_task()
                     )
                 self.orchestrator = None
             else:
@@ -378,17 +375,17 @@ class GradioCallbacks:
                     history.append({"role": "assistant", "content": status})
                     yield history, "", status, state
 
-                elif update_type == "procedure_complete":
-                    summary = self._render_procedure_summary(
+                elif update_type == "task_complete":
+                    summary = self._render_task_summary(
                         update.get("rows", []),
                         update.get("csv_path"),
                     )
                     if summary:
                         history.append({"role": "assistant", "content": summary})
                     if update.get("success", True):
-                        status = "[OK] Procedure complete"
+                        status = "[OK] Task complete"
                     else:
-                        status = "[ERROR] Procedure aborted"
+                        status = "[ERROR] Task aborted"
                     history.append({"role": "assistant", "content": status})
                     loop_complete = True
                     yield history, "", status, state
@@ -431,7 +428,7 @@ class GradioCallbacks:
             return (None, _hidden_execution_dropdown())
         try:
             template = load_task_template(filepath)
-            choices = _execution_choices(template.procedure)
+            choices = _execution_choices(template)
             return (
                 template,
                 gr.update(
@@ -445,7 +442,7 @@ class GradioCallbacks:
             return (None, _hidden_execution_dropdown())
 
     @staticmethod
-    def _render_procedure_summary(rows, csv_path) -> str:
+    def _render_task_summary(rows, csv_path) -> str:
         """Render the dataframe rows as an HTML table plus an optional CSV link.
 
         Cell values originate from agent screen reads — untrusted text — so

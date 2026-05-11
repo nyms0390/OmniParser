@@ -430,9 +430,9 @@ class BaseAgent(ABC):
     ) -> Tuple[str, Dict[str, List[str]], List[dict]]:
         """Read and optionally verify one or more screen values.
 
-        Routes by TaskOutput.kind and aggregate:
+        Routes by TemplateField.kind:
         - SCALAR: clipboard correction path (when enabled) or direct value.
-        - ROW or aggregate: orientation-agnostic column extraction via
+        - ROW: orientation-agnostic column extraction via
           ``_extract_column`` — LLM matches the field key/description against
           a column header or row label and returns the orthogonal axis.
 
@@ -460,23 +460,21 @@ class BaseAgent(ABC):
                 results.append("Error: field_name is required.")
                 continue
 
-            resolved = self.task_execution.get_resolved_output(field_name) if self.task_execution else None
+            resolved = self.task_execution.get_resolved_write(field_name) if self.task_execution else None
             if self.task_execution is not None and resolved is None:
                 results.append(
-                    f"Error: field_name '{field_name}' is not declared in the task procedure."
+                    f"Error: field_name '{field_name}' is not declared in this task execution."
                 )
                 continue
 
             kind = resolved.kind if resolved else ColumnKind.SCALAR
             use_correction = resolved.clipboard_correction if resolved else True
-            has_aggregate = resolved is not None and resolved.aggregate is not None
-            needs_extraction = kind == ColumnKind.ROW or has_aggregate
+            needs_extraction = kind == ColumnKind.ROW
 
             if needs_extraction:
                 try:
-                    rows = self._extract_column(
-                        field_name, resolved.description if resolved else "", hint
-                    )
+                    description = (resolved.description or resolved.label) if resolved else ""
+                    rows = self._extract_column(field_name, description, hint)
                     events.append({"type": "table_read", "text": "\n".join(rows)})
                     self.working_memory.staged_reads.setdefault(field_name, []).extend(rows)
                     read_values.setdefault(field_name, []).extend(rows)
@@ -548,10 +546,10 @@ class BaseAgent(ABC):
                 results.append("Error: field_name is required.")
                 continue
 
-            resolved = self.task_execution.get_resolved_output(field_name) if self.task_execution else None
+            resolved = self.task_execution.get_resolved_write(field_name) if self.task_execution else None
             if self.task_execution is not None and resolved is None:
                 results.append(
-                    f"Error: field_name '{field_name}' is not declared in the task procedure."
+                    f"Error: field_name '{field_name}' is not declared in this task execution."
                 )
                 continue
 
@@ -565,9 +563,7 @@ class BaseAgent(ABC):
 
             logger.info("SAVE_FIELD '%s': committing %d value(s)", field_name, len(staged_values))
 
-            accumulates = resolved is not None and (
-                resolved.aggregate is not None or resolved.kind == ColumnKind.ROW
-            )
+            accumulates = resolved is not None and resolved.kind == ColumnKind.ROW
 
             if accumulates:
                 for value in staged_values:
@@ -587,42 +583,6 @@ class BaseAgent(ABC):
                 captured[field_name] = [committed]
 
         return "\n".join(results), captured
-
-    def _apply_template_aggregates(self) -> None:
-        """Compute execution-declared aggregates and write results into facts.
-
-        Called once at finish. For each output in ``task_execution`` that has
-        an ``aggregate`` config, reads the accumulated list from
-        ``working_memory.facts[output.key]``, applies the operation over the
-        values, and overwrites ``output.key`` with the reduced result.
-        """
-        if self.task_execution is None:
-            return
-        for out in self.task_execution.resolved_outputs:
-            if out.aggregate is None:
-                continue
-            accumulated = self.working_memory.facts.get(out.key, [])
-            if not all(isinstance(v, str) for v in accumulated):
-                raise TypeError(
-                    f"facts invariant violated for {out.key!r}: "
-                    f"non-str values in {accumulated!r}"
-                )
-            if not accumulated:
-                logger.warning("Aggregate for %r: no accumulated values", out.key)
-                continue
-            try:
-                result = out.aggregate.apply(accumulated)
-            except (NotImplementedError, ValueError) as exc:
-                logger.error(
-                    "Aggregate operation %r failed for output %r: %s",
-                    out.aggregate, out.key, exc,
-                )
-                continue
-            self._set_fact(out.key, result, overwrite=True)
-            logger.info(
-                "Aggregate %r = %r (from %d values)",
-                out.key, result, len(accumulated),
-            )
 
     # ------------------------------------------------------------------
     # Auxiliary tool handlers

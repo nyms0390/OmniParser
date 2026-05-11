@@ -6,8 +6,6 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
-
 from omnitool.gradio.clients import BaseLLMClient, get_llm_client
 from omnitool.gradio.clients.external.gta1 import GTA1Client
 from omnitool.gradio.clients.external.omniparser import OmniParserClient
@@ -19,6 +17,8 @@ from omnitool.gradio.core.agents.preprocessing import PreprocessingMode
 from omnitool.gradio.core.agents.base import BaseAgent
 from omnitool.gradio.core.agents.grounding import GTA1Grounding, GroundingStrategy, OmniParserGrounding
 from omnitool.gradio.core.agents.react_agent import ReActAgent
+
+logger = logging.getLogger(__name__)
 
 
 def create_agent(
@@ -61,8 +61,8 @@ def create_agent(
             grounding/LLM. One of "raw", "clahe", "adaptive_thresh",
             "edge_overlay", "clahe+edges". Defaults to "raw".
         task_execution: The specific execution this agent run is driving.
-            Determines ``system_config`` and per-execution aggregate behaviour.
-            Set by ``ProcedureRunner`` for each execution; carries resolved_outputs.
+            Determines ``system_config`` and valid writable fields.
+            Set by ``TaskRunner`` for each execution; carries resolved_writes.
 
     Returns:
         Initialised ReActAgent.

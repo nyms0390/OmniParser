@@ -95,10 +95,10 @@ class ReActAgent(BaseAgent):
                 "ReActAgent START model=%s grounding=%s mode=%s",
                 self.model_name, self.grounding_strategy.name, self.mode.value,
             )
-            if self.task_execution is not None and self.task_execution.resolved_outputs:
+            if self.task_execution is not None and self.task_execution.resolved_writes:
                 logger.info(
-                    "Template outputs: %s",
-                    [o.key for o in self.task_execution.resolved_outputs],
+                    "Template writes: %s",
+                    list(self.task_execution.resolved_writes),
                 )
             yield {
                 "type": "status",
@@ -237,7 +237,6 @@ class ReActAgent(BaseAgent):
                         "success": arguments.get("success", True),
                         "summary": arguments.get("summary", ""),
                     }
-                    self._apply_template_aggregates()
                     self._write_run_summary(success=result["success"], message=result["summary"])
                     yield {
                         "type": "complete",
