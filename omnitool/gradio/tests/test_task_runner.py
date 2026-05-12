@@ -273,6 +273,41 @@ class TestTaskRunnerHappyPath:
             {"doc": "b.pdf", "status": "done"},
         ]
 
+    def test_empty_foreach_runs_once_per_current_row(self, tmp_path):
+        fields = {
+            "doc": TemplateField(label="Document", source="user", kind=ColumnKind.FILE, expand=True),
+            "status": TemplateField(label="Status", source="generated", kind=ColumnKind.SCALAR),
+        }
+        template = TaskTemplate(
+            name="", description="",
+            fields=fields,
+            export=["doc", "status"],
+            executions=[
+                TaskExecution(
+                    id=1, title="", tool="cua", system="iWeb",
+                    foreach="", uses=["doc"], writes=["status"], steps="",
+                    resolved_writes={"status": fields["status"]},
+                ),
+            ],
+        )
+        factory = _scripted_factory([
+            {"status": ["done a"]},
+            {"status": ["done b"]},
+        ])
+
+        runner = TaskRunner(
+            template, factory, tmp_path,
+            user_values={"doc": ["a.pdf", "b.pdf"]},
+        )
+        events = list(runner.run_task())
+
+        assert [call["execution_id"] for call in factory.calls] == [1, 1]
+        assert runner.dataframe.rows == [
+            {"doc": "a.pdf", "status": "done a"},
+            {"doc": "b.pdf", "status": "done b"},
+        ]
+        assert events[-1]["success"] is True
+
 
 # ---------------------------------------------------------------------------
 # TaskRunner — write semantics

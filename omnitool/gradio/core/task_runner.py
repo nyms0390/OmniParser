@@ -120,10 +120,13 @@ class TaskRunner:
 
     def run_task(self) -> Generator[Dict[str, Any], None, None]:
         for execution in self.template.executions:
-            original_indices = [
-                idx for idx, row in enumerate(self.dataframe.rows)
-                if execution.foreach in row and row.get(execution.foreach, "") != ""
-            ]
+            if execution.foreach:
+                original_indices = [
+                    idx for idx, row in enumerate(self.dataframe.rows)
+                    if execution.foreach in row and row.get(execution.foreach, "") != ""
+                ]
+            else:
+                original_indices = list(range(len(self.dataframe.rows)))
             if (
                 not original_indices
                 and self._allow_empty_seed_run

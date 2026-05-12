@@ -448,6 +448,38 @@ executions:
         assert template.fields["input"].source == TaskFieldSource.USER
         assert template.executions[0].tool == TaskExecutionTool.RPA
 
+    def test_execution_foreach_is_optional(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        path = self._write_yaml(tmp_path, """
+name: Test
+description: ""
+fields:
+  result:
+    label: Result
+    source: generated
+    kind: scalar
+export: [result]
+executions:
+  - id: 1
+    title: Missing foreach
+    tool: cua
+    system: iWeb
+    uses: []
+    writes: [result]
+    steps: ""
+  - id: 2
+    title: Blank foreach
+    tool: cua
+    system: iWeb
+    foreach: ""
+    uses: []
+    writes: [result]
+    steps: ""
+""")
+        template = load_task_template(path)
+        assert [execution.foreach for execution in template.executions] == ["", ""]
+
     def test_unknown_source_raises(self, tmp_path):
         from omnitool.gradio.config.task_template import load_task_template
 

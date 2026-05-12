@@ -164,7 +164,8 @@ def _parse_execution(data: Any, fields: dict[str, TemplateField]) -> TaskExecuti
     foreach = str(raw.get("foreach") or "").strip()
     uses = _as_string_list(raw.get("uses", []), f"execution {exec_id} uses")
     writes = _as_string_list(raw.get("writes", []), f"execution {exec_id} writes")
-    _validate_refs([foreach], fields, f"execution {exec_id} foreach")
+    if foreach:
+        _validate_refs([foreach], fields, f"execution {exec_id} foreach")
     _validate_refs(uses, fields, f"execution {exec_id} uses")
     _validate_refs(writes, fields, f"execution {exec_id} writes")
     expanding_writes = [key for key in writes if fields[key].expand]
