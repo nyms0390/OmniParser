@@ -26,6 +26,7 @@ from omnitool.gradio.clients.external import (
 )
 from omnitool.gradio.config import (
     AgentMode,
+    build_task_user_value_provider,
     create_argument_parser,
     get_settings,
     setup_logging,
@@ -68,6 +69,9 @@ class GradioApp(GradioCallbacks):
         self.gta1_client = GTA1Client(settings.gta1_url)
         self.tools = ToolCollection(windows_host_client=self.windows_host_client)
         self.orchestrator = None
+        self.task_user_value_provider = build_task_user_value_provider(
+            settings.task_user_values_path,
+        )
 
         # Validate all services on startup
         validator = ServiceValidator()

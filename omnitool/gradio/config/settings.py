@@ -35,6 +35,7 @@ class Settings:
 
     # App settings
     run_folder: str = "./runs"
+    task_user_values_path: str = ""
     config_file: Optional[str] = None
 
 
@@ -85,6 +86,13 @@ def create_argument_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Path to YAML config file (optional)",
+    )
+
+    parser.add_argument(
+        "--task-user-values-path",
+        type=str,
+        default="",
+        help="Path to YAML/JSON default TASK user input values",
     )
 
     parser.add_argument(
@@ -156,6 +164,7 @@ def load_settings(
     settings.paddleocr_url = os.getenv("PADDLEOCR_URL", "http://localhost:8001")
     settings.gta1_url = os.getenv("GTA1_URL", "http://localhost:8002")
     settings.run_folder = os.getenv("RUN_FOLDER", "./runs")
+    settings.task_user_values_path = os.getenv("TASK_USER_VALUES_PATH", "")
 
     # Step 2: Load from YAML config file (if provided)
     yaml_config = {}
@@ -187,6 +196,8 @@ def load_settings(
                 settings.cloud_ml_region = yaml_config["cloud_ml_region"]
             if "run_folder" in yaml_config:
                 settings.run_folder = yaml_config["run_folder"]
+            if "task_user_values_path" in yaml_config:
+                settings.task_user_values_path = yaml_config["task_user_values_path"]
         except (FileNotFoundError, yaml.YAMLError) as e:
             print(f"Warning: Failed to load config file: {e}")
 
@@ -202,6 +213,8 @@ def load_settings(
             settings.paddleocr_url = args.paddleocr_url
         if args.gta1_url:
             settings.gta1_url = args.gta1_url
+        if getattr(args, "task_user_values_path", ""):
+            settings.task_user_values_path = args.task_user_values_path
 
     return settings
 

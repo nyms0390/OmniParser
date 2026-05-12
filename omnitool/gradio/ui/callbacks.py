@@ -13,6 +13,10 @@ from typing import Any, Generator, List, Optional, Tuple
 import gradio as gr
 
 from omnitool.gradio.config import AgentMode, TaskFieldSource, TaskTemplate, load_task_template
+from omnitool.gradio.config.task_user_values import (
+    EmptyTaskUserValueProvider,
+    TaskUserValueProvider,
+)
 from omnitool.gradio.config.task_template import TaskExecution
 from omnitool.gradio.core import create_agent
 from omnitool.gradio.core.task_runner import TaskRunner
@@ -68,7 +72,19 @@ def _hidden_task_input_updates() -> list:
     ]
 
 
-def _task_input_updates(template: TaskTemplate) -> list:
+def _format_default_user_value(value: Any) -> str:
+    if isinstance(value, list):
+        return "\n".join(str(item) for item in value)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _task_input_updates(
+    template: TaskTemplate,
+    defaults: dict[str, Any] | None = None,
+) -> list:
+    defaults = defaults or {}
     user_keys = _user_field_keys(template)[:MAX_TASK_USER_FIELDS]
     updates = []
     for idx in range(MAX_TASK_USER_FIELDS):
@@ -88,7 +104,7 @@ def _task_input_updates(template: TaskTemplate) -> list:
         updates.append(
             gr.update(
                 label=field.label,
-                value="",
+                value=_format_default_user_value(defaults.get(key)),
                 visible=True,
                 lines=3 if multiline else 1,
                 placeholder=(
@@ -496,6 +512,10 @@ class GradioCallbacks:
             return (None, _hidden_execution_dropdown(), *_hidden_task_input_updates())
         try:
             template = load_task_template(filepath)
+            defaults = self._task_user_value_provider().values_for_template(
+                template,
+                filepath,
+            )
             choices = _execution_choices(template)
             return (
                 template,
@@ -504,7 +524,7 @@ class GradioCallbacks:
                     value=None,
                     visible=len(choices) > 1,
                 ),
-                *_task_input_updates(template),
+                *_task_input_updates(template, defaults),
             )
         except Exception as exc:
             logger.warning("Failed to load task template: %s", exc)
@@ -528,6 +548,13 @@ class GradioCallbacks:
             elif raw_value is not None and str(raw_value).strip():
                 values[key] = str(raw_value).strip()
         return values
+
+    def _task_user_value_provider(self) -> TaskUserValueProvider:
+        return getattr(
+            self,
+            "task_user_value_provider",
+            EmptyTaskUserValueProvider(),
+        )
 
     @staticmethod
     def _render_task_summary(rows, csv_path) -> str:

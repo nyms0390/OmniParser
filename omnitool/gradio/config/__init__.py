@@ -71,6 +71,12 @@ from omnitool.gradio.config.task_template import (
     TemplateField,
     load_task_template,
 )
+from omnitool.gradio.config.task_user_values import (
+    EmptyTaskUserValueProvider,
+    FileTaskUserValueProvider,
+    TaskUserValueProvider,
+    build_task_user_value_provider,
+)
 
 __all__ = [
     # Constants
@@ -132,6 +138,10 @@ __all__ = [
     "TaskTemplate",
     "TemplateField",
     "load_task_template",
+    "EmptyTaskUserValueProvider",
+    "FileTaskUserValueProvider",
+    "TaskUserValueProvider",
+    "build_task_user_value_provider",
     # Systems
     "LoginConfig",
     "SystemConfig",

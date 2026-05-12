@@ -6,6 +6,8 @@ All tests use the current API — no legacy stubs.
 import pytest
 
 from omnitool.gradio.config import get_all_model_names, get_llm_config, get_pricing
+from omnitool.gradio.config.settings import load_settings
+from omnitool.gradio.config.task_user_values import FileTaskUserValueProvider
 from omnitool.gradio.core import BaseTool, ToolCollection, ToolResult
 from omnitool.gradio.services import AppState, AuthValidator
 
@@ -67,6 +69,27 @@ class TestLLMConfig:
         default = get_pricing("gpt-4o", "openai")
         unknown = get_pricing("gpt-4o", "some-unknown-provider")
         assert default == unknown
+
+
+# ---------------------------------------------------------------------------
+# Settings tests
+# ---------------------------------------------------------------------------
+
+class TestSettings:
+    def test_task_user_values_path_loads_from_environment(self, monkeypatch):
+        monkeypatch.setenv("TASK_USER_VALUES_PATH", "/tmp/task-values.yaml")
+
+        settings = load_settings()
+
+        assert settings.task_user_values_path == "/tmp/task-values.yaml"
+
+    def test_task_user_values_path_loads_from_yaml_config(self, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("task_user_values_path: /tmp/from-config.json\n")
+
+        settings = load_settings(config_file_path=str(config_path))
+
+        assert settings.task_user_values_path == "/tmp/from-config.json"
 
 
 # ---------------------------------------------------------------------------
@@ -640,6 +663,74 @@ executions: []
 """)
         with pytest.raises(ValueError, match="duplicate computation"):
             load_task_template(path)
+
+
+# ---------------------------------------------------------------------------
+# Task user values
+# ---------------------------------------------------------------------------
+
+class TestTaskUserValueProvider:
+    def test_yaml_values_can_be_keyed_by_template_name(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        template_path = tmp_path / "template.yaml"
+        template_path.write_text("""
+name: Test Template
+description: ""
+fields:
+  user_id:
+    label: User ID
+    source: user
+    kind: scalar
+  result:
+    label: Result
+    source: generated
+    kind: scalar
+export: [result]
+executions: []
+""")
+        values_path = tmp_path / "task_values.yaml"
+        values_path.write_text("""
+templates:
+  Test Template:
+    user_id: U123
+""")
+
+        template = load_task_template(str(template_path))
+        provider = FileTaskUserValueProvider(values_path)
+
+        assert provider.values_for_template(template, str(template_path)) == {
+            "user_id": "U123",
+        }
+
+    def test_json_values_can_be_keyed_by_template_file_stem(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        template_path = tmp_path / "account_lookup.yaml"
+        template_path.write_text("""
+name: Account Lookup
+description: ""
+fields:
+  user_id:
+    label: User ID
+    source: user
+    kind: scalar
+  accounts:
+    label: Accounts
+    source: generated
+    kind: row
+export: [accounts]
+executions: []
+""")
+        values_path = tmp_path / "task_values.json"
+        values_path.write_text('{"templates": {"account_lookup": {"user_id": "U999"}}}')
+
+        template = load_task_template(str(template_path))
+        provider = FileTaskUserValueProvider(values_path)
+
+        assert provider.values_for_template(template, str(template_path)) == {
+            "user_id": "U999",
+        }
 
 
 if __name__ == "__main__":

@@ -43,6 +43,7 @@ def _make_settings(tmp_path=None):
     s = Mock()
     s.run_folder = str(tmp_path or "/tmp/omni_test")
     s.azure_endpoint = ""
+    s.task_user_values_path = ""
     return s
 
 
@@ -208,6 +209,37 @@ executions:
         input_call_kwargs = mock_gr.update.call_args_list[1].kwargs
         assert input_call_kwargs["label"] == "Input 1"
         assert input_call_kwargs["visible"] is True
+
+    def test_template_select_prefills_user_inputs_from_provider(self, tmp_path):
+        yaml_file = tmp_path / "template.yaml"
+        yaml_file.write_text("""
+name: Test Template
+description: "Test task"
+fields:
+  input1:
+    label: Input 1
+    source: user
+    kind: scalar
+  out1:
+    label: Output One
+    source: generated
+    kind: scalar
+export: [out1]
+executions: []
+""")
+        provider = Mock()
+        provider.values_for_template.return_value = {"input1": "from-file"}
+        app = _StubApp(tmp_path=tmp_path)
+        app.task_user_value_provider = provider
+
+        with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
+            mock_gr.update.return_value = {"visible": True}
+            template, _exec, *_inputs = app.on_template_select(str(yaml_file))
+
+        assert template is not None
+        provider.values_for_template.assert_called_once_with(template, str(yaml_file))
+        input_call_kwargs = mock_gr.update.call_args_list[1].kwargs
+        assert input_call_kwargs["value"] == "from-file"
 
     def test_invalid_yaml_returns_none(self, tmp_path):
         bad_file = tmp_path / "bad.yaml"
