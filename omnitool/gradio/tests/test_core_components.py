@@ -550,13 +550,96 @@ computations:
   - id: total_sum
     writes: total
     operation: sum
-    from_field: line_amount
+    from: [line_amount]
 export: [total]
 executions: []
 """)
         template = load_task_template(path)
         assert template.computations[0].operation == AggregateOperation.SUM
         assert template.computations[0].writes == "total"
+        assert template.computations[0].from_fields == ["line_amount"]
+
+    def test_computation_rejects_file_source_fields(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        path = self._write_yaml(tmp_path, """
+name: Computed
+description: ""
+fields:
+  doc:
+    label: Document
+    source: user
+    kind: file
+  summary:
+    label: Summary
+    source: computed
+    kind: scalar
+computations:
+  - id: bad_file
+    writes: summary
+    operation: concat
+    from: [doc]
+export: [summary]
+executions: []
+""")
+        with pytest.raises(ValueError, match="file field"):
+            load_task_template(path)
+
+    def test_computation_writes_must_be_computed_source(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        path = self._write_yaml(tmp_path, """
+name: Computed
+description: ""
+fields:
+  line_amount:
+    label: Line Amount
+    source: generated
+    kind: row
+  total:
+    label: Total
+    source: generated
+    kind: scalar
+computations:
+  - id: total_sum
+    writes: total
+    operation: sum
+    from: [line_amount]
+export: [total]
+executions: []
+""")
+        with pytest.raises(ValueError, match="source: computed"):
+            load_task_template(path)
+
+    def test_duplicate_computation_ids_raise(self, tmp_path):
+        from omnitool.gradio.config.task_template import load_task_template
+
+        path = self._write_yaml(tmp_path, """
+name: Computed
+description: ""
+fields:
+  line_amount:
+    label: Line Amount
+    source: generated
+    kind: row
+  total:
+    label: Total
+    source: computed
+    kind: scalar
+computations:
+  - id: total_sum
+    writes: total
+    operation: sum
+    from: [line_amount]
+  - id: total_sum
+    writes: total
+    operation: sum
+    from: [line_amount]
+export: [total]
+executions: []
+""")
+        with pytest.raises(ValueError, match="duplicate computation"):
+            load_task_template(path)
 
 
 if __name__ == "__main__":

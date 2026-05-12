@@ -91,6 +91,13 @@ class TaskRunner:
             field.source == "user" for field in template.fields.values()
         )
         self.dataframe.rows = self._seed_rows()
+        computation_ids = {computation.id for computation in self.template.computations}
+        self._pending_computations: list[set[str]] = [
+            set(computation_ids) for _ in self.dataframe.rows
+        ]
+        self._read_values: list[dict[str, List[str]]] = [
+            {} for _ in self.dataframe.rows
+        ]
 
     def _seed_rows(self) -> list[dict[str, str]]:
         rows: list[dict[str, str]] = [{}]
@@ -129,7 +136,6 @@ class TaskRunner:
                 row_idx = original_idx + cursor_offset
                 before = len(self.dataframe.rows)
                 success = yield from self._run_once(execution, row_idx)
-                self._apply_computations()
                 cursor_offset += len(self.dataframe.rows) - before
                 if not success:
                     all_ok = False
@@ -189,6 +195,8 @@ class TaskRunner:
         saw_error = False
         for event in agent.run():
             evt_type = event.get("type")
+            if evt_type == "screen_reading":
+                self._record_read_fields(event.get("fields", {}), row_idx)
             if evt_type == "complete":
                 self._merge_facts(event.get("facts", {}), execution, row_idx)
                 saw_complete = True
@@ -225,23 +233,69 @@ class TaskRunner:
                 self.dataframe.set_cell(row_idx, key, _join(values))
         for key, values in expand_items:
             self.dataframe.expand_row(row_idx, key, values)
+            pending = self._pending_computations[row_idx]
+            reads = self._read_values[row_idx]
+            self._pending_computations[row_idx:row_idx + 1] = [
+                set(pending) for _ in values
+            ]
+            self._read_values[row_idx:row_idx + 1] = [
+                {read_key: list(read_values) for read_key, read_values in reads.items()}
+                for _ in values
+            ]
 
-    def _apply_computations(self) -> None:
-        for row in self.dataframe.rows:
-            for computation in self.template.computations:
-                raw = row.get(computation.from_field)
-                if raw is None:
-                    continue
-                values = [item.strip() for item in raw.split(",") if item.strip()]
-                try:
-                    result = computation.operation.apply(values)
-                except (NotImplementedError, ValueError) as exc:
-                    logger.warning(
-                        "Computation %s failed for field %s: %s",
-                        computation.id, computation.from_field, exc,
-                    )
-                    continue
-                row[computation.writes] = _join(result) if isinstance(result, list) else result
+    def _record_read_fields(
+        self,
+        fields: Dict[str, List[str]],
+        row_idx: int,
+    ) -> None:
+        if not fields or not 0 <= row_idx < len(self.dataframe.rows):
+            return
+        reads = self._read_values[row_idx]
+        for key, values in fields.items():
+            reads[key] = list(values)
+        self._apply_ready_computations(row_idx)
+
+    def _values_for_computation(self, row_idx: int, key: str) -> List[str] | None:
+        reads = self._read_values[row_idx]
+        if key in reads:
+            return reads[key]
+        raw = self.dataframe.rows[row_idx].get(key)
+        if raw is None:
+            return None
+        return [item.strip() for item in raw.split(",") if item.strip()]
+
+    def _apply_ready_computations(self, row_idx: int) -> None:
+        pending = self._pending_computations[row_idx]
+        if not pending:
+            return
+        computations = {
+            computation.id: computation
+            for computation in self.template.computations
+            if computation.id in pending
+        }
+        for computation_id, computation in computations.items():
+            values: List[str] = []
+            fulfilled = True
+            for key in computation.from_fields:
+                source_values = self._values_for_computation(row_idx, key)
+                if source_values is None:
+                    fulfilled = False
+                    break
+                values.extend(source_values)
+            if not fulfilled:
+                continue
+            try:
+                result = computation.operation.apply(values)
+            except (NotImplementedError, ValueError) as exc:
+                logger.warning(
+                    "Computation %s failed for fields %s: %s",
+                    computation.id, computation.from_fields, exc,
+                )
+                continue
+            self.dataframe.rows[row_idx][computation.writes] = (
+                _join(result) if isinstance(result, list) else result
+            )
+            pending.remove(computation_id)
 
 
 __all__ = ["TaskDataframe", "TaskRunner", "RunnableAgent", "AgentFactory"]

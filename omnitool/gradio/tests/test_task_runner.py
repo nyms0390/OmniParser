@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List
 
-from omnitool.gradio.config.enums import ColumnKind
+from omnitool.gradio.config.enums import AggregateOperation, ColumnKind
 from omnitool.gradio.config.task_template import (
+    TaskComputation,
     TaskExecution,
     TaskTemplate,
     TemplateField,
@@ -412,6 +413,153 @@ class TestMergeFactsSemantics:
         assert runner.dataframe.rows == []
         # Execution 2 ran zero times because no rows
         assert [c["execution_id"] for c in factory.calls] == [1]
+
+
+# ---------------------------------------------------------------------------
+# TaskRunner — computed fields
+# ---------------------------------------------------------------------------
+
+class TestComputationTiming:
+    def _template(self, computations: list[TaskComputation]) -> TaskTemplate:
+        fields = {
+            "subtotal": TemplateField(label="Subtotal", source="generated", kind=ColumnKind.SCALAR),
+            "tax": TemplateField(label="Tax", source="generated", kind=ColumnKind.SCALAR),
+            "line_amount": TemplateField(label="Line Amount", source="generated", kind=ColumnKind.ROW),
+            "total": TemplateField(label="Total", source="computed", kind=ColumnKind.SCALAR),
+        }
+        return TaskTemplate(
+            name="", description="",
+            fields=fields,
+            computations=computations,
+            export=["subtotal", "tax", "line_amount", "total"],
+            executions=[TaskExecution(
+                id=1, title="", tool="cua", system="iWeb",
+                foreach="subtotal", uses=[],
+                writes=["subtotal", "tax", "line_amount"], steps="",
+                resolved_writes={
+                    "subtotal": fields["subtotal"],
+                    "tax": fields["tax"],
+                    "line_amount": fields["line_amount"],
+                },
+            )],
+        )
+
+    def test_computation_runs_immediately_after_read_field_event(self, tmp_path):
+        template = self._template([
+            TaskComputation(
+                id="total_sum",
+                writes="total",
+                operation=AggregateOperation.SUM,
+                from_fields=["line_amount"],
+            )
+        ])
+        factory = _scripted_factory(
+            [{"line_amount": ["10.00", "5.00"]}],
+            extra_events=[
+                [{"type": "screen_reading", "fields": {"line_amount": ["10.00", "5.00"]}}],
+            ],
+        )
+
+        runner = TaskRunner(template, factory, tmp_path)
+        events = runner.run_task()
+        assert next(events)["type"] == "screen_reading"
+        assert runner.dataframe.rows[0]["total"] == "15"
+        list(events)
+
+    def test_computation_waits_until_all_from_fields_are_read(self, tmp_path):
+        template = self._template([
+            TaskComputation(
+                id="total_sum",
+                writes="total",
+                operation=AggregateOperation.SUM,
+                from_fields=["subtotal", "tax"],
+            )
+        ])
+        factory = _scripted_factory(
+            [{"subtotal": ["10.00"], "tax": ["2.00"]}],
+            extra_events=[
+                [
+                    {"type": "screen_reading", "fields": {"subtotal": ["10.00"]}},
+                    {"type": "screen_reading", "fields": {"tax": ["2.00"]}},
+                ],
+            ],
+        )
+
+        runner = TaskRunner(template, factory, tmp_path)
+        events = runner.run_task()
+        assert next(events)["type"] == "screen_reading"
+        assert "total" not in runner.dataframe.rows[0]
+        assert next(events)["type"] == "screen_reading"
+        assert runner.dataframe.rows[0]["total"] == "12"
+        list(events)
+
+    def test_computation_flattens_scalar_row_and_merged_values(self, tmp_path):
+        template = self._template([
+            TaskComputation(
+                id="total_sum",
+                writes="total",
+                operation=AggregateOperation.SUM,
+                from_fields=["subtotal", "line_amount"],
+            )
+        ])
+        factory = _scripted_factory(
+            [{"subtotal": ["10.00"], "line_amount": ["2.00", "3.00"]}],
+            extra_events=[
+                [
+                    {"type": "screen_reading", "fields": {"subtotal": ["10.00"]}},
+                    {"type": "screen_reading", "fields": {"line_amount": ["2.00", "3.00"]}},
+                ],
+            ],
+        )
+
+        runner = TaskRunner(template, factory, tmp_path)
+        list(runner.run_task())
+        assert runner.dataframe.rows[0]["total"] == "15"
+
+    def test_computation_splits_existing_merged_cell_values(self, tmp_path):
+        template = self._template([
+            TaskComputation(
+                id="total_sum",
+                writes="total",
+                operation=AggregateOperation.SUM,
+                from_fields=["subtotal", "line_amount"],
+            )
+        ])
+        factory = _scripted_factory(
+            [{"subtotal": ["10.00"]}],
+            extra_events=[
+                [{"type": "screen_reading", "fields": {"subtotal": ["10.00"]}}],
+            ],
+        )
+
+        runner = TaskRunner(template, factory, tmp_path)
+        runner.dataframe.rows[0]["subtotal"] = "pending"
+        runner.dataframe.rows[0]["line_amount"] = "2.00, 3.00"
+        list(runner.run_task())
+        assert runner.dataframe.rows[0]["total"] == "15"
+
+    def test_computation_is_untracked_after_it_runs(self, tmp_path):
+        template = self._template([
+            TaskComputation(
+                id="total_sum",
+                writes="total",
+                operation=AggregateOperation.SUM,
+                from_fields=["line_amount"],
+            )
+        ])
+        factory = _scripted_factory(
+            [{"line_amount": ["10.00", "5.00"]}],
+            extra_events=[
+                [
+                    {"type": "screen_reading", "fields": {"line_amount": ["10.00", "5.00"]}},
+                    {"type": "screen_reading", "fields": {"line_amount": ["999.00"]}},
+                ],
+            ],
+        )
+
+        runner = TaskRunner(template, factory, tmp_path)
+        list(runner.run_task())
+        assert runner.dataframe.rows[0]["total"] == "15"
 
 
 # ---------------------------------------------------------------------------

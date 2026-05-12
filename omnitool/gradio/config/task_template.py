@@ -39,7 +39,7 @@ class TaskComputation:
     id: str
     writes: str
     operation: AggregateOperation
-    from_field: str
+    from_fields: list[str]
 
 
 @dataclass
@@ -122,11 +122,18 @@ def _parse_computation(data: Any, fields: dict[str, TemplateField]) -> TaskCompu
     raw = _require_mapping(data, "computation")
     comp_id = str(raw.get("id") or "").strip()
     writes = str(raw.get("writes") or "").strip()
-    from_field = str(raw.get("from_field") or "").strip()
+    from_fields = _as_string_list(raw.get("from"), f"computation {comp_id} from")
     if not comp_id:
         raise ValueError("computation id is required.")
     _validate_refs([writes], fields, f"computation {comp_id} writes")
-    _validate_refs([from_field], fields, f"computation {comp_id} from_field")
+    _validate_refs(from_fields, fields, f"computation {comp_id} from")
+    if not from_fields:
+        raise ValueError(f"computation {comp_id}: from must include at least one field key.")
+    if fields[writes].source != TaskFieldSource.COMPUTED:
+        raise ValueError(f"computation {comp_id}: writes field {writes!r} must be source: computed.")
+    file_fields = [key for key in from_fields if fields[key].kind == ColumnKind.FILE]
+    if file_fields:
+        raise ValueError(f"computation {comp_id}: from cannot include file field(s): {file_fields!r}")
     try:
         operation = AggregateOperation(raw.get("operation"))
     except ValueError:
@@ -139,7 +146,7 @@ def _parse_computation(data: Any, fields: dict[str, TemplateField]) -> TaskCompu
         id=comp_id,
         writes=writes,
         operation=operation,
-        from_field=from_field,
+        from_fields=from_fields,
     )
 
 
