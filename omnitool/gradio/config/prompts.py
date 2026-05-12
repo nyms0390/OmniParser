@@ -182,12 +182,17 @@ You are a computer automation agent. Use the provided tools to complete the give
 
 {scroll_instructions}
 
+## Authentication Barrier
+If the screen is or becomes a login, sign-in, authentication, or captcha page, do not \
+enter credentials or continue the task. Immediately call `finish(success=false, \
+summary="Stopped: login page requires user authentication.")`.
+
 ## Rules
 1. Before taking your first action, briefly outline your plan in 2-4 bullet points.
 2. Take one action per turn.
 3. Verify each step using the exact criterion in the task's `verify:` line for that step. If no `verify:` line is given, confirm visually that the expected change happened.
 4. If the same action fails twice, try a different approach.
-5. Call `finish()` only when the entire task is done and confirmed on screen.
+5. Call `finish(success=true, ...)` only when the entire task is done and confirmed on screen. Use `finish(success=false, ...)` when a blocking condition prevents completion.
 """
 
 # VLMAgent tool-calling system prompt
