@@ -17,7 +17,7 @@ from omnitool.gradio.config.task_template import (
     TemplateField,
 )
 from omnitool.gradio.services import AppState
-from omnitool.gradio.ui.callbacks import GradioCallbacks
+from omnitool.gradio.ui.callbacks import GradioCallbacks, MAX_TASK_USER_FIELDS
 from omnitool.gradio.ui.components import get_provider_options_for_model
 
 
@@ -131,22 +131,25 @@ class TestOnModeChange:
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": True}
-            app.on_mode_change(AgentMode.TASK.value)
-        mock_gr.update.assert_called_once_with(visible=True)
+            result = app.on_mode_change(AgentMode.TASK.value)
+        assert len(result) == 2 + MAX_TASK_USER_FIELDS
+        mock_gr.update.assert_any_call(visible=True)
 
     def test_interactive_mode_hides_template_dropdown(self, tmp_path):
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": False}
-            app.on_mode_change(AgentMode.INTERACTIVE.value)
-        mock_gr.update.assert_called_once_with(visible=False)
+            result = app.on_mode_change(AgentMode.INTERACTIVE.value)
+        assert len(result) == 2 + MAX_TASK_USER_FIELDS
+        mock_gr.update.assert_any_call(visible=False)
 
     def test_orchestrated_mode_hides_template_dropdown(self, tmp_path):
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": False}
-            app.on_mode_change(AgentMode.ORCHESTRATED.value)
-        mock_gr.update.assert_called_once_with(visible=False)
+            result = app.on_mode_change(AgentMode.ORCHESTRATED.value)
+        assert len(result) == 2 + MAX_TASK_USER_FIELDS
+        mock_gr.update.assert_any_call(visible=False)
 
 
 # ---------------------------------------------------------------------------
@@ -158,9 +161,9 @@ class TestOnTemplateSelect:
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": False}
-            template, _exec = app.on_template_select(None)
+            template, _exec, *_inputs = app.on_template_select(None)
         assert template is None
-        assert mock_gr.update.call_count == 1
+        assert mock_gr.update.call_count == 1 + MAX_TASK_USER_FIELDS
 
     def test_valid_yaml_returns_template_and_execution_dropdown(self, tmp_path):
         yaml_content = """
@@ -193,15 +196,18 @@ executions:
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": True}
-            template, _exec = app.on_template_select(str(yaml_file))
+            template, _exec, *_inputs = app.on_template_select(str(yaml_file))
 
         assert template is not None
         assert template.description == "Test task"
-        assert mock_gr.update.call_count == 1
+        assert mock_gr.update.call_count == 1 + MAX_TASK_USER_FIELDS
         exec_call_kwargs = mock_gr.update.call_args_list[0].kwargs
         assert exec_call_kwargs["value"] is None
         assert ("Whole task", None) in exec_call_kwargs["choices"]
         assert ("Execution 1", 1) in exec_call_kwargs["choices"]
+        input_call_kwargs = mock_gr.update.call_args_list[1].kwargs
+        assert input_call_kwargs["label"] == "Input 1"
+        assert input_call_kwargs["visible"] is True
 
     def test_invalid_yaml_returns_none(self, tmp_path):
         bad_file = tmp_path / "bad.yaml"
@@ -210,7 +216,7 @@ executions:
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": False}
-            template, _exec = app.on_template_select(str(bad_file))
+            template, _exec, *_inputs = app.on_template_select(str(bad_file))
 
         assert template is None
 
@@ -218,7 +224,7 @@ executions:
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": False}
-            template, _exec = app.on_template_select(str(tmp_path / "ghost.yaml"))
+            template, _exec, *_inputs = app.on_template_select(str(tmp_path / "ghost.yaml"))
 
         assert template is None
 
@@ -229,7 +235,7 @@ executions:
         app = _StubApp(tmp_path=tmp_path)
         with patch("omnitool.gradio.ui.callbacks.gr") as mock_gr:
             mock_gr.update.return_value = {"visible": False}
-            template, _exec = app.on_template_select(str(yaml_file))
+            template, _exec, *_inputs = app.on_template_select(str(yaml_file))
 
         assert template is None
 
@@ -846,6 +852,7 @@ class _RunnerCalls:
     def __init__(self):
         self.run_task_called = False
         self.run_once_calls = []
+        self.user_values = None
 
 
 def _patch_runner(runner_calls: _RunnerCalls, events):
@@ -853,7 +860,7 @@ def _patch_runner(runner_calls: _RunnerCalls, events):
 
     class _StubRunner:
         def __init__(self, *args, **kwargs):
-            pass
+            runner_calls.user_values = kwargs.get("user_values")
 
         def run_task(self):
             runner_calls.run_task_called = True
@@ -868,7 +875,14 @@ def _patch_runner(runner_calls: _RunnerCalls, events):
     return patch("omnitool.gradio.ui.callbacks.TaskRunner", _StubRunner)
 
 
-def _run_task_submit(app, tmp_path, template, execution_selection, events):
+def _run_task_submit(
+    app,
+    tmp_path,
+    template,
+    execution_selection,
+    events,
+    task_user_inputs=(),
+):
     """Drive on_submit in TASK mode with the runner patched."""
     state = AppState(run_folder=tmp_path)
     runner_calls = _RunnerCalls()
@@ -879,19 +893,20 @@ def _run_task_submit(app, tmp_path, template, execution_selection, events):
         return_value=Mock(step_count=0),
     ), _patch_runner(runner_calls, events):
         gen = app.on_submit(
-            state=state,
-            message="ignored; overridden by task description",
-            agent_type="ReActAgent",
-            grounding="omniparser",
-            preprocessing_mode="raw",
-            model_name="gpt-4o",
-            provider="openai",
-            chatbot_history=[],
-            mode=AgentMode.TASK.value,
-            platform="windows",
-            max_steps=50,
-            yaml_template=template,
-            execution_selection=execution_selection,
+            state,
+            "ignored; overridden by task description",
+            "ReActAgent",
+            "omniparser",
+            "raw",
+            "gpt-4o",
+            "openai",
+            [],
+            AgentMode.TASK.value,
+            "windows",
+            50,
+            template,
+            execution_selection,
+            *task_user_inputs,
         )
         updates = list(gen)
     return updates, runner_calls
@@ -920,6 +935,28 @@ class TestOnSubmitTaskRunnerRouting:
         all_statuses = [u[2] for u in updates]
         assert any("Execution 1" in s for s in all_statuses)
         assert any("Task complete" in s for s in all_statuses)
+
+    def test_task_user_inputs_are_passed_to_runner(self, tmp_path):
+        template = _two_execution_template()
+        events = [
+            {
+                "type": "task_complete",
+                "success": True,
+                "csv_path": None,
+                "rows": [{"account_id": "A1", "balance": "10"}],
+            },
+        ]
+        app = _StubApp(tmp_path=tmp_path)
+        _, runner_calls = _run_task_submit(
+            app,
+            tmp_path,
+            template,
+            None,
+            events,
+            task_user_inputs=("U123",),
+        )
+
+        assert runner_calls.user_values == {"user_id": "U123"}
 
     def test_single_execution_selection_calls_run_once(self, tmp_path):
         template = _two_execution_template()

@@ -8,11 +8,11 @@ Extracted from app.py so that UI layout (build_interface) and event dispatch
 import logging
 from html import escape
 from pathlib import Path
-from typing import Generator, List, Optional, Tuple
+from typing import Any, Generator, List, Optional, Tuple
 
 import gradio as gr
 
-from omnitool.gradio.config import AgentMode, TaskTemplate, load_task_template
+from omnitool.gradio.config import AgentMode, TaskFieldSource, TaskTemplate, load_task_template
 from omnitool.gradio.config.task_template import TaskExecution
 from omnitool.gradio.core import create_agent
 from omnitool.gradio.core.task_runner import TaskRunner
@@ -36,6 +36,8 @@ from omnitool.gradio.ui.components import (
 
 logger = logging.getLogger(__name__)
 
+MAX_TASK_USER_FIELDS = 8
+
 
 def _execution_choices(template: TaskTemplate) -> List[Tuple[str, Optional[int]]]:
     """Gradio (label, value) choices. ``None`` value = whole task."""
@@ -50,6 +52,61 @@ def _hidden_execution_dropdown():
     return gr.update(
         choices=[("Whole task", None)], value=None, visible=False,
     )
+
+
+def _user_field_keys(template: TaskTemplate) -> list[str]:
+    return [
+        key for key, field in template.fields.items()
+        if field.source == TaskFieldSource.USER or str(field.source) == TaskFieldSource.USER.value
+    ]
+
+
+def _hidden_task_input_updates() -> list:
+    return [
+        gr.update(label=f"Task input {idx + 1}", value="", visible=False, lines=1)
+        for idx in range(MAX_TASK_USER_FIELDS)
+    ]
+
+
+def _task_input_updates(template: TaskTemplate) -> list:
+    user_keys = _user_field_keys(template)[:MAX_TASK_USER_FIELDS]
+    updates = []
+    for idx in range(MAX_TASK_USER_FIELDS):
+        if idx >= len(user_keys):
+            updates.append(
+                gr.update(
+                    label=f"Task input {idx + 1}",
+                    value="",
+                    visible=False,
+                    lines=1,
+                )
+            )
+            continue
+        key = user_keys[idx]
+        field = template.fields[key]
+        multiline = field.multiple or field.expand
+        updates.append(
+            gr.update(
+                label=field.label,
+                value="",
+                visible=True,
+                lines=3 if multiline else 1,
+                placeholder=(
+                    f"Enter one {field.label} per line"
+                    if multiline else field.description or field.label
+                ),
+            )
+        )
+    return updates
+
+
+def _split_user_values(raw_value: Any) -> list[str]:
+    text = str(raw_value or "").strip()
+    if not text:
+        return []
+    if "\n" in text:
+        return [line.strip() for line in text.splitlines() if line.strip()]
+    return [part.strip() for part in text.split(",") if part.strip()]
 
 
 class GradioCallbacks:
@@ -123,6 +180,7 @@ class GradioCallbacks:
         max_steps: int,
         yaml_template,
         execution_selection: Optional[int] = None,
+        *task_user_inputs,
     ) -> Generator:
         """Handle submit button click.
 
@@ -201,8 +259,14 @@ class GradioCallbacks:
                     agent.working_memory.task = task_string
                     return agent
 
+                user_values = self._collect_task_user_values(
+                    task_template, task_user_inputs,
+                )
                 runner = TaskRunner(
-                    task_template, agent_factory, Path(state.session.run_folder),
+                    task_template,
+                    agent_factory,
+                    Path(state.session.run_folder),
+                    user_values=user_values,
                 )
                 if execution_selection is None:
                     event_gen = runner.run_task()
@@ -405,27 +469,31 @@ class GradioCallbacks:
             yield history, "", error_msg, state
 
     def on_mode_change(self, mode: str):
-        """Show/hide the template dropdown based on selected mode.
+        """Show/hide TASK controls based on selected mode.
 
         Args:
             mode: Selected agent mode string.
 
         Returns:
-            Gradio update for the template_dropdown component visibility.
+            Gradio updates for TASK template, execution, and user input controls.
         """
-        return gr.update(visible=(mode == AgentMode.TASK.value))
+        return (
+            gr.update(visible=(mode == AgentMode.TASK.value)),
+            _hidden_execution_dropdown(),
+            *_hidden_task_input_updates(),
+        )
 
     def on_template_select(self, filepath: Optional[str]):
-        """Load the selected task template and populate execution_dropdown.
+        """Load the selected task template and populate TASK controls.
 
         Args:
             filepath: Path to the selected ``.yaml`` template file, or None if cleared.
 
         Returns:
-            Tuple of (template, execution_dropdown_update).
+            Tuple of template state, execution dropdown update, and user input updates.
         """
         if filepath is None:
-            return (None, _hidden_execution_dropdown())
+            return (None, _hidden_execution_dropdown(), *_hidden_task_input_updates())
         try:
             template = load_task_template(filepath)
             choices = _execution_choices(template)
@@ -436,10 +504,30 @@ class GradioCallbacks:
                     value=None,
                     visible=len(choices) > 1,
                 ),
+                *_task_input_updates(template),
             )
         except Exception as exc:
             logger.warning("Failed to load task template: %s", exc)
-            return (None, _hidden_execution_dropdown())
+            return (None, _hidden_execution_dropdown(), *_hidden_task_input_updates())
+
+    @staticmethod
+    def _collect_task_user_values(
+        template: TaskTemplate,
+        task_user_inputs,
+    ) -> dict[str, Any]:
+        values: dict[str, Any] = {}
+        for key, raw_value in zip(
+            _user_field_keys(template)[:MAX_TASK_USER_FIELDS],
+            task_user_inputs,
+        ):
+            field = template.fields[key]
+            if field.multiple or field.expand:
+                parsed = _split_user_values(raw_value)
+                if parsed:
+                    values[key] = parsed
+            elif raw_value is not None and str(raw_value).strip():
+                values[key] = str(raw_value).strip()
+        return values
 
     @staticmethod
     def _render_task_summary(rows, csv_path) -> str:

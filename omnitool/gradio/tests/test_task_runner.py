@@ -567,6 +567,23 @@ class TestComputationTiming:
 # ---------------------------------------------------------------------------
 
 class TestTaskRunnerFailures:
+    def test_missing_foreach_value_aborts_instead_of_succeeding(self, tmp_path):
+        template = _example_template()
+        factory = _scripted_factory([])
+
+        runner = TaskRunner(template, factory, tmp_path)
+        events = list(runner.run_task())
+
+        assert factory.calls == []
+        assert any(
+            event["type"] == "error" and "foreach field 'user_id'" in event["message"]
+            for event in events
+        )
+        proc_complete = [e for e in events if e["type"] == "task_complete"][0]
+        assert proc_complete["success"] is False
+        assert proc_complete["csv_path"] is None
+        assert not (tmp_path / "task_result.csv").exists()
+
     def test_error_event_aborts_task(self, tmp_path):
         template = _example_template()
         factory = _scripted_factory([

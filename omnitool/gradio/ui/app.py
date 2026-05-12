@@ -32,7 +32,7 @@ from omnitool.gradio.config import (
 )
 from omnitool.gradio.core import ToolCollection
 from omnitool.gradio.config.task_template import scan_templates
-from omnitool.gradio.ui.callbacks import GradioCallbacks
+from omnitool.gradio.ui.callbacks import GradioCallbacks, MAX_TASK_USER_FIELDS
 from omnitool.gradio.ui.components import (
     get_agent_choices,
     get_model_choices,
@@ -202,6 +202,16 @@ class GradioApp(GradioCallbacks):
                         visible=False,
                         interactive=True,
                     )
+                task_user_inputs = []
+                with gr.Column():
+                    for idx in range(MAX_TASK_USER_FIELDS):
+                        task_user_inputs.append(
+                            gr.Textbox(
+                                label=f"Task input {idx + 1}",
+                                visible=False,
+                                interactive=True,
+                            )
+                        )
 
             # Capture initial screenshot on app load (non-blocking)
             interface.load(
@@ -235,6 +245,7 @@ class GradioApp(GradioCallbacks):
                     max_steps_slider,
                     yaml_template_state,
                     execution_dropdown,
+                    *task_user_inputs,
                 ],
                 outputs=[
                     chatbot,
@@ -247,13 +258,21 @@ class GradioApp(GradioCallbacks):
             mode_dropdown.change(
                 fn=self.on_mode_change,
                 inputs=[mode_dropdown],
-                outputs=[template_dropdown],
+                outputs=[
+                    template_dropdown,
+                    execution_dropdown,
+                    *task_user_inputs,
+                ],
             )
 
             template_dropdown.change(
                 fn=self.on_template_select,
                 inputs=[template_dropdown],
-                outputs=[yaml_template_state, execution_dropdown],
+                outputs=[
+                    yaml_template_state,
+                    execution_dropdown,
+                    *task_user_inputs,
+                ],
             )
 
             file_upload.change(

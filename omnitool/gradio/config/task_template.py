@@ -237,6 +237,13 @@ def load_task_template(path: str) -> TaskTemplate:
         _parse_computation(item, fields)
         for item in data.get("computations", []) or []
     ]
+    computation_ids = [computation.id for computation in computations]
+    duplicate_computation_ids = sorted({
+        comp_id for comp_id in computation_ids
+        if computation_ids.count(comp_id) > 1
+    })
+    if duplicate_computation_ids:
+        raise ValueError(f"duplicate computation id(s): {duplicate_computation_ids!r}")
     executions = [_parse_execution(item, fields) for item in data["executions"] or []]
 
     return TaskTemplate(

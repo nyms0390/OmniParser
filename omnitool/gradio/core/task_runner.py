@@ -130,6 +130,21 @@ class TaskRunner:
                 and self.dataframe.rows == [{}]
             ):
                 original_indices = [0]
+            elif not original_indices and self.dataframe.rows:
+                yield {
+                    "type": "error",
+                    "message": (
+                        f"Execution {execution.id} has no rows with a value for "
+                        f"foreach field {execution.foreach!r}."
+                    ),
+                }
+                yield {
+                    "type": "task_complete",
+                    "success": False,
+                    "csv_path": None,
+                    "rows": self.dataframe.rows,
+                }
+                return
             cursor_offset = 0
             all_ok = True
             for original_idx in original_indices:
