@@ -354,6 +354,58 @@ def format_table_read(text: str) -> str:
     )
 
 
+def format_task_execution_start(
+    execution_id: int | str,
+    row_idx: int | str,
+    row: dict,
+    task_string: str,
+) -> str:
+    """Format the exact task string sent to a TASK execution agent."""
+    escaped_task = html.escape(task_string.strip()) if task_string else "(empty)"
+    escaped_row = html.escape(str(row))
+    return (
+        '<details open style="margin: 6px 0;">'
+        f"<summary>[Task] Execution {html.escape(str(execution_id))}, "
+        f"row {html.escape(str(row_idx))}</summary>"
+        '<div style="font-size: 0.85em; margin: 4px 0;">'
+        f"<b>Row:</b> <code>{escaped_row}</code></div>"
+        '<pre style="max-height: 320px; overflow-y: auto; font-size: 0.85em; '
+        "padding: 8px; background: #f6f8fa; border-radius: 4px; "
+        f'white-space: pre-wrap;">{escaped_task}</pre>'
+        "</details>"
+    )
+
+
+def format_task_rows(rows: list[dict], execution_id: int | str | None = None) -> str:
+    """Format TASK dataframe rows after an execution has completed."""
+    title = "[Task] Rows saved"
+    if execution_id is not None:
+        title = f"[Task] Rows after execution {execution_id}"
+    if not rows:
+        body = "<p>(no rows)</p>"
+    else:
+        columns = list(rows[0].keys())
+        header = "".join(f"<th>{html.escape(str(c))}</th>" for c in columns)
+        body_rows = "".join(
+            "<tr>"
+            + "".join(
+                f"<td>{html.escape(str(row.get(column, '')))}</td>"
+                for column in columns
+            )
+            + "</tr>"
+            for row in rows
+        )
+        body = (
+            '<table border="1" style="font-size: 0.9em; border-collapse: collapse;">'
+            f"<thead><tr>{header}</tr></thead><tbody>{body_rows}</tbody></table>"
+        )
+    return (
+        '<details style="margin: 6px 0;">'
+        f"<summary>{html.escape(title)} (click to expand)</summary>"
+        f"{body}</details>"
+    )
+
+
 __all__ = [
     "render_image",
     "format_parsed_screen",
@@ -368,4 +420,6 @@ __all__ = [
     "format_extraction_result",
     "format_field_saved",
     "format_table_read",
+    "format_task_execution_start",
+    "format_task_rows",
 ]

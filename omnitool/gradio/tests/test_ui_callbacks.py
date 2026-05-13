@@ -948,6 +948,13 @@ class TestOnSubmitTaskRunnerRouting:
     def test_whole_task_calls_run_task_and_emits_task_complete(self, tmp_path):
         template = _two_execution_template()
         events = [
+            {
+                "type": "task_execution_start",
+                "execution_id": 1,
+                "row_idx": 0,
+                "row": {"user_id": "U123"},
+                "task_string": "Open account list for U123",
+            },
             {"type": "execution_complete", "execution_id": 1},
             {"type": "execution_complete", "execution_id": 2},
             {
@@ -965,8 +972,42 @@ class TestOnSubmitTaskRunnerRouting:
         assert runner_calls.run_task_called is True
         assert runner_calls.run_once_calls == []
         all_statuses = [u[2] for u in updates]
+        all_content = "\n".join(
+            message["content"]
+            for update in updates
+            for message in update[0]
+        )
+        assert "Open account list for U123" in all_content
         assert any("Execution 1" in s for s in all_statuses)
         assert any("Task complete" in s for s in all_statuses)
+
+    def test_execution_complete_renders_rows(self, tmp_path):
+        template = _two_execution_template()
+        events = [
+            {
+                "type": "execution_complete",
+                "execution_id": 1,
+                "rows": [{"user_id": "U123", "account_id": "A1"}],
+            },
+            {
+                "type": "task_complete",
+                "success": True,
+                "csv_path": None,
+                "rows": [{"user_id": "U123", "account_id": "A1"}],
+            },
+        ]
+        app = _StubApp(tmp_path=tmp_path)
+        updates, _ = _run_task_submit(
+            app, tmp_path, template, None, events,
+        )
+
+        all_content = "\n".join(
+            message["content"]
+            for update in updates
+            for message in update[0]
+        )
+        assert "Rows after execution 1" in all_content
+        assert "A1" in all_content
 
     def test_task_user_inputs_are_passed_to_runner(self, tmp_path):
         template = _two_execution_template()

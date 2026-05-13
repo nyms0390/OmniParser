@@ -176,9 +176,19 @@ class TestTaskRunnerHappyPath:
         assert "A002,20.00,closed" in lines[2]
 
         types = [e["type"] for e in events]
+        assert types.count("task_execution_start") == 4
         assert types.count("execution_complete") == 2
         assert types[-1] == "task_complete"
         assert events[-1]["success"] is True
+        execution_complete = [
+            event for event in events
+            if event["type"] == "execution_complete" and event["execution_id"] == 1
+        ][0]
+        assert execution_complete["rows"] == [
+            {"user_id": "12345", "account_id": "A001"},
+            {"user_id": "12345", "account_id": "A002"},
+            {"user_id": "12345", "account_id": "A003"},
+        ]
 
     def test_seed_row_carries_user_values_into_substitution(self, tmp_path):
         template = _example_template()
@@ -188,9 +198,16 @@ class TestTaskRunnerHappyPath:
         ])
 
         runner = TaskRunner(template, factory, tmp_path, user_values=_USER_VALUES)
-        list(runner.run_task())
+        events = list(runner.run_task())
         assert "12345" in factory.calls[0]["task_string"]
         assert "A001" in factory.calls[1]["task_string"]
+        starts = [event for event in events if event["type"] == "task_execution_start"]
+        assert starts[0]["execution_id"] == 1
+        assert starts[0]["row"] == {"user_id": "12345"}
+        assert "12345" in starts[0]["task_string"]
+        assert starts[1]["execution_id"] == 2
+        assert starts[1]["row"] == {"user_id": "12345", "account_id": "A001"}
+        assert "A001" in starts[1]["task_string"]
 
     def test_chained_explode_user_to_accounts_to_transactions(self, tmp_path):
         """user_id → accounts (expand) → transactions (expand) → balance."""
@@ -497,6 +514,7 @@ class TestComputationTiming:
 
         runner = TaskRunner(template, factory, tmp_path)
         events = runner.run_task()
+        assert next(events)["type"] == "task_execution_start"
         assert next(events)["type"] == "screen_reading"
         assert runner.dataframe.rows[0]["total"] == "15"
         list(events)
@@ -522,6 +540,7 @@ class TestComputationTiming:
 
         runner = TaskRunner(template, factory, tmp_path)
         events = runner.run_task()
+        assert next(events)["type"] == "task_execution_start"
         assert next(events)["type"] == "screen_reading"
         assert "total" not in runner.dataframe.rows[0]
         assert next(events)["type"] == "screen_reading"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, Iterator, List, Protocol
@@ -153,7 +154,12 @@ class TaskRunner:
             for original_idx in original_indices:
                 row_idx = original_idx + cursor_offset
                 before = len(self.dataframe.rows)
-                success = yield from self._run_once(execution, row_idx)
+                success = yield from self.run_once(
+                    execution,
+                    row_idx,
+                    update_dataframe=True,
+                    yield_complete=False,
+                )
                 cursor_offset += len(self.dataframe.rows) - before
                 if not success:
                     all_ok = False
@@ -166,7 +172,17 @@ class TaskRunner:
                     "rows": self.dataframe.rows,
                 }
                 return
-            yield {"type": "execution_complete", "execution_id": execution.id}
+            rows = self._rows_snapshot()
+            logger.debug(
+                "Task execution %s complete; rows=%s",
+                execution.id,
+                json.dumps(rows, ensure_ascii=False),
+            )
+            yield {
+                "type": "execution_complete",
+                "execution_id": execution.id,
+                "rows": rows,
+            }
 
         csv_path = self.save_folder / "task_result.csv"
         csv_written = False
@@ -184,8 +200,13 @@ class TaskRunner:
         }
 
     def run_once(
-        self, execution: TaskExecution, row_idx: int = 0,
-    ) -> Generator[Dict[str, Any], None, None]:
+        self,
+        execution: TaskExecution,
+        row_idx: int = 0,
+        *,
+        update_dataframe: bool = False,
+        yield_complete: bool = True,
+    ) -> Generator[Dict[str, Any], None, bool]:
         if not 0 <= row_idx < len(self.dataframe.rows):
             yield {
                 "type": "error",
@@ -194,35 +215,55 @@ class TaskRunner:
                     f"(have {len(self.dataframe.rows)} rows)"
                 ),
             }
-            return
+            return False
         task_string = build_execution_task_string(
             execution, self.template, self.dataframe.rows[row_idx]
         )
-        agent = self.agent_factory(execution, task_string)
-        yield from agent.run()
-
-    def _run_once(
-        self, execution: TaskExecution, row_idx: int,
-    ) -> Generator[Dict[str, Any], None, bool]:
-        task_string = build_execution_task_string(
-            execution, self.template, self.dataframe.rows[row_idx]
-        )
+        yield self._task_execution_start_event(execution, row_idx, task_string)
         agent = self.agent_factory(execution, task_string)
 
         saw_complete = False
         saw_error = False
         for event in agent.run():
             evt_type = event.get("type")
-            if evt_type == "screen_reading":
+            if evt_type == "screen_reading" and update_dataframe:
                 self._record_read_fields(event.get("fields", {}), row_idx)
             if evt_type == "complete":
-                self._merge_facts(event.get("facts", {}), execution, row_idx)
+                if update_dataframe:
+                    self._merge_facts(event.get("facts", {}), execution, row_idx)
                 saw_complete = True
+                if yield_complete:
+                    yield event
                 continue
             if evt_type == "error":
                 saw_error = True
             yield event
         return saw_complete and not saw_error
+
+    def _task_execution_start_event(
+        self,
+        execution: TaskExecution,
+        row_idx: int,
+        task_string: str,
+    ) -> Dict[str, Any]:
+        row = dict(self.dataframe.rows[row_idx])
+        logger.debug(
+            "Starting task execution %s row %s with row=%s task=%r",
+            execution.id,
+            row_idx,
+            json.dumps(row, ensure_ascii=False),
+            task_string,
+        )
+        return {
+            "type": "task_execution_start",
+            "execution_id": execution.id,
+            "row_idx": row_idx,
+            "row": row,
+            "task_string": task_string,
+        }
+
+    def _rows_snapshot(self) -> List[Dict[str, str]]:
+        return [dict(row) for row in self.dataframe.rows]
 
     def _merge_facts(
         self,

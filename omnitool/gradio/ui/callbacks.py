@@ -33,6 +33,8 @@ from omnitool.gradio.ui.components import (
     format_raw_screen,
     format_compaction,
     format_table_read,
+    format_task_execution_start,
+    format_task_rows,
     format_thinking,
     get_provider_options_for_model,
     render_image,
@@ -375,6 +377,20 @@ class GradioCallbacks:
                     status = update.get("message", "")
                     yield history, "", status, state
 
+                elif update_type == "task_execution_start":
+                    task_html = format_task_execution_start(
+                        execution_id=update.get("execution_id", "?"),
+                        row_idx=update.get("row_idx", "?"),
+                        row=update.get("row", {}),
+                        task_string=update.get("task_string", ""),
+                    )
+                    history.append({"role": "assistant", "content": task_html})
+                    status = (
+                        f"Execution {update.get('execution_id', '?')} "
+                        f"row {update.get('row_idx', '?')} started"
+                    )
+                    yield history, "", status, state
+
                 elif update_type == "step":
                     status = f"Step {update.get('step_num', '?')}..."
                     yield history, "", status, state
@@ -452,6 +468,14 @@ class GradioCallbacks:
 
                 elif update_type == "execution_complete":
                     status = f"Execution {update.get('execution_id', '?')} complete"
+                    if "rows" in update:
+                        history.append({
+                            "role": "assistant",
+                            "content": format_task_rows(
+                                update.get("rows", []),
+                                execution_id=update.get("execution_id"),
+                            ),
+                        })
                     history.append({"role": "assistant", "content": status})
                     yield history, "", status, state
 
